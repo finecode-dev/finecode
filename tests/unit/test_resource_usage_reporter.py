@@ -4,49 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import selectors
 import time
 
 import click
 import pytest
+from finecode_extension_runner.testing import VirtualTimeLoop
 
 from finecode.cli_app import resource_usage
 from finecode.wm_client import ApiMethodNotFoundError
-
-
-class _VirtualClock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-
-class _AdvancingSelector(selectors.DefaultSelector):
-    """Never blocks: when nothing is ready, jumps the clock to the next timer."""
-
-    def __init__(self, clock: _VirtualClock) -> None:
-        super().__init__()
-        self._clock = clock
-
-    def select(self, timeout=None):
-        events = super().select(0)
-        if events or timeout == 0:
-            return events
-        if timeout is None:
-            raise RuntimeError("virtual-time loop would block forever")
-        self._clock.now += timeout
-        return events
-
-
-class _VirtualTimeLoop(asyncio.SelectorEventLoop):
-    def __init__(self) -> None:
-        self._virtual = _VirtualClock()
-        super().__init__(selector=_AdvancingSelector(self._virtual))
-
-    def time(self) -> float:
-        return self._virtual.now
-
-    def stall(self, seconds: float) -> None:
-        """Move time forward without running anything, as a blocked loop would."""
-        self._virtual.now += seconds
 
 
 def _run_virtual(poll_latencies, body, interval=4.0, default_latency=0.5):
@@ -76,7 +41,7 @@ def _run_virtual(poll_latencies, body, interval=4.0, default_latency=0.5):
             await body(loop)
         return events, calls["count"]
 
-    with asyncio.Runner(loop_factory=_VirtualTimeLoop) as runner:
+    with asyncio.Runner(loop_factory=VirtualTimeLoop) as runner:
         return runner.run(_amain())
 
 
@@ -192,7 +157,7 @@ def test_late_started_poll_gets_a_full_interval() -> None:
 
     async def _body(loop) -> None:
         await asyncio.sleep(3.5)
-        loop.stall(5.0)
+        loop.advance(5.0)
         await asyncio.sleep(5.5)
 
     events, _count = _run_virtual([], _body)
@@ -1143,7 +1108,7 @@ def test_summary_poll_slow_walk_times_out_without_leak() -> None:
         ]
         return snapshot, elapsed, pending
 
-    with asyncio.Runner(loop_factory=_VirtualTimeLoop) as runner:
+    with asyncio.Runner(loop_factory=VirtualTimeLoop) as runner:
         snapshot, elapsed, pending = runner.run(_amain())
 
     assert elapsed < resource_usage.FOOTPRINT_SUMMARY_TIMEOUT_SEC + 0.5 + 1.0

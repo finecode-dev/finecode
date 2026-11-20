@@ -21,6 +21,7 @@ import functools
 import importlib
 import io
 import json
+import os
 import pathlib
 import sys
 import threading
@@ -35,12 +36,17 @@ from finecode_extension_api.interfaces import (
     ifileeditor,
     iprojectinfoprovider,
 )
+from finecode_extension_api.phase_timing_runtime import (
+    get_phase_timing_binding,
+    set_phase_timing_binding,
+)
 from loguru import logger
 
 from finecode_extension_runner import (
     context,
     coverage_sink,
     er_errors,
+    er_lag_monitor,
     er_telemetry,
     er_wal,
     global_state,
@@ -57,6 +63,14 @@ from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 from finecode_extension_runner.impls import (
     project_action_runner as project_action_runner_module,
+)
+from finecode_extension_runner.shared_telemetry import providers as shared_providers
+from finecode_extension_runner.shared_telemetry.health import (
+    HealthEmitter,
+    register_health_metrics,
+)
+from finecode_extension_runner.shared_telemetry.phase_spans import (
+    OtelPhaseTimingBinding,
 )
 
 # ---------------------------------------------------------------------------
@@ -235,8 +249,11 @@ class ErServer:
 
     def __init__(self) -> None:
         self._session = finecode_jsonrpc_module.JsonRpcServerSession(
-            tracing=er_telemetry.JsonRpcTracingHooks()
+            tracing=er_telemetry.JsonRpcTracingHooks(),
+            hop_observer=er_telemetry.hop_observer(),
         )
+        self._telemetry_setup_result: dict[str, typing.Any] | None = None
+        self._lag_monitor: er_lag_monitor.ErLagMonitor | None = None
         self._finecode_async_tasks: list[asyncio.Task] = []
         self._finecode_exit_stack = contextlib.AsyncExitStack()
         self._finecode_file_editor_session: ifileeditor.IFileEditorProviderSession
@@ -325,7 +342,10 @@ class ErServer:
             stdout_buf=stdout_buf or sys.stdout.buffer,
         )
         # Block until the transport read loop finishes
-        await transport._stop_event.wait()
+        try:
+            await transport._stop_event.wait()
+        finally:
+            await _release_lag_monitor(self)
         await self._finecode_exit_stack.aclose()
         logger.debug("ER server stdio loop finished")
 
@@ -369,6 +389,7 @@ class ErServer:
         except asyncio.CancelledError:
             logger.debug("TCP server closed")
         finally:
+            await _release_lag_monitor(self)
             logger.debug("Close exit stack")
             await self._finecode_exit_stack.aclose()
             logger.debug("ER TCP server stopped")
@@ -422,9 +443,101 @@ def convert_path_keys(
 # ---------------------------------------------------------------------------
 
 
+def _activate_er_diagnostics(server: ErServer, *, metrics_active: bool) -> None:
+    """Arm the lag monitor, install the phase binding, emit the first summary.
+
+    Each step is guarded and independent: a failing monitor, binding or
+    emitter leaves the others and the `initialize` response untouched.
+    """
+    try:
+        monitor = er_lag_monitor.ErLagMonitor()
+        monitor.arm()
+        monitor.start()
+        server._lag_monitor = monitor
+    except Exception:  # noqa: BLE001 - activation must not fail startup
+        er_telemetry._health.set_availability(
+            "lag_monitor", "unavailable", "monitor_start_failed"
+        )
+    try:
+        before = get_phase_timing_binding()
+    except Exception:  # noqa: BLE001 - lookup failure degrades to inactive
+        before = None
+    try:
+        set_phase_timing_binding(
+            OtelPhaseTimingBinding(health=er_telemetry._health)
+        )
+    except Exception:  # noqa: BLE001 - activation must not fail startup
+        er_telemetry._health.count("traces", "contained_failure")
+        try:
+            after = get_phase_timing_binding()
+        except Exception:  # noqa: BLE001 - lookup failure degrades to inactive
+            after = None
+        if before is None and after is not None:
+            with contextlib.suppress(Exception):
+                set_phase_timing_binding(None)
+    if metrics_active:
+        try:
+            from opentelemetry import metrics
+
+            register_health_metrics(
+                metrics.get_meter("finecode.telemetry"), er_telemetry._health
+            )
+        except Exception:  # noqa: BLE001 - activation must not fail startup
+            er_telemetry._health.count("metrics", "contained_failure")
+    try:
+        emitter = HealthEmitter(er_telemetry._health)
+        emitter.attach()
+        er_telemetry._emitter = emitter
+        emitter.emit_initial()
+    except Exception:  # noqa: BLE001 - activation must not fail startup
+        er_telemetry._health.count("logs", "contained_failure")
+
+
 async def _on_initialize(_server: ErServer, params: dict | None) -> dict:
-    logger.info(f"initialize: {params}")
-    return {
+    if _server._telemetry_setup_result is not None:
+        return _server._telemetry_setup_result
+    init_options = ((params or {}).get("initializationOptions") or {})
+    telemetry_options = init_options.get("telemetry")
+    if not isinstance(telemetry_options, dict):
+        telemetry_options = {}
+    client_name = ((params or {}).get("clientInfo") or {}).get("name")
+    telemetry_mode = telemetry_options.get("mode") if telemetry_options else None
+    logger.info(
+        "initialize:"
+        f" pid={os.getpid()}"
+        f" client={client_name or 'unknown'}"
+        f" telemetry={telemetry_mode or 'missing'}"
+    )
+    if telemetry_options and telemetry_options.get("mode") != "disabled":
+        endpoint = telemetry_options.get("otlpEndpoint")
+        if not isinstance(endpoint, str):
+            endpoint = ""
+        env_name = global_state.env_name
+        service_name = f"finecode.er.{env_name}" if env_name else "finecode.er"
+        setup = shared_providers.setup_providers(
+            service_name=service_name,
+            resource_attrs=er_telemetry._er_resource_attrs(
+                service_name, global_state.project_dir_path
+            ),
+            endpoint=endpoint,
+            health=er_telemetry._health,
+        )
+        telemetry_result = {
+            "traces": setup.traces,
+            "metrics": setup.metrics,
+            "logs": setup.logs,
+        }
+        er_telemetry._telemetry_initialized = True
+        _activate_er_diagnostics(_server, metrics_active=setup.metrics == "active")
+    else:
+        for signal in ("traces", "metrics", "logs"):
+            er_telemetry._health.set_availability(signal, "disabled")
+        telemetry_result = {
+            "traces": "disabled",
+            "metrics": "disabled",
+            "logs": "disabled",
+        }
+    response = {
         "capabilities": {
             "textDocumentSync": 1,  # Full sync
         },
@@ -432,17 +545,29 @@ async def _on_initialize(_server: ErServer, params: dict | None) -> dict:
             "name": "FineCode_Extension_Runner_Server",
             "version": "v1",
         },
+        "telemetry": telemetry_result,
     }
+    _server._telemetry_setup_result = response
+    return response
 
 
 async def _on_initialized(_server: ErServer, params: dict | None) -> None:
     logger.info(f"initialized: {params}")
 
 
+async def _release_lag_monitor(server: ErServer) -> None:
+    """Stop the server-owned lag monitor, if any; idempotent."""
+    monitor = server._lag_monitor
+    server._lag_monitor = None
+    if monitor is not None:
+        await monitor.stop()
+
+
 async def _on_shutdown(server: ErServer, _params: dict | None) -> None:
     logger.info("Shutdown extension runner")
     if server._wal_writer is not None:
         server._wal_writer.close()
+    await _release_lag_monitor(server)
     await services.shutdown_all_action_handlers(server._runner_context)
 
     logger.debug("Stop Finecode async tasks")
@@ -732,13 +857,6 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
 
         if logging_config := config.get("logging"):
             logs.apply_logging_config(logging_config)
-
-        if telemetry_config := config.get("telemetry"):
-            er_telemetry.apply_telemetry_config(
-                telemetry_config,
-                project_path=global_state.project_dir_path,
-                env_name=global_state.env_name,
-            )
 
         _send_request_to_wm = make_wm_request_sender(server)
 

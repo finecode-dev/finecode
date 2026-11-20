@@ -16,6 +16,18 @@ import typing
 
 from loguru import logger
 
+from ._frames import OutgoingFrame
+from ._hop_guard import call_guarded
+from .tracing import (
+    HopCloseReason,
+    HopStage,
+    HopToken,
+    IHopObserver,
+    StageStatus,
+    StageTime,
+    capture_stage_time,
+)
+
 CONTENT_LENGTH_PATTERN = re.compile(rb"^Content-Length: (\d+)\r\n$")
 CHARSET = "utf-8"
 CONTENT_TYPE = "application/vscode-jsonrpc"
@@ -42,13 +54,21 @@ class ServerStdioTransport:
         self._readable_id = readable_id
         self._framing = framing
         self._stop_event = asyncio.Event()
-        self._out_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._out_queue: asyncio.Queue[OutgoingFrame | None] = asyncio.Queue()
         self._on_message: (
             collections.abc.Callable[
                 [dict[str, typing.Any]], collections.abc.Awaitable[None]
             ]
             | None
         ) = None
+        self._on_message_timed: (
+            collections.abc.Callable[
+                [dict[str, typing.Any], StageTime],
+                collections.abc.Awaitable[None],
+            ]
+            | None
+        ) = None
+        self._hop_observer: IHopObserver | None = None
         self._on_exit: (
             collections.abc.Callable[[], collections.abc.Awaitable[None]] | None
         ) = None
@@ -68,6 +88,19 @@ class ServerStdioTransport:
         ],
     ) -> None:
         self._on_message = handler
+
+    def on_message_timed(
+        self,
+        handler: collections.abc.Callable[
+            [dict[str, typing.Any], StageTime],
+            collections.abc.Awaitable[None],
+        ],
+    ) -> None:
+        """Register a frame-time-aware message handler (wins over on_message)."""
+        self._on_message_timed = handler
+
+    def attach_hop_observer(self, observer: IHopObserver | None) -> None:
+        self._hop_observer = observer
 
     def on_exit(
         self,
@@ -137,8 +170,10 @@ class ServerStdioTransport:
     # Send (thread-safe)
     # ------------------------------------------------------------------
 
-    def send(self, message: dict[str, typing.Any]) -> None:
-        """Serialize *message* and enqueue for writing."""
+    def send(
+        self, message: dict[str, typing.Any], *, hop: HopToken | None = None
+    ) -> None:
+        """Serialize *message* and enqueue for writing, tracking *hop* stages."""
         if self._framing == "newline":
             data = (json.dumps(message) + "\n").encode(CHARSET)
         else:
@@ -149,10 +184,51 @@ class ServerStdioTransport:
             )
             data = (header + body).encode(CHARSET)
 
+        frame = OutgoingFrame(data=data, hop=hop)
+        if hop is not None:
+            self._hop_stage(hop, "submitted", capture_stage_time())
         if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._out_queue.put_nowait, data)
+            self._loop.call_soon_threadsafe(self._insert_frame, frame)
         else:
-            self._out_queue.put_nowait(data)
+            self._insert_frame(frame)
+
+    def _insert_frame(self, frame: OutgoingFrame) -> None:
+        """Queue *frame*; runs on the loop so ``enqueued`` means inserted."""
+        self._out_queue.put_nowait(frame)
+        if frame.hop is not None:
+            self._hop_stage(frame.hop, "enqueued", capture_stage_time())
+
+    def _hop_stage(
+        self,
+        hop: HopToken | None,
+        stage: HopStage,
+        at: StageTime | None,
+        status: StageStatus = "observed",
+    ) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        call_guarded(observer, lambda: observer.stage(hop, stage, at, status))
+
+    def _hop_close(self, hop: HopToken | None, reason: HopCloseReason) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        call_guarded(
+            observer,
+            lambda: observer.close_receiver(hop, reason, capture_stage_time()),
+        )
+
+    async def _dispatch_message(
+        self, message: dict[str, typing.Any], frame_read: StageTime
+    ) -> None:
+        try:
+            if self._on_message_timed is not None:
+                await self._on_message_timed(message, frame_read)
+            elif self._on_message is not None:
+                await self._on_message(message)
+        except Exception as exc:
+            logger.exception(f"Error in message handler | {self._readable_id}: {exc}")
 
     # ------------------------------------------------------------------
     # Internal tasks
@@ -162,10 +238,26 @@ class ServerStdioTransport:
         logger.debug(f"Start writing messages | {self._readable_id}")
         try:
             while True:
-                data = await self._out_queue.get()
-                if data is None:
+                item = await self._out_queue.get()
+                if item is None:
                     break
-                write_transport.write(data)  # type: ignore[attr-defined]
+                hop = item.hop
+                if hop is not None:
+                    self._hop_stage(hop, "dequeued", capture_stage_time())
+                try:
+                    write_transport.write(item.data)
+                except Exception:
+                    if hop is not None:
+                        self._hop_stage(
+                            hop, "write_returned", capture_stage_time(), "failed"
+                        )
+                        self._hop_close(hop, "write_failed")
+                    raise
+                if hop is not None:
+                    self._hop_stage(hop, "write_returned", capture_stage_time())
+                    self._hop_stage(hop, "drain_started", None, "unsupported")
+                    self._hop_stage(hop, "drain_returned", None, "unsupported")
+                    self._hop_close(hop, "completed")
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
@@ -201,6 +293,8 @@ class ServerStdioTransport:
                     logger.warning(f"Read error | {self._readable_id}: {exc}")
                     break
 
+                frame_read = capture_stage_time()
+
                 if not line:
                     if reader.at_eof():
                         logger.debug(f"Reader reached EOF | {self._readable_id}")
@@ -221,13 +315,7 @@ class ServerStdioTransport:
                     logger.error(f"Expected dict message | {self._readable_id}")
                     continue
 
-                if self._on_message is not None:
-                    try:
-                        await self._on_message(message)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.exception(
-                            f"Error in message handler | {self._readable_id}: {exc}"
-                        )
+                await self._dispatch_message(message, frame_read)
         except asyncio.CancelledError:
             pass
 
@@ -273,6 +361,8 @@ class ServerStdioTransport:
                     if not body:
                         continue
 
+                    frame_read = capture_stage_time()
+
                     try:
                         message = json.loads(body)
                     except json.JSONDecodeError as exc:
@@ -283,13 +373,7 @@ class ServerStdioTransport:
                         logger.error(f"Expected dict message | {self._readable_id}")
                         continue
 
-                    if self._on_message is not None:
-                        try:
-                            await self._on_message(message)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.exception(
-                                f"Error in message handler | {self._readable_id}: {exc}"
-                            )
+                    await self._dispatch_message(message, frame_read)
         except asyncio.CancelledError:
             pass
 
@@ -316,13 +400,21 @@ class TcpServerTransport:
         self._writer = writer
         self._readable_id = readable_id
         self._stop_event = asyncio.Event()
-        self._out_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._out_queue: asyncio.Queue[OutgoingFrame | None] = asyncio.Queue()
         self._on_message: (
             collections.abc.Callable[
                 [dict[str, typing.Any]], collections.abc.Awaitable[None]
             ]
             | None
         ) = None
+        self._on_message_timed: (
+            collections.abc.Callable[
+                [dict[str, typing.Any], StageTime],
+                collections.abc.Awaitable[None],
+            ]
+            | None
+        ) = None
+        self._hop_observer: IHopObserver | None = None
         self._on_exit: (
             collections.abc.Callable[[], collections.abc.Awaitable[None]] | None
         ) = None
@@ -340,6 +432,19 @@ class TcpServerTransport:
         ],
     ) -> None:
         self._on_message = handler
+
+    def on_message_timed(
+        self,
+        handler: collections.abc.Callable[
+            [dict[str, typing.Any], StageTime],
+            collections.abc.Awaitable[None],
+        ],
+    ) -> None:
+        """Register a frame-time-aware message handler (wins over on_message)."""
+        self._on_message_timed = handler
+
+    def attach_hop_observer(self, observer: IHopObserver | None) -> None:
+        self._hop_observer = observer
 
     def on_exit(
         self,
@@ -390,8 +495,10 @@ class TcpServerTransport:
     # Send (call from asyncio loop only — no thread-safe wrapper needed)
     # ------------------------------------------------------------------
 
-    def send(self, message: dict[str, typing.Any]) -> None:
-        """Serialize *message* and enqueue for writing."""
+    def send(
+        self, message: dict[str, typing.Any], *, hop: HopToken | None = None
+    ) -> None:
+        """Serialize *message* and enqueue for writing, tracking *hop* stages."""
         body = json.dumps(message)
         header = (
             f"Content-Length: {len(body)}\r\n"
@@ -399,10 +506,51 @@ class TcpServerTransport:
         )
         data = (header + body).encode(CHARSET)
 
+        frame = OutgoingFrame(data=data, hop=hop)
+        if hop is not None:
+            self._hop_stage(hop, "submitted", capture_stage_time())
         if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._out_queue.put_nowait, data)
+            self._loop.call_soon_threadsafe(self._insert_frame, frame)
         else:
-            self._out_queue.put_nowait(data)
+            self._insert_frame(frame)
+
+    def _insert_frame(self, frame: OutgoingFrame) -> None:
+        """Queue *frame*; runs on the loop so ``enqueued`` means inserted."""
+        self._out_queue.put_nowait(frame)
+        if frame.hop is not None:
+            self._hop_stage(frame.hop, "enqueued", capture_stage_time())
+
+    def _hop_stage(
+        self,
+        hop: HopToken | None,
+        stage: HopStage,
+        at: StageTime | None,
+        status: StageStatus = "observed",
+    ) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        call_guarded(observer, lambda: observer.stage(hop, stage, at, status))
+
+    def _hop_close(self, hop: HopToken | None, reason: HopCloseReason) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        call_guarded(
+            observer,
+            lambda: observer.close_receiver(hop, reason, capture_stage_time()),
+        )
+
+    async def _dispatch_message(
+        self, message: dict[str, typing.Any], frame_read: StageTime
+    ) -> None:
+        try:
+            if self._on_message_timed is not None:
+                await self._on_message_timed(message, frame_read)
+            elif self._on_message is not None:
+                await self._on_message(message)
+        except Exception as exc:
+            logger.exception(f"Error in message handler | {self._readable_id}: {exc}")
 
     # ------------------------------------------------------------------
     # Internal tasks
@@ -412,14 +560,39 @@ class TcpServerTransport:
         logger.debug(f"Start writing messages | {self._readable_id}")
         try:
             while True:
-                data = await self._out_queue.get()
-                if data is None:
+                item = await self._out_queue.get()
+                if item is None:
                     break
-                writer.write(data)
-                await writer.drain()
+                hop = item.hop
+                if hop is not None:
+                    self._hop_stage(hop, "dequeued", capture_stage_time())
+                try:
+                    writer.write(item.data)
+                except Exception:
+                    if hop is not None:
+                        self._hop_stage(
+                            hop, "write_returned", capture_stage_time(), "failed"
+                        )
+                        self._hop_close(hop, "write_failed")
+                    raise
+                if hop is not None:
+                    self._hop_stage(hop, "write_returned", capture_stage_time())
+                    self._hop_stage(hop, "drain_started", capture_stage_time())
+                try:
+                    await writer.drain()
+                except Exception:
+                    if hop is not None:
+                        self._hop_stage(
+                            hop, "drain_returned", capture_stage_time(), "failed"
+                        )
+                        self._hop_close(hop, "write_failed")
+                    raise
+                if hop is not None:
+                    self._hop_stage(hop, "drain_returned", capture_stage_time())
+                    self._hop_close(hop, "completed")
         except asyncio.CancelledError:
             pass
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error(f"Error writing message | {self._readable_id}: {exc}")
         finally:
             with contextlib.suppress(Exception):
@@ -466,6 +639,8 @@ class TcpServerTransport:
                     if not body:
                         continue
 
+                    frame_read = capture_stage_time()
+
                     try:
                         message = json.loads(body)
                     except json.JSONDecodeError as exc:
@@ -476,13 +651,7 @@ class TcpServerTransport:
                         logger.error(f"Expected dict message | {self._readable_id}")
                         continue
 
-                    if self._on_message is not None:
-                        try:
-                            await self._on_message(message)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.exception(
-                                f"Error in message handler | {self._readable_id}: {exc}"
-                            )
+                    await self._dispatch_message(message, frame_read)
         except asyncio.CancelledError:
             pass
 
@@ -495,5 +664,5 @@ class TcpServerTransport:
         if self._on_exit is not None:
             try:
                 await self._on_exit()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(f"Error in exit handler | {self._readable_id}: {exc}")

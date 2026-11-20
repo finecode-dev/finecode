@@ -1,87 +1,177 @@
+"""ER telemetry setup happens once, inside `initialize`.
+
+The WM sends its telemetry settings as `initializationOptions.telemetry`;
+the ER makes one provider setup attempt and reports per-signal status back
+in the `initialize` result. A second `initialize` replays the first result
+without attempting anything again.
+"""
+
 from __future__ import annotations
 
+import collections.abc
+import typing
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from finecode_extension_runner import er_telemetry
-
-# PRD-0004-AC7: each telemetry-provider initializer is a no-op when its
-# resolved endpoint is falsy, and the ER only initializes once per process.
+from finecode_extension_runner import er_server, er_telemetry, global_state
+from finecode_extension_runner.shared_telemetry import providers as shared_providers
 
 
 @pytest.fixture(autouse=True)
-def _reset_telemetry_initialized():
-    """OTel forbids replacing a TracerProvider/MeterProvider once set, so
-    apply_telemetry_config only runs its init_* calls once per process
-    lifetime — reset that guard between tests."""
-    prev = er_telemetry._telemetry_initialized
-    yield
-    er_telemetry._telemetry_initialized = prev
-
-
-def _patch_inits(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    calls: list[str] = []
-    monkeypatch.setattr(
-        er_telemetry, "init_otel_logging", lambda **k: calls.append("logging")
-    )
-    monkeypatch.setattr(
-        er_telemetry, "init_tracer_provider", lambda **k: calls.append("tracer")
-    )
-    monkeypatch.setattr(
-        er_telemetry, "init_meter_provider", lambda **k: calls.append("meter")
-    )
-    return calls
-
-
-def test_apply_telemetry_config_noop_when_endpoint_absent(
+def _reset_telemetry_state(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    er_telemetry._telemetry_initialized = False
-    calls = _patch_inits(monkeypatch)
+) -> collections.abc.Iterator[list[bool]]:
+    """Keep the process-global telemetry guards hermetic between tests.
 
-    er_telemetry.apply_telemetry_config({}, project_path=Path("/tmp/proj"))
-
-    assert calls == []
-    assert er_telemetry._telemetry_initialized is False
-
-
-def test_apply_telemetry_config_noop_when_endpoint_empty_string(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An empty-string otlp_endpoint in config must not arm telemetry.
-
-    Mirrors the WM-side precedence rule (PRD-0004-AC6): a present-but-empty
-    value means "off", not "connect to nothing".
+    Activation (monitor, binding, summary) is faked and recorded here; the
+    real paths are covered by the startup tests. Yields the recorded
+    `metrics_active` flags.
     """
-    er_telemetry._telemetry_initialized = False
-    calls = _patch_inits(monkeypatch)
+    monkeypatch.setattr(er_telemetry, "_telemetry_initialized", False)
+    monkeypatch.setattr(global_state, "env_name", "test")
+    monkeypatch.setattr(global_state, "project_dir_path", Path("/tmp/proj"))
+    activations: list[bool] = []
 
-    er_telemetry.apply_telemetry_config(
-        {"otlp_endpoint": ""}, project_path=Path("/tmp/proj")
-    )
+    def _record_activation(_server: typing.Any, *, metrics_active: bool) -> None:
+        activations.append(metrics_active)
 
-    assert calls == []
-    assert er_telemetry._telemetry_initialized is False
+    monkeypatch.setattr(er_server, "_activate_er_diagnostics", _record_activation)
+    yield activations
 
 
-def test_apply_telemetry_config_initializes_exactly_once(
-    monkeypatch: pytest.MonkeyPatch,
+def _server_stub() -> typing.Any:
+    return SimpleNamespace(_telemetry_setup_result=None)
+
+
+def _initialization_options(
+    telemetry: dict[str, typing.Any] | None,
+) -> dict[str, typing.Any]:
+    params: dict[str, typing.Any] = {"capabilities": {}}
+    if telemetry is not None:
+        params["initializationOptions"] = {"telemetry": telemetry}
+    return params
+
+
+async def _send_initialize(
+    server: typing.Any, params: dict[str, typing.Any]
+) -> dict[str, typing.Any]:
+    """Drive the real `_on_initialize` handler in this process."""
+    return await er_server._on_initialize(server, params)
+
+
+async def test_initialize_without_telemetry_option_leaves_signals_disabled(
+    monkeypatch: pytest.MonkeyPatch, _reset_telemetry_state: list[bool]
 ) -> None:
-    """A second call with telemetry already initialized is a no-op.
+    """No telemetry options means disabled signals and no setup attempt."""
+    calls: list[dict[str, typing.Any]] = []
 
-    OTel's SDK raises if a TracerProvider/MeterProvider is replaced after
-    being set once — this guard is what makes re-applying ER config safe.
-    """
-    er_telemetry._telemetry_initialized = False
-    calls = _patch_inits(monkeypatch)
+    def _record_setup(**kwargs: typing.Any) -> typing.Any:
+        calls.append(kwargs)
+        raise AssertionError("setup must not run for a disabled value")
 
-    er_telemetry.apply_telemetry_config(
-        {"otlp_endpoint": "http://otel-lgtm:4317"}, project_path=Path("/tmp/proj")
+    monkeypatch.setattr(shared_providers, "setup_providers", _record_setup)
+    server = _server_stub()
+
+    result = await _send_initialize(server, _initialization_options(None))
+
+    assert result["telemetry"] == {
+        "traces": "disabled",
+        "metrics": "disabled",
+        "logs": "disabled",
+    }
+    assert calls == []
+    for signal in ("traces", "metrics", "logs"):
+        assert er_telemetry._health.snapshot()["signals"][signal]["availability"] == (
+            "disabled"
+        )
+    second = await _send_initialize(server, _initialization_options(None))
+    assert second == result
+    assert calls == []
+    assert _reset_telemetry_state == []
+
+
+async def test_initialize_with_otlp_option_sets_up_once(
+    monkeypatch: pytest.MonkeyPatch, _reset_telemetry_state: list[bool]
+) -> None:
+    """A non-disabled value sets up once; a repeat returns the stored result."""
+    from finecode_extension_runner.shared_telemetry.providers import (
+        ProviderSetupResult,
     )
-    er_telemetry.apply_telemetry_config(
-        {"otlp_endpoint": "http://otel-lgtm:4317"}, project_path=Path("/tmp/proj")
+
+    calls: list[dict[str, typing.Any]] = []
+
+    def _fake_setup(**kwargs: typing.Any) -> ProviderSetupResult:
+        calls.append(kwargs)
+        er_telemetry._health.set_availability("traces", "active")
+        er_telemetry._health.set_availability("metrics", "active")
+        er_telemetry._health.set_availability("logs", "unavailable", "provider_error")
+        return ProviderSetupResult(
+            traces="active",
+            metrics="active",
+            logs="unavailable",
+            reasons={"logs": "provider_error"},
+        )
+
+    monkeypatch.setattr(shared_providers, "setup_providers", _fake_setup)
+    server = _server_stub()
+
+    result = await _send_initialize(
+        server,
+        _initialization_options(
+            {"mode": "otlp", "otlpEndpoint": "http://otel-lgtm:4317"}
+        ),
     )
 
-    assert calls == ["logging", "tracer", "meter"]
+    assert result["telemetry"] == {
+        "traces": "active",
+        "metrics": "active",
+        "logs": "unavailable",
+    }
+    assert len(calls) == 1
+    assert calls[0]["service_name"] == "finecode.er.test"
+    assert calls[0]["resource_attrs"]["project.path"] == "/tmp/proj"
+    assert calls[0]["endpoint"] == "http://otel-lgtm:4317"
     assert er_telemetry._telemetry_initialized is True
+    assert er_telemetry._health.snapshot()["signals"]["traces"]["availability"] == (
+        "active"
+    )
+    assert er_telemetry._health.snapshot()["signals"]["logs"]["availability"] == (
+        "unavailable"
+    )
+    assert er_telemetry._health.snapshot()["signals"]["logs"].get(
+        "unavailable_reason"
+    ) == ("provider_error")
+    second = await _send_initialize(
+        server,
+        _initialization_options(
+            {"mode": "otlp", "otlpEndpoint": "http://otel-lgtm:4317"}
+        ),
+    )
+    assert second == result
+    assert len(calls) == 1
+    assert _reset_telemetry_state == [True]
+
+
+async def test_initialize_with_unparsable_endpoint_marks_signals_unavailable(
+    _reset_telemetry_state: list[bool],
+) -> None:
+    """An unparsable endpoint leaves every signal unavailable with a reason."""
+    server = _server_stub()
+
+    result = await _send_initialize(
+        server,
+        _initialization_options({"mode": "otlp", "otlpEndpoint": "http://localhost"}),
+    )
+
+    assert result["telemetry"] == {
+        "traces": "unavailable",
+        "metrics": "unavailable",
+        "logs": "unavailable",
+    }
+    for signal in ("traces", "metrics", "logs"):
+        health = er_telemetry._health.snapshot()["signals"][signal]
+        assert health["availability"] == "unavailable"
+        assert health.get("unavailable_reason") == "invalid_setting"
+    assert _reset_telemetry_state == [False]

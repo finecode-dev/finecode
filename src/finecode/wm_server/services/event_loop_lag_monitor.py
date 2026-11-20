@@ -10,25 +10,33 @@ it and records the delay together with the state that makes it attributable.
 
 Diagnostic only: it changes no scheduling, and nothing depends on it running.
 See ``docs/guides/wm-server-internals.md``, "Event-loop lag monitor".
+
+The sampling mechanics live in :mod:`finecode_common.lag`; this module is the
+WM adapter: thresholds, messages, WM process state and lifecycle.
 """
 
 from __future__ import annotations
 
 import asyncio
-import collections
 import dataclasses
-import os
-import time
 
+from finecode_common.lag import (
+    EpisodeSummary,
+    HostLoad,
+    LagEpisodeTracker,
+    LagSettings,
+    ProcessUsage,
+    UsageDelta,
+    arm_lag_baseline,
+    read_host_load,
+    read_process_usage,
+    ready_callbacks,
+    run_lag_sampler,
+)
 from loguru import logger
 
 from finecode.wm_server import context, host_pressure
 from finecode.wm_server.runner import runner_counts
-
-try:
-    import resource
-except ImportError:  # not available on Windows
-    resource = None  # type: ignore[assignment]
 
 __all__ = [
     "LAG_WINDOW_DEFAULT_SEC",
@@ -88,73 +96,6 @@ class LagSummary:
     window_sec: float
 
 
-@dataclasses.dataclass(frozen=True)
-class ProcessUsage:
-    """Cumulative resource counters of the WM process at one instant.
-
-    Only differences between two readings mean anything. CPU time covers every
-    thread of the WM, not only the loop thread. The context-switch counters are
-    ``None`` where ``getrusage`` is unavailable.
-    """
-
-    cpu_sec: float
-    voluntary_switches: int | None
-    involuntary_switches: int | None
-
-
-@dataclasses.dataclass(frozen=True)
-class HostLoad:
-    """How contended the machine was when a warning was taken.
-
-    ``load_1m`` is ``None`` where the OS has no load average.
-    """
-
-    load_1m: float | None
-    cpu_count: int | None
-
-
-def read_process_usage() -> ProcessUsage:
-    if resource is None:
-        return ProcessUsage(
-            cpu_sec=time.process_time(),
-            voluntary_switches=None,
-            involuntary_switches=None,
-        )
-    usage = resource.getrusage(resource.RUSAGE_SELF)
-    return ProcessUsage(
-        cpu_sec=time.process_time(),
-        voluntary_switches=usage.ru_nvcsw,
-        involuntary_switches=usage.ru_nivcsw,
-    )
-
-
-def read_host_load() -> HostLoad:
-    try:
-        load_1m: float | None = os.getloadavg()[0]
-    except (AttributeError, OSError):
-        load_1m = None
-    try:
-        cpu_count: int | None = len(os.sched_getaffinity(0))
-    except AttributeError:
-        cpu_count = os.cpu_count()
-    return HostLoad(load_1m=load_1m, cpu_count=cpu_count)
-
-
-def _ready_callbacks() -> int | None:
-    """Callbacks queued to run on the current loop, if the loop exposes them.
-
-    Many short callbacks queued at once add up to lag without any single one
-    being long, which this count tells apart from one long callback. It reads
-    a private attribute of the stdlib loop, so other loops report ``None``.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return None
-    ready = getattr(loop, "_ready", None)
-    return len(ready) if ready is not None else None
-
-
 def snapshot_context(ws_context: context.WorkspaceContext) -> LagContext:
     """Summarise the WM state a lag sample should be read against.
 
@@ -172,63 +113,22 @@ def snapshot_context(ws_context: context.WorkspaceContext) -> LagContext:
     )
 
 
-def _delta(current: int | None, previous: int | None) -> int | None:
-    if current is None or previous is None:
-        return None
-    return current - previous
-
-
 def _fmt(value: object) -> str:
     return "n/a" if value is None else str(value)
 
 
-@dataclasses.dataclass(frozen=True)
-class _UsageDelta:
-    """What the WM process consumed between two samples."""
+def _wm_usage_fields(usage: UsageDelta, prefix: str = "") -> dict[str, int | None]:
+    """Usage extras under the historical ``wm_cpu_*`` names.
 
-    window_ms: int | None = None
-    wm_cpu_ms: int | None = None
-    wm_cpu_pct: int | None = None
-    voluntary_switches: int | None = None
-    involuntary_switches: int | None = None
-
-    @classmethod
-    def between(
-        cls,
-        start_now: float | None,
-        start_usage: ProcessUsage | None,
-        now: float,
-        usage: ProcessUsage,
-    ) -> _UsageDelta:
-        if start_now is None or start_usage is None:
-            return cls()
-        window_ms = round((now - start_now) * 1000)
-        wm_cpu_ms = round((usage.cpu_sec - start_usage.cpu_sec) * 1000)
-        return cls(
-            window_ms=window_ms,
-            wm_cpu_ms=wm_cpu_ms,
-            wm_cpu_pct=round(wm_cpu_ms * 100 / window_ms) if window_ms > 0 else None,
-            voluntary_switches=_delta(
-                usage.voluntary_switches, start_usage.voluntary_switches
-            ),
-            involuntary_switches=_delta(
-                usage.involuntary_switches, start_usage.involuntary_switches
-            ),
-        )
-
-    def fields(self, prefix: str = "") -> dict[str, int | None]:
-        return {
-            f"{prefix}{field.name}": getattr(self, field.name)
-            for field in dataclasses.fields(self)
-        }
-
-    def describe(self) -> str:
-        return (
-            f"WM CPU {_fmt(self.wm_cpu_ms)}ms over {_fmt(self.window_ms)}ms window"
-            f" ({_fmt(self.wm_cpu_pct)}%),"
-            f" context switches involuntary=+{_fmt(self.involuntary_switches)}"
-            f" voluntary=+{_fmt(self.voluntary_switches)}"
-        )
+    The shared delta reports ``process_cpu_*`` so the ER monitor can reuse it;
+    the WM records keep the names existing dashboards and tests read.
+    """
+    renamed: dict[str, int | None] = {}
+    for key, value in usage.fields().items():
+        if key.startswith("process_cpu_"):
+            key = "wm_cpu_" + key[len("process_cpu_") :]
+        renamed[f"{prefix}{key}"] = value
+    return renamed
 
 
 class EventLoopLagMonitor:
@@ -247,27 +147,13 @@ class EventLoopLagMonitor:
         threshold_sec: float = WARN_THRESHOLD_SEC,
         cooldown_sec: float = WARN_COOLDOWN_SEC,
     ) -> None:
-        self._interval_sec = interval_sec
-        self._threshold_sec = threshold_sec
-        self._cooldown_sec = cooldown_sec
-        # Set when the episode's first warning is emitted, cleared when lag drops
-        # back below the threshold: None means no episode is open.
-        self._episode_started_at: float | None = None
-        self._last_warn_at: float | None = None
-        # Samples suppressed since the episode opened, reported once when it ends.
-        self._suppressed: int = 0
-        # Aggregates over the whole episode, reported once when it ends: the
-        # warnings show only the samples the cooldown let through, and the
-        # suppressed ones are often the worst.
-        self._episode_samples: int = 0
-        self._episode_max_lag: float = 0.0
-        self._episode_start_now: float | None = None
-        self._episode_start_usage: ProcessUsage | None = None
-        # The previous sample, so a warning can report what the WM process
-        # consumed over the window that ended late.
-        self._prev_now: float | None = None
-        self._prev_usage: ProcessUsage | None = None
-        self._samples: collections.deque[tuple[float, float]] = collections.deque()
+        self._settings = LagSettings(
+            interval_sec=interval_sec,
+            threshold_sec=threshold_sec,
+            cooldown_sec=cooldown_sec,
+            window_sec=LAG_WINDOW_MAX_SEC,
+        )
+        self._tracker = LagEpisodeTracker(self._settings)
         self._next_due: float | None = None
         self._host_sample_failed = False
 
@@ -279,18 +165,18 @@ class EventLoopLagMonitor:
         of a burst of immediate ones chasing the schedule that was missed.
         """
         loop = asyncio.get_running_loop()
-        next_due = loop.time() + self._interval_sec
-        self._next_due = next_due
-        self._prev_now = loop.time()
-        self._prev_usage = read_process_usage()
+        baseline = arm_lag_baseline(loop, self._settings)
+        self._next_due = baseline.next_due
+
+        def _on_sample(now: float, lag: float) -> None:
+            self.observe(ws_context, now=now, lag=lag)
+            self._sample_host(ws_context)
+            self._next_due = now + self._settings.interval_sec
+
         try:
-            while True:
-                await asyncio.sleep(max(0.0, next_due - loop.time()))
-                now = loop.time()
-                self.observe(ws_context, now=now, lag=now - next_due)
-                self._sample_host(ws_context)
-                next_due = now + self._interval_sec
-                self._next_due = next_due
+            await run_lag_sampler(
+                self._settings, baseline=baseline, on_sample=_on_sample
+            )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - a failed sample must be logged, not left on the task
@@ -321,57 +207,17 @@ class EventLoopLagMonitor:
         """
         if usage is None:
             usage = read_process_usage()
-        prev_now, prev_usage = self._prev_now, self._prev_usage
-        self._prev_now, self._prev_usage = now, usage
-        self._samples.append((now, lag))
-        cutoff = now - LAG_WINDOW_MAX_SEC
-        while self._samples and self._samples[0][0] < cutoff:
-            self._samples.popleft()
-
-        if lag < self._threshold_sec:
-            if self._episode_started_at is None:
-                return
-            self._recover(now=now, usage=usage)
-            return
-
-        if self._episode_started_at is None:
-            # The episode's window starts where its first late sample's window
-            # did, so its totals cover the whole stall.
-            self._episode_start_now = prev_now
-            self._episode_start_usage = prev_usage
-        self._episode_samples += 1
-        self._episode_max_lag = max(self._episode_max_lag, lag)
-
-        if (
-            self._last_warn_at is not None
-            and now - self._last_warn_at < self._cooldown_sec
-        ):
-            self._suppressed += 1
-            return
-
-        self._warn(
-            ws_context,
-            now=now,
-            lag=lag,
-            usage=usage,
-            prev_now=prev_now,
-            prev_usage=prev_usage,
-        )
-        if self._episode_started_at is None:
-            self._episode_started_at = now
-        self._last_warn_at = now
+        event = self._tracker.observe(now=now, lag=lag, usage=usage)
+        if event.kind == "warning":
+            self._warn(ws_context, lag=lag, window=event.window)
+        elif event.kind == "recovered":
+            assert event.episode is not None
+            self._recover(episode=event.episode)
 
     def lag_summary(
         self, now: float, window_sec: float = LAG_WINDOW_DEFAULT_SEC
     ) -> LagSummary:
-        latest_ms: int | None = None
-        max_recent_ms: int | None = None
-        if self._samples:
-            latest_ms = round(self._samples[-1][1] * 1000)
-            cutoff = now - window_sec
-            recent = [lag for sample_now, lag in self._samples if sample_now >= cutoff]
-            if recent:
-                max_recent_ms = round(max(recent) * 1000)
+        latest_ms, max_recent_ms = self._tracker.recent(now=now, window_sec=window_sec)
         pending_ms: int | None = None
         if self._next_due is not None:
             pending_ms = round(max(0.0, now - self._next_due) * 1000)
@@ -398,66 +244,43 @@ class EventLoopLagMonitor:
                 )
                 self._host_sample_failed = True
 
-    def _recover(self, *, now: float, usage: ProcessUsage) -> None:
-        assert self._episode_started_at is not None
-        starvation_ms = round((now - self._episode_started_at) * 1000)
-        max_lag_ms = round(self._episode_max_lag * 1000)
-        episode = _UsageDelta.between(
-            self._episode_start_now, self._episode_start_usage, now, usage
-        )
+    def _recover(self, *, episode: EpisodeSummary) -> None:
         logger.bind(
-            starvation_ms=starvation_ms,
-            suppressed_warnings=self._suppressed,
-            lagging_samples=self._episode_samples,
-            max_lag_ms=max_lag_ms,
-            **episode.fields(prefix="episode_"),
+            starvation_ms=episode.starvation_ms,
+            suppressed_warnings=episode.suppressed_warnings,
+            lagging_samples=episode.lagging_samples,
+            max_lag_ms=episode.max_lag_ms,
+            **_wm_usage_fields(episode.usage, prefix="episode_"),
         ).info(
-            f"WM event loop lag recovered after {starvation_ms}ms:"
-            f" {self._episode_samples} lagging samples, max lag={max_lag_ms}ms"
-            f" ({self._suppressed} warnings suppressed); over the episode"
-            f" {episode.describe()}"
+            f"WM event loop lag recovered after {episode.starvation_ms}ms:"
+            f" {episode.lagging_samples} lagging samples,"
+            f" max lag={episode.max_lag_ms}ms"
+            f" ({episode.suppressed_warnings} warnings suppressed); over the episode"
+            f" {episode.usage.describe()}"
         )
-        self._episode_started_at = None
-        self._last_warn_at = None
-        self._suppressed = 0
-        self._episode_samples = 0
-        self._episode_max_lag = 0.0
-        self._episode_start_now = None
-        self._episode_start_usage = None
 
     def _warn(
         self,
         ws_context: context.WorkspaceContext,
         *,
-        now: float,
         lag: float,
-        usage: ProcessUsage,
-        prev_now: float | None,
-        prev_usage: ProcessUsage | None,
+        window: UsageDelta,
     ) -> None:
         lag_context = snapshot_context(ws_context)
         host = read_host_load()
         pressure = host_pressure.read_host_pressure()
-        ready_callbacks = _ready_callbacks()
-
-        # The window runs from the previous sample to this late one. WM CPU
-        # close to the window means the WM itself was busy (its own synchronous
-        # code, or a thread of its own holding the GIL); CPU near zero with a
-        # rising involuntary-switch count means the WM was runnable but the OS
-        # gave the CPU to other processes; CPU near zero with many voluntary
-        # switches means it was blocked waiting (e.g. synchronous I/O).
-        window = _UsageDelta.between(prev_now, prev_usage, now, usage)
+        ready = ready_callbacks()
 
         lag_ms = round(lag * 1000)
-        threshold_ms = round(self._threshold_sec * 1000)
+        threshold_ms = round(self._settings.threshold_sec * 1000)
         load_1m = None if host.load_1m is None else round(host.load_1m, 2)
         logger.bind(
             lag_ms=lag_ms,
             threshold_ms=threshold_ms,
-            **window.fields(),
+            **_wm_usage_fields(window),
             load_1m=load_1m,
             cpu_count=host.cpu_count,
-            ready_callbacks=ready_callbacks,
+            ready_callbacks=ready,
             runners_starting=lag_context.runners_starting,
             runners_running=lag_context.runners_running,
             budget_granted=lag_context.budget_granted,
@@ -469,7 +292,7 @@ class EventLoopLagMonitor:
             f" (threshold {threshold_ms}ms);"
             f" {window.describe()};"
             f" host load 1m={_fmt(load_1m)} on {_fmt(host.cpu_count)} CPUs;"
-            f" ready callbacks={_fmt(ready_callbacks)};"
+            f" ready callbacks={_fmt(ready)};"
             f" runners starting={lag_context.runners_starting}"
             f" running={lag_context.runners_running};"
             f" process budget {lag_context.budget_granted}/{lag_context.budget_total};"

@@ -137,6 +137,23 @@ def reset_log_level_for_group(group: str):
     log_level_by_group.pop(group, None)
 
 
+def effective_level_name(group: str) -> str:
+    """Longest-prefix match like `filter_logs`, falling back to the default.
+
+    A group entry of `None` drops the group entirely; it reads as OFF.
+    """
+    matched: LogLevel | None = _default_log_level
+    matched_len = -1
+    for known, level in log_level_by_group.items():
+        if (known == group or group.startswith(known + ".")) and len(
+            known
+        ) > matched_len:
+            matched, matched_len = level, len(known)
+    if matched is None:
+        return "OFF"
+    return matched.name
+
+
 def set_forward_sender(sender: typing.Callable[[list[dict]], None] | None) -> None:
     global _forward_sender
     _forward_sender = sender

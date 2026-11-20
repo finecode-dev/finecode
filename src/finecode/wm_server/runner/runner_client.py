@@ -12,6 +12,7 @@ import pathlib
 import typing
 from typing import Any
 
+from finecode_extension_runner.shared_telemetry.health import ErSetupCategory
 from loguru import logger
 
 import finecode_jsonrpc as jsonrpc_client
@@ -35,6 +36,8 @@ TextDocumentContentChangePartial = (
 )
 Range = _internal_client_types.Range
 Position = _internal_client_types.Position
+# The WM-side record of the ER's per-signal telemetry setup outcome.
+TelemetrySetupResultRecord = _internal_client_types.TelemetrySetupResult
 
 
 # Control-plane RPCs are never legitimately long, so a dead channel must fail
@@ -92,6 +95,12 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     # not asked for is an unexpected one and counts against the restart budget
     # (ADR-0109 rule 4); a WM stop never does.
     stopped_by_wm: bool = False
+    # Per-signal telemetry setup reported by the ER's `initialize` result.
+    # None until `initialize` answers.
+    telemetry_setup: TelemetrySetupResultRecord | None = None
+    # Health-summary bucket for this runner's setup outcome. Set together with
+    # `telemetry_setup`; cleared when the count is released on stop/abandon.
+    telemetry_setup_category: ErSetupCategory | None = None
 
 
 # Alias for backward compatibility — status enum now lives in domain
@@ -596,11 +605,6 @@ async def resolve_package_path(
 
 
 @dataclasses.dataclass
-class ErTelemetryConfig:
-    otlp_endpoint: str | None = None
-
-
-@dataclasses.dataclass
 class RunnerConfig:
     actions: list[domain.Action]
     # config by handler source
@@ -616,7 +620,6 @@ class RunnerConfig:
     # Keys are action names, values are lists of handler names within that action.
     handlers_to_initialize: dict[str, list[str]] | None = None
     logging: ErLoggingConfig = dataclasses.field(default_factory=ErLoggingConfig)
-    telemetry: ErTelemetryConfig = dataclasses.field(default_factory=ErTelemetryConfig)
 
     def to_dict(self) -> dict[str, typing.Any]:
         result: dict[str, typing.Any] = {
@@ -627,9 +630,6 @@ class RunnerConfig:
             "logging": {
                 "defaultLevel": self.logging.default_level,
                 "logGroups": self.logging.log_groups,
-            },
-            "telemetry": {
-                "otlp_endpoint": self.telemetry.otlp_endpoint,
             },
         }
         if self.handlers_to_initialize is not None:

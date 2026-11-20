@@ -388,8 +388,11 @@ def test_lag_samples_pruned_beyond_max_window() -> None:
         lag=0.1,
     )
 
-    assert len(monitor._samples) == 1
-    assert monitor._samples[0][0] == event_loop_lag_monitor.LAG_WINDOW_MAX_SEC + 1.0
+    assert len(monitor._tracker._samples) == 1
+    assert (
+        monitor._tracker._samples[0][0]
+        == event_loop_lag_monitor.LAG_WINDOW_MAX_SEC + 1.0
+    )
 
 
 def test_lag_summary_pending_reports_overdue_sample() -> None:

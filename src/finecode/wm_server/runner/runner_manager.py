@@ -207,6 +207,7 @@ def _make_runner_client(
         message_types=_internal_client_types.METHOD_TO_TYPES,
         readable_id=runner.readable_id,
         tracing=telemetry.JsonRpcTracingHooks(),
+        hop_observer=telemetry.hop_observer(),
     )
 
 
@@ -614,6 +615,7 @@ async def _start_extension_runner_process(
         )
         if was_live:
             telemetry.er_running_dec(runner.env_name)
+            _release_er_telemetry_setup(runner)
         runner.status = runner_client.RunnerStatus.EXITED
         if was_live and not runner.stopped_by_wm:
             _record_unexpected_exit(ws_context, runner)
@@ -1346,11 +1348,48 @@ async def get_or_start_runners_with_presets(
         )
 
 
+def _note_er_telemetry_setup(
+    runner: runner_client.ExtensionRunnerInfo,
+) -> None:
+    """Count one ER setup outcome; log once when a signal is unavailable."""
+    setup = runner.telemetry_setup
+    if setup is None:
+        return
+    values = (setup.traces, setup.metrics, setup.logs)
+    if all(value == "active" for value in values):
+        category = "all_active"
+    elif all(value == "disabled" for value in values):
+        category = "disabled"
+    elif all(value == "unavailable" for value in values):
+        category = "all_unavailable"
+    else:
+        category = "partly_unavailable"
+    runner.telemetry_setup_category = category
+    telemetry.health_tracker().note_er_setup(category)
+    if category == "partly_unavailable" or category == "all_unavailable":
+        logger.bind(
+            runner_id=runner.readable_id,
+            traces=setup.traces,
+            metrics=setup.metrics,
+            logs=setup.logs,
+        ).info("ER telemetry setup incomplete")
+
+
+def _release_er_telemetry_setup(
+    runner: runner_client.ExtensionRunnerInfo,
+) -> None:
+    """Release one ER setup outcome when its runner stops or is abandoned."""
+    category, runner.telemetry_setup_category = runner.telemetry_setup_category, None
+    if category is not None:
+        telemetry.health_tracker().release_er_setup(category)
+
+
 async def _abandon_start(
     runner: runner_client.ExtensionRunnerInfo,
     ws_context: context.WorkspaceContext,
 ) -> None:
     """A start attempt that ended before RUNNING: leave no process and no waiter behind (ADR-0097)."""
+    _release_er_telemetry_setup(runner)
     if runner.client is not None:
         if runner.client.startup_timeline.connected_at is not None:
             connected_to_abandon_ms = round(
@@ -1442,7 +1481,9 @@ async def _start_runner(
                     raise
 
                 try:
-                    await _init_lsp_client(runner=runner, project=project_def)
+                    await _init_lsp_client(
+                        runner=runner, project=project_def, ws_context=ws_context
+                    )
                 except RunnerFailedToStart:
                     runner.status = runner_client.RunnerStatus.FAILED
                     await notify_project_changed(project_def)
@@ -1657,16 +1698,28 @@ async def _start_dev_workspace_runner(
 
 
 async def _init_lsp_client(
-    runner: runner_client.ExtensionRunnerInfo, project: domain.Project
+    runner: runner_client.ExtensionRunnerInfo,
+    project: domain.Project,
+    ws_context: context.WorkspaceContext,
 ) -> None:
     try:
-        await _internal_client_api.initialize(
+        if ws_context.otlp_endpoint is not None:
+            telemetry_options = _internal_client_types.InitializeTelemetryOptions(
+                mode="otlp", otlp_endpoint=ws_context.otlp_endpoint
+            )
+        else:
+            telemetry_options = _internal_client_types.InitializeTelemetryOptions(
+                mode="disabled"
+            )
+        runner.telemetry_setup = await _internal_client_api.initialize(
             client=runner.client,
             client_process_id=os.getpid(),
             client_name="FineCode_WorkspaceManager",
             client_version="0.1.0",
             client_workspace_dir=runner.working_dir_path,
+            telemetry=telemetry_options,
         )
+        _note_er_telemetry_setup(runner)
     except jsonrpc_client.BaseRunnerRequestException as exception:
         logger.warning(
             f"Runner {runner.readable_id} initialize failed"
@@ -1747,9 +1800,6 @@ async def update_runner_config(
         service_config_overrides=ws_context.service_config_overrides,
         handlers_to_initialize=handlers_to_initialize,
         logging=env_config.runner_config.logging,
-        telemetry=runner_client.ErTelemetryConfig(
-            otlp_endpoint=ws_context.otlp_endpoint,
-        ),
     )
     try:
         await runner_client.update_config(runner, project.def_path, config)
@@ -1773,6 +1823,15 @@ async def update_runner_config(
             ) from exception
         raise RunnerFailedToStart(message) from exception
 
+    await refresh_runner_action_meta(runner, project, ws_context)
+    logger.debug(f"Updated config of runner {runner.readable_id}")
+
+
+async def refresh_runner_action_meta(
+    runner: runner_client.ExtensionRunnerInfo,
+    project: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+) -> None:
     try:
         action_meta_response = await runner_client.resolve_action_meta(runner)
     except Exception as exc:
@@ -1846,7 +1905,7 @@ async def update_runner_config(
                 handler.file_loc = handler_locations[handler.source]
 
     ws_context.ws_action_schemas.pop(project.dir_path, None)
-    logger.debug(f"Updated config of runner {runner.readable_id}")
+    logger.debug(f"Resolved action metadata of runner {runner.readable_id}")
 
 
 async def _finish_runner_init(

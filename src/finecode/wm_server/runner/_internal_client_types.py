@@ -157,12 +157,39 @@ class InitializeRequest(BaseRequest):
     method = "initialize"
 
 
+SignalSetupStatus = typing.Literal["disabled", "active", "unavailable"]
+"""Per-signal setup outcome reported by the ER (mirrors the protocol)."""
+
+
+@dataclasses.dataclass
+class InitializeTelemetryOptions:
+    """WM->ER telemetry settings, sent as ``initializationOptions.telemetry``."""
+
+    mode: typing.Literal["disabled", "otlp"]
+    """``disabled`` turns ER telemetry off; ``otlp`` attempts OTLP setup."""
+
+    otlp_endpoint: str | None = None
+    """Collector endpoint; present on the wire iff mode is ``otlp``."""
+
+
+@dataclasses.dataclass
+class TelemetrySetupResult:
+    """Per-signal setup outcome, returned as ``result.telemetry``."""
+
+    traces: SignalSetupStatus
+    metrics: SignalSetupStatus
+    logs: SignalSetupStatus
+
+
 @dataclasses.dataclass
 class InitializeResult(BaseResult):
     """The result returned from an initialize request."""
 
     capabilities: ServerCapabilities
     """The capabilities the language server provides."""
+
+    telemetry: TelemetrySetupResult
+    """Per-signal telemetry setup outcome (required; version skew is unsupported)."""
 
     server_info: ServerInfo | None = None
     """Information about the server.

@@ -25,6 +25,15 @@ def test_validate_endpoint_rejects_host_only_string() -> None:
         telemetry._validate_endpoint("otel-lgtm")
 
 
+def test_validate_endpoint_error_carries_no_endpoint_value() -> None:
+    """A credential-bearing endpoint must not leak into the setup error."""
+    with pytest.raises(ValueError) as exc_info:
+        telemetry._validate_endpoint("http://user:s3cr3t@127.0.0.1")
+
+    assert "s3cr3t" not in str(exc_info.value)
+    assert "127.0.0.1" not in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # init_* no-op guards (PRD-0004-AC7)
 # ---------------------------------------------------------------------------
@@ -85,6 +94,7 @@ def test_probe_endpoint_once_warns_on_unreachable_endpoint() -> None:
 
     assert len(captured) == 1
     assert "not reachable yet" in captured[0]
+    assert "127.0.0.1" not in captured[0]
 
 
 def test_probe_endpoint_once_is_deduped_per_endpoint() -> None:
@@ -99,3 +109,20 @@ def test_probe_endpoint_once_is_deduped_per_endpoint() -> None:
         logger.remove(handler_id)
 
     assert len(captured) == 1
+
+
+def test_probe_warning_redacts_credential_bearing_endpoint() -> None:
+    """The reachability heads-up never carries the endpoint value."""
+    captured: list[str] = []
+    handler_id = logger.add(
+        lambda m: captured.append(m.record["message"]), level="WARNING"
+    )
+    try:
+        telemetry._probe_endpoint_once("http://user:s3cr3t@127.0.0.1:1", "127.0.0.1", 1)
+    finally:
+        logger.remove(handler_id)
+
+    assert len(captured) == 1
+    assert "not reachable yet" in captured[0]
+    assert "s3cr3t" not in captured[0]
+    assert "127.0.0.1" not in captured[0]

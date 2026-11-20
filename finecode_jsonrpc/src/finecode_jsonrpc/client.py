@@ -33,7 +33,22 @@ from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc._loop_event import LoopAwareEvent
 from finecode_jsonrpc._proc_kill import force_kill_process_group
 from finecode_jsonrpc._proc_snapshot import describe_spawned_processes
-from finecode_jsonrpc.tracing import ITracingHooks
+
+from ._frames import OutgoingFrame, ReceivedFrame
+from ._hop_guard import call_guarded, guarded_handler_scope
+from .tracing import (
+    CallerOutcome,
+    HandlerOutcome,
+    HopCloseReason,
+    HopIdentity,
+    HopStage,
+    HopToken,
+    IHopObserver,
+    ITracingHooks,
+    StageStatus,
+    StageTime,
+    capture_stage_time,
+)
 
 
 class QueueEnd:
@@ -89,13 +104,13 @@ class OutputDrain:
 
 
 class WriterFromQueue:
-    def __init__(self, out_queue: culsans.SyncQueue[bytes]) -> None:
+    def __init__(self, out_queue: culsans.SyncQueue[typing.Any]) -> None:
         self._out_queue: typing.Final = out_queue
 
     def close(self) -> None:
         self._out_queue.put(QUEUE_END)
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes | OutgoingFrame) -> None:
         self._out_queue.put(data)
 
 
@@ -208,6 +223,18 @@ class ServerStoppedError(BaseRunnerRequestException):
     """Raised on pending requests when the server process exits."""
 
 
+@dataclasses.dataclass
+class _ReaderHopState:
+    """Hop context for the IO-thread reader: observer plus sync-request hops.
+
+    The sync-hop map is shared with the sending side; entries are removed by
+    the sync future's done-callback, so the reader only peeks.
+    """
+
+    observer: IHopObserver
+    sync_hops: dict[str, HopToken]
+
+
 class JsonRpcClient:
     CHARSET: typing.Final[str] = "utf-8"
     CONTENT_TYPE: typing.Final[str] = "application/vscode-jsonrpc"
@@ -220,6 +247,7 @@ class JsonRpcClient:
         communication_type: CommunicationType = CommunicationType.TCP,
         tracing: ITracingHooks | None = None,
         request_cancelled_code: int = error_codes.DEFAULT_REQUEST_CANCELLED,
+        hop_observer: IHopObserver | None = None,
     ) -> None:
         self.server_process_stopped: typing.Final = LoopAwareEvent()
         # One-way latch: set by the first send_request timeout or by the inbound
@@ -261,6 +289,16 @@ class JsonRpcClient:
         self._expected_result_type_by_msg_id: dict[str, typing.Any] = {}
 
         self._tracing = tracing
+        self._hop_observer = hop_observer
+        self._connection_id: str = uuid.uuid4().hex
+        # Open async caller hops by wire id. An entry outlives its future
+        # after a timeout or cancellation so a late response can still be
+        # matched; resolved entries are popped in handle_message, the rest
+        # in _fail_pending_requests.
+        self._async_request_hops: dict[str, tuple[HopToken, str]] = {}
+        # Open sync caller hops by wire id. The reader only peeks; entries
+        # are removed by the sync future's done-callback.
+        self._sync_request_hops: dict[str, HopToken] = {}
         self.feature_impls: dict[str, collections.abc.Callable] = {}
         self._sync_feature_impls: dict[
             str, collections.abc.Callable[[typing.Any], None]
@@ -380,6 +418,60 @@ class JsonRpcClient:
             with contextlib.suppress(Exception):
                 marker.completion.set_result(None)
 
+    def _hop_stage(
+        self,
+        hop: HopToken | None,
+        stage: HopStage,
+        at: StageTime | None,
+        status: StageStatus = "observed",
+    ) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        call_guarded(observer, lambda: observer.stage(hop, stage, at, status))
+
+    def _hop_close(self, hop: HopToken | None, reason: HopCloseReason) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        call_guarded(
+            observer,
+            lambda: observer.close_receiver(hop, reason, capture_stage_time()),
+        )
+
+    def _finish_caller(self, hop: HopToken | None, outcome: CallerOutcome) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        now = capture_stage_time()
+        call_guarded(observer, lambda: observer.stage(hop, "caller_completed", now))
+        call_guarded(observer, lambda: observer.close_caller(hop, outcome, now))
+
+    def _record_handler_outcome(
+        self, hop: HopToken | None, outcome: HandlerOutcome
+    ) -> None:
+        observer = self._hop_observer
+        if hop is None or observer is None:
+            return
+        call_guarded(observer, lambda: observer.handler_outcome(hop, outcome))
+
+    def _open_caller(self, msg_id: int | str, method: str) -> HopToken | None:
+        observer = self._hop_observer
+        if observer is None:
+            return None
+        identity = HopIdentity(
+            connection_id=self._connection_id,
+            role="caller",
+            request_id=msg_id,
+            method=method,
+        )
+        return call_guarded(
+            observer,
+            lambda: observer.open_caller(
+                identity, self.readable_id, capture_stage_time()
+            ),
+        )
+
     async def _send_outgoing_loop(self, writer: asyncio.StreamWriter) -> None:
         """IO-thread sender: write bytes and resolve drain markers in order."""
         logger.debug("Start sending messages from queue")
@@ -397,8 +489,38 @@ class JsonRpcClient:
                         writer.close()
                         logger.debug("Queue was closed, stop sending")
                         break
-                    writer.write(message)
-                    await writer.drain()
+                    if isinstance(message, OutgoingFrame):
+                        hop: HopToken | None = message.hop
+                        data: bytes = message.data
+                    else:
+                        hop = None
+                        data = message
+                    if hop is not None:
+                        self._hop_stage(hop, "dequeued", capture_stage_time())
+                    try:
+                        writer.write(data)
+                    except Exception:
+                        if hop is not None:
+                            self._hop_stage(
+                                hop, "write_returned", capture_stage_time(), "failed"
+                            )
+                            self._hop_close(hop, "write_failed")
+                        raise
+                    if hop is not None:
+                        self._hop_stage(hop, "write_returned", capture_stage_time())
+                        self._hop_stage(hop, "drain_started", capture_stage_time())
+                    try:
+                        await writer.drain()
+                    except Exception:
+                        if hop is not None:
+                            self._hop_stage(
+                                hop, "drain_returned", capture_stage_time(), "failed"
+                            )
+                            self._hop_close(hop, "write_failed")
+                        raise
+                    if hop is not None:
+                        self._hop_stage(hop, "drain_returned", capture_stage_time())
+                        self._hop_close(hop, "completed")
                 finally:
                     with contextlib.suppress(Exception):
                         queue.task_done()
@@ -554,6 +676,8 @@ class JsonRpcClient:
         closed socket can precede the OS process exiting.
         """
         self.channel_failed = True
+        self._async_request_hops.clear()
+        self._sync_request_hops.clear()
         for msg_id, fut in list(self._sync_request_futures.items()) + list(
             self._async_request_futures.items()
         ):
@@ -602,15 +726,18 @@ class JsonRpcClient:
 
         force_kill_process_group(self.pid, self.readable_id)
 
-    def _send_data(self, data: str):
+    def _send_data(self, data: str, hop: HopToken | None = None):
         header = (
             f"Content-Length: {len(data)}\r\n"
             f"Content-Type: {self.CONTENT_TYPE}; charset={self.CHARSET}\r\n\r\n"
         )
         data = header + data
 
+        frame = OutgoingFrame(data=data.encode(self.CHARSET), hop=hop)
+        if hop is not None:
+            self._hop_stage(hop, "submitted", capture_stage_time())
         try:
-            self.writer.write(data.encode(self.CHARSET))
+            self.writer.write(frame)
         except culsans.QueueShutDown:
             logger.debug(
                 f"Cannot send data to {self.readable_id}: client already disconnected"
@@ -621,6 +748,19 @@ class JsonRpcClient:
             # mistake in implementation, log it
             logger.error(f"Error sending data to {self.readable_id}:")
             logger.exception(error)
+        else:
+            if hop is not None:
+                self._hop_stage(hop, "enqueued", capture_stage_time())
+
+    def _send_frame(self, data: str, hop: HopToken | None) -> None:
+        """Send *data*, attaching *hop* only when observed.
+
+        With no hop the call shape is exactly today's single-argument one.
+        """
+        if hop is not None:
+            self._send_data(data, hop)
+        else:
+            self._send_data(data)
 
     def _send_error_response(
         self,
@@ -628,6 +768,7 @@ class JsonRpcClient:
         code: int,
         message: str,
         data: typing.Any = None,
+        hop: HopToken | None = None,
     ) -> None:
         """Send a JSON-RPC error response.
 
@@ -649,7 +790,7 @@ class JsonRpcClient:
 
         response_str = json.dumps(response_dict)
         logger.debug(f"Sending error response: {code} - {message}")
-        self._send_data(response_str)
+        self._send_frame(response_str, hop)
 
     def notify(self, method: str, params: typing.Any | None = None) -> None:
         logger.debug(f"Sending notification: '{method}' {params}")
@@ -786,13 +927,18 @@ class JsonRpcClient:
         else:
             request_params_dict = None
 
+        hop = self._open_caller(msg_id, method)
+
         future = concurrent.futures.Future()
         try:
             self._expected_result_type_by_msg_id[msg_id] = self.message_types[method][2]
         except KeyError as error:
+            self._finish_caller(hop, "send_failed")
             raise ValueError(f"Message type not found for {method}") from error
 
         self._sync_request_futures[msg_id] = future
+        if hop is not None:
+            self._sync_request_hops[msg_id] = hop
 
         request_dict: dict[str, typing.Any] = {
             "id": msg_id,
@@ -800,7 +946,14 @@ class JsonRpcClient:
             "params": request_params_dict,
             "jsonrpc": self.VERSION,
         }
-        if self._tracing is not None:
+        observer = self._hop_observer
+        if hop is not None and observer is not None:
+            traceparent = call_guarded(
+                observer, lambda: observer.caller_traceparent(hop)
+            )
+            if traceparent is not None:
+                request_dict["_meta"] = {"traceparent": traceparent}
+        elif self._tracing is not None:
             traceparent = self._tracing.get_traceparent()
             if traceparent is not None:
                 request_dict["_meta"] = {"traceparent": traceparent}
@@ -810,12 +963,52 @@ class JsonRpcClient:
         except (TypeError, ValueError) as error:
             # Clean up the future if serialization fails
             self._sync_request_futures.pop(msg_id, None)
+            _ = self._sync_request_hops.pop(msg_id, None)
             self._expected_result_type_by_msg_id.pop(msg_id, None)
+            self._finish_caller(hop, "send_failed")
             raise InvalidResponse(f"Failed to serialize request: {error}") from error
 
-        self._send_data(request_str)
+        if hop is not None:
+            future.add_done_callback(
+                functools.partial(self._close_sync_caller, msg_id, hop)
+            )
+        self._send_frame(request_str, hop)
 
         return future
+
+    def _close_sync_caller(
+        self,
+        msg_id: str,
+        hop: HopToken,
+        future: concurrent.futures.Future[typing.Any],
+    ) -> None:
+        """Close a sync caller hop when its future completes.
+
+        Runs on whichever thread completes the future (normally the IO
+        thread); never at ``send_request_sync`` return.
+        """
+        _ = self._sync_request_hops.pop(msg_id, None)
+        observer = self._hop_observer
+        if observer is None:
+            return
+        try:
+            error = future.exception()
+        except (asyncio.CancelledError, concurrent.futures.CancelledError):
+            outcome: CallerOutcome = "cancelled"
+        else:
+            if error is None:
+                outcome = "result"
+            elif isinstance(error, ErrorOnRequest):
+                outcome = "remote_error"
+            elif isinstance(error, InvalidResponse):
+                outcome = "invalid_response"
+            elif isinstance(error, ServerStoppedError):
+                outcome = "disconnected"
+            else:
+                outcome = "invalid_response"
+        now = capture_stage_time()
+        call_guarded(observer, lambda: observer.stage(hop, "caller_completed", now))
+        call_guarded(observer, lambda: observer.close_caller(hop, outcome, now))
         # try:
         #     response = future.result(
         #         timeout=timeout,
@@ -862,13 +1055,26 @@ class JsonRpcClient:
             "jsonrpc": self.VERSION,
         }
 
+        hop = self._open_caller(msg_id, method)
+        if hop is not None:
+            self._async_request_hops[msg_id] = (hop, method)
+
+        # When a hop observer is set, request hops are timed only by it.
         span_ctx = (
             self._tracing.client_span(method, self.readable_id)
-            if self._tracing
+            if self._tracing is not None and hop is None
             else contextlib.nullcontext()
         )
         with span_ctx:
-            if self._tracing is not None:
+            if hop is not None:
+                observer = self._hop_observer
+                assert observer is not None
+                traceparent = call_guarded(
+                    observer, lambda: observer.caller_traceparent(hop)
+                )
+                if traceparent is not None:
+                    message_dict["_meta"] = {"traceparent": traceparent}
+            elif self._tracing is not None:
                 traceparent = self._tracing.get_traceparent()
                 if traceparent is not None:
                     message_dict["_meta"] = {"traceparent": traceparent}
@@ -891,11 +1097,13 @@ class JsonRpcClient:
                     raise InvalidResponse(
                         f"Failed to serialize request: {error}"
                     ) from error
-                self._send_data(request_str)
+                self._send_frame(request_str, hop)
             except Exception:
                 _ = self._async_request_futures.pop(msg_id, None)
                 _ = self._expected_result_type_by_msg_id.pop(msg_id, None)
                 _ = self._response_completions.pop(msg_id, None)
+                _ = self._async_request_hops.pop(msg_id, None)
+                self._finish_caller(hop, "send_failed")
                 raise
 
             try:
@@ -904,15 +1112,28 @@ class JsonRpcClient:
                     timeout,
                 )
                 logger.debug(f"Got response on {method} from {self.readable_id}")
-                return response
             except TimeoutError as error:
                 self.channel_failed = True
+                self._finish_caller(hop, "timeout")
                 raise ResponseTimeout(
                     f"Timeout {timeout}s for response on {method} to"
                     f" runner {self.readable_id}"
                 ) from error
             except asyncio.CancelledError as error:
+                self._finish_caller(hop, "cancelled")
                 raise RequestCancelledError(request_id=msg_id) from error
+            except ErrorOnRequest:
+                self._finish_caller(hop, "remote_error")
+                raise
+            except InvalidResponse:
+                self._finish_caller(hop, "invalid_response")
+                raise
+            except ServerStoppedError:
+                self._finish_caller(hop, "disconnected")
+                raise
+            else:
+                self._finish_caller(hop, "result")
+                return response
             finally:
                 _ = self._async_request_futures.pop(msg_id, None)
                 _ = self._expected_result_type_by_msg_id.pop(msg_id, None)
@@ -923,7 +1144,16 @@ class JsonRpcClient:
         try:
             while True:
                 raw_message = await self.in_message_queue.async_q.get()
-                if raw_message == QUEUE_END:
+                if isinstance(raw_message, ReceivedFrame):
+                    message = raw_message.message
+                    frame_read: StageTime | None = raw_message.received
+                elif raw_message == QUEUE_END:
+                    message = None
+                    frame_read = None
+                else:
+                    message = raw_message
+                    frame_read = None
+                if message is None:
                     # TODO: this message doesn't come, task is always cancelled
                     logger.info("Queue with messages from server was closed")
                     self._fail_pending_requests("inbound queue closed")
@@ -932,7 +1162,7 @@ class JsonRpcClient:
                     break
 
                 try:
-                    await self.handle_message(raw_message)
+                    await self.handle_message(message, frame_read)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception(exc)
                 finally:
@@ -944,7 +1174,59 @@ class JsonRpcClient:
         # self.in_message_queue.async_q.shutdown()
         logger.debug(f"End processing messages from server {self.readable_id}")
 
-    async def handle_message(self, message: dict[str, typing.Any]) -> None:
+    def _open_receiver(
+        self, message: dict[str, typing.Any], frame_read: StageTime | None
+    ) -> HopToken | None:
+        observer = self._hop_observer
+        if observer is None:
+            return None
+        at = frame_read if frame_read is not None else capture_stage_time()
+        traceparent = (message.get("_meta") or {}).get("traceparent")
+        identity = HopIdentity(
+            connection_id=self._connection_id,
+            role="receiver",
+            request_id=message["id"],
+            method=message["method"],
+        )
+        return call_guarded(
+            observer, lambda: observer.open_receiver(identity, traceparent, at)
+        )
+
+    def _report_unmatched_response(
+        self, message_id: str | int, frame_read: StageTime | None
+    ) -> None:
+        observer = self._hop_observer
+        if observer is None or not isinstance(message_id, str):
+            return
+        hop_info = self._async_request_hops.pop(message_id, None)
+        method = hop_info[1] if hop_info is not None else ""
+        identity = HopIdentity(
+            connection_id=self._connection_id,
+            role="caller",
+            request_id=message_id,
+            method=method,
+        )
+        at = frame_read if frame_read is not None else capture_stage_time()
+        call_guarded(observer, lambda: observer.response_without_waiter(identity, at))
+
+    def _stage_response_resolved(
+        self, message_id: str | int, frame_read: StageTime | None
+    ) -> None:
+        if not isinstance(message_id, str):
+            return
+        hop_info = self._async_request_hops.pop(message_id, None)
+        if hop_info is None:
+            return
+        hop, _method = hop_info
+        at = frame_read if frame_read is not None else capture_stage_time()
+        self._hop_stage(hop, "frame_read", at)
+        self._hop_stage(hop, "response_resolved", capture_stage_time())
+
+    async def handle_message(
+        self,
+        message: dict[str, typing.Any],
+        frame_read: StageTime | None = None,
+    ) -> None:
         if "id" in message:
             message_id = message["id"]
 
@@ -963,6 +1245,7 @@ class JsonRpcClient:
                     logger.error(
                         f"Got error as response for {message_id}, but no response was expected"
                     )
+                    self._report_unmatched_response(message_id, frame_read)
                     return
 
                 future = self._async_request_futures.pop(message_id, None)
@@ -970,7 +1253,12 @@ class JsonRpcClient:
                     logger.error(
                         f"Got error on request {message_id}, but no response was expected"
                     )
+                    self._report_unmatched_response(message_id, frame_read)
                     return
+                if not future.cancelled():
+                    self._stage_response_resolved(message_id, frame_read)
+                else:
+                    _ = self._async_request_hops.pop(message_id, None)
                 completion = self._response_completions.pop(message_id, None)
                 if completion is not None:
                     self._run_response_capture(completion)
@@ -999,6 +1287,7 @@ class JsonRpcClient:
                 logger.trace(
                     f"Processing message with incoming request {message['method']} | {self.readable_id}"
                 )
+                hop = self._open_receiver(message, frame_read)
                 try:
                     request_type = self.message_types[message["method"]][0]
                     result_type = self.message_types[message["method"]][3]
@@ -1007,11 +1296,13 @@ class JsonRpcClient:
                     logger.warning(
                         f"Received request for unregistered method: {message.get('method')} | {self.readable_id}"
                     )
+                    self._record_handler_outcome(hop, "not_executed")
                     self._send_error_response(
                         request_id=message_id,
                         code=JsonRpcErrorCode.METHOD_NOT_FOUND,
                         message="Method not found",
                         data=f"Method '{message.get('method')}' is not registered",
+                        hop=hop,
                     )
                     return
 
@@ -1019,14 +1310,19 @@ class JsonRpcClient:
                     request = _converter.structure(message, request_type)
                 except cattrs.ClassValidationError as error:
                     # Invalid request parameters - send 'Invalid params' error
-                    logger.warning(
-                        f"Invalid params for method {message.get('method')}: {error.messages} | {self.readable_id}"
+                    detail = "; ".join(str(sub) for sub in error.exceptions) or str(
+                        error
                     )
+                    logger.warning(
+                        f"Invalid params for method {message.get('method')}: {detail} | {self.readable_id}"
+                    )
+                    self._record_handler_outcome(hop, "not_executed")
                     self._send_error_response(
                         request_id=message_id,
                         code=JsonRpcErrorCode.INVALID_PARAMS,
                         message="Invalid params",
-                        data=". ".join(error.messages),
+                        data=detail,
+                        hop=hop,
                     )
                     return
 
@@ -1036,17 +1332,21 @@ class JsonRpcClient:
                     logger.warning(
                         f"Received request for unsupported method: {method} | {self.readable_id}"
                     )
+                    self._record_handler_outcome(hop, "not_executed")
                     self._send_error_response(
                         request_id=message_id,
                         code=JsonRpcErrorCode.METHOD_NOT_FOUND,
                         message="Method not found",
                         data=f"Method '{method}' is not supported",
+                        hop=hop,
                     )
                     return
 
                 impl = self.feature_impls[method]
                 new_task = asyncio.create_task(
-                    self.run_feature_impl(message_id, impl(request.params), result_type)
+                    self.run_feature_impl(
+                        message_id, impl(request.params), result_type, hop
+                    )
                 )
                 new_task.add_done_callback(
                     functools.partial(
@@ -1064,6 +1364,7 @@ class JsonRpcClient:
                     logger.error(
                         f"Got response to {message_id}, but no response was expected"
                     )
+                    self._report_unmatched_response(message_id, frame_read)
                     return
 
                 # sync request futures are handled in another thread, handle only async
@@ -1073,7 +1374,12 @@ class JsonRpcClient:
                     logger.error(
                         f"Got response to {message_id}, but no response was expected"
                     )
+                    self._report_unmatched_response(message_id, frame_read)
                     return
+                if not future.cancelled():
+                    self._stage_response_resolved(message_id, frame_read)
+                else:
+                    _ = self._async_request_hops.pop(message_id, None)
                 completion = self._response_completions.pop(message_id, None)
                 if completion is not None:
                     self._run_response_capture(completion)
@@ -1085,7 +1391,10 @@ class JsonRpcClient:
                 except cattrs.ClassValidationError as error:
                     logger.error("errro")
                     logger.exception(error)
-                    exception = InvalidResponse(". ".join(error.messages))
+                    detail = "; ".join(str(sub) for sub in error.exceptions) or str(
+                        error
+                    )
+                    exception = InvalidResponse(detail)
 
                     # avoid race condition: request is sent, then cancelled and the server
                     # sends the response before processing the cancel notification
@@ -1179,10 +1488,21 @@ class JsonRpcClient:
             self._async_tasks.append(new_task)
 
     async def run_feature_impl(
-        self, message_id: str | int, impl_coro, result_type
+        self,
+        message_id: str | int,
+        impl_coro,
+        result_type,
+        hop: HopToken | None = None,
     ) -> None:
+        observer = self._hop_observer
+        if hop is not None and observer is not None:
+            self._hop_stage(hop, "handler_started", capture_stage_time())
         try:
-            result = await impl_coro
+            if hop is not None and observer is not None:
+                with guarded_handler_scope(observer, hop):
+                    result = await impl_coro
+            else:
+                result = await impl_coro
 
             logger.trace(f"{result_type} {result}")
             # Send successful response back to the server
@@ -1194,7 +1514,9 @@ class JsonRpcClient:
 
             response_str = json.dumps(response_dict)
             logger.debug(f"Sending response for request {message_id}")
-            self._send_data(response_str)
+            self._hop_stage(hop, "handler_ended", capture_stage_time())
+            self._record_handler_outcome(hop, "returned")
+            self._send_frame(response_str, hop)
         except asyncio.CancelledError:
             # JSON-RPC 2.0 requires exactly one response per request, and
             # cancellation is not an `Exception`, so without this branch the
@@ -1202,10 +1524,13 @@ class JsonRpcClient:
             # response that will never come — indefinitely, if it sent the
             # request without a timeout.
             logger.debug(f"Handler of message {message_id} was cancelled")
+            self._hop_stage(hop, "handler_ended", capture_stage_time())
+            self._record_handler_outcome(hop, "cancelled")
             self._send_error_response(
                 request_id=message_id,
                 code=self._request_cancelled_code,
                 message="Request cancelled",
+                hop=hop,
             )
             current_task = asyncio.current_task()
             if current_task is not None and current_task.cancelling() > 0:
@@ -1237,11 +1562,14 @@ class JsonRpcClient:
             code = getattr(exception, "code", None)
             if code is None:
                 code = JsonRpcErrorCode.INTERNAL_ERROR
+            self._hop_stage(hop, "handler_ended", capture_stage_time())
+            self._record_handler_outcome(hop, "raised")
             self._send_error_response(
                 request_id=message_id,
                 code=code,
                 message=message,
                 data=data,
+                hop=hop,
             )
         finally:
             current_task = asyncio.current_task()
@@ -1313,6 +1641,12 @@ class JsonRpcClient:
 
         assert self._reader is not None and self._writer is not None
 
+        hop_state: _ReaderHopState | None = None
+        if self._hop_observer is not None:
+            hop_state = _ReaderHopState(
+                observer=self._hop_observer,
+                sync_hops=self._sync_request_hops,
+            )
         task = asyncio.create_task(
             read_messages_from_reader(
                 self._reader,
@@ -1321,6 +1655,7 @@ class JsonRpcClient:
                 self._expected_result_type_by_msg_id,
                 self._stop_event,
                 server_id=self.readable_id,
+                hop_state=hop_state,
             )
         )
         task.add_done_callback(
@@ -1622,11 +1957,12 @@ CONTENT_LENGTH_PATTERN = re.compile(rb"^Content-Length: (\d+)\r\n$")
 
 async def read_messages_from_reader(
     reader: asyncio.StreamReader,
-    message_queue: culsans.SyncQueue[bytes],
+    message_queue: culsans.SyncQueue[typing.Any],
     request_futures: dict[str, concurrent.futures.Future[typing.Any]],
     result_types: dict[str, typing.Any],
     stop_event: threading.Event,
     server_id: str,
+    hop_state: _ReaderHopState | None = None,
 ) -> None:
     content_length = 0
 
@@ -1685,6 +2021,8 @@ async def read_messages_from_reader(
                         content_length = 0
                         continue
 
+                    received = capture_stage_time()
+
                     logger.trace(f"Got content {server_id}: {body}")
                     try:
                         message = json.loads(body)
@@ -1722,6 +2060,33 @@ async def read_messages_from_reader(
                         future = request_futures.pop(msg_id, None)
 
                         if future is not None:
+                            observer: IHopObserver | None = (
+                                hop_state.observer if hop_state is not None else None
+                            )
+                            hop: HopToken | None = (
+                                hop_state.sync_hops.get(msg_id)
+                                if hop_state is not None
+                                else None
+                            )
+                            if (
+                                hop is not None
+                                and observer is not None
+                                and not future.cancelled()
+                            ):
+                                call_guarded(
+                                    observer,
+                                    lambda observer=observer, hop=hop, received=received: (
+                                        observer.stage(hop, "frame_read", received)
+                                    ),
+                                )
+                                call_guarded(
+                                    observer,
+                                    lambda observer=observer, hop=hop: observer.stage(
+                                        hop,
+                                        "response_resolved",
+                                        capture_stage_time(),
+                                    ),
+                                )
                             try:
                                 result_type = result_types[msg_id]
                             except KeyError:
@@ -1744,10 +2109,14 @@ async def read_messages_from_reader(
                             if not future.cancelled():
                                 future.set_result(result)
                         else:
-                            message_queue.put(message)
+                            message_queue.put(
+                                ReceivedFrame(message=message, received=received)
+                            )
                     else:
                         # incoming request or notification
-                        message_queue.put(message)
+                        message_queue.put(
+                            ReceivedFrame(message=message, received=received)
+                        )
                 else:
                     if not header.startswith(
                         b"Content-Length:"

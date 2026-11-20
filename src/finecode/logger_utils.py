@@ -63,5 +63,7 @@ def init_logger(
     telemetry.init_otel_logging(service_name, workspace_path, endpoint=otlp_endpoint)
     telemetry.init_tracer_provider(service_name, workspace_path, endpoint=otlp_endpoint)
     telemetry.init_meter_provider(service_name, workspace_path, endpoint=otlp_endpoint)
+    if otlp_endpoint:
+        telemetry.emit_health_summary_initial()
 
     return log_file_path

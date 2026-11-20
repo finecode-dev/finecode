@@ -20,9 +20,16 @@ async def initialize(
     client_name: str,
     client_version: str,
     client_workspace_dir: pathlib.Path,
-) -> None:
+    telemetry: _internal_client_types.InitializeTelemetryOptions,
+) -> _internal_client_types.TelemetrySetupResult:
     logger.debug(f"Send initialize to server {client.readable_id}")
-    await client.send_request(
+    # initializationOptions.telemetry mirrors the protocol doc: otlpEndpoint is
+    # present iff mode is "otlp" (built explicitly so a disabled value carries
+    # no endpoint key rather than an explicit null).
+    telemetry_value: dict[str, typing.Any] = {"mode": telemetry.mode}
+    if telemetry.otlp_endpoint is not None:
+        telemetry_value["otlpEndpoint"] = telemetry.otlp_endpoint
+    response = await client.send_request(
         method=_internal_client_types.INITIALIZE,
         params=_internal_client_types.InitializeParams(
             process_id=client_process_id,
@@ -30,6 +37,7 @@ async def initialize(
             client_info=_internal_client_types.ClientInfo(
                 name=client_name, version=client_version
             ),
+            initialization_options={"telemetry": telemetry_value},
             trace=_internal_client_types.TraceValue.Verbose,
             workspace_folders=[
                 _internal_client_types.WorkspaceFolder(
@@ -40,6 +48,7 @@ async def initialize(
         ),
         timeout=20,
     )
+    return response.result.telemetry
 
 
 async def notify_initialized(client: jsonrpc_client.JsonRpcClient) -> None:
