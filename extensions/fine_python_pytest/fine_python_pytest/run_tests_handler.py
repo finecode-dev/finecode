@@ -132,9 +132,15 @@ class PytestRunTestsHandler(
             # Exit codes 0 (all passed), 1 (some failed), 5 (no tests collected) are
             # expected outcomes that produce a valid JSON report.  2 = interrupted,
             # 3 = internal error, 4 = usage error — report may be absent or partial.
-            if exit_code not in (0, 1, 5):
+            # Exit 2 is also how pytest reports collection errors (e.g. an
+            # ImportError in a test module); those are test outcomes, returned
+            # as ERROR results below, so exit 2 only fails the action when the
+            # report shows no failed collector.
+            if exit_code not in (0, 1, 5) and not (
+                exit_code == 2 and _report_has_failed_collector(report_path)
+            ):
                 descriptions: dict[int | None, str] = {
-                    2: "interrupted (e.g. by --exitfirst/-x or signal)",
+                    2: "interrupted (collection error, --exitfirst/-x or signal)",
                     3: "internal error in pytest",
                     4: "command-line usage error — check addopts config",
                 }
@@ -142,13 +148,14 @@ class PytestRunTestsHandler(
                     exit_code, f"unexpected exit code {exit_code}"
                 )
                 raise code_action.ActionFailedException(
-                    f"pytest exited with code {exit_code}: {reason}.\nOutput:\n{stderr or stdout}"
+                    f"pytest exited with code {exit_code}: {reason}."
+                    f"\n{_format_output(stdout, stderr)}"
                 )
 
             if not report_path.exists() or report_path.stat().st_size == 0:
                 raise code_action.ActionFailedException(
                     f"pytest did not produce a JSON report (exit code {exit_code})."
-                    f"\nOutput:\n{stderr or stdout}"
+                    f"\n{_format_output(stdout, stderr)}"
                 )
 
             report_data = json.loads(report_path.read_text(encoding="utf-8"))
@@ -177,6 +184,21 @@ class PytestRunTestsHandler(
             )
 
         return RunTestsRunResult(test_results=test_results)
+
+
+def _report_has_failed_collector(report_path: Path) -> bool:
+    """True when the JSON report exists, parses, and lists a failed collector."""
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return any(c.get("outcome") == "failed" for c in report.get("collectors", []))
+
+
+def _format_output(stdout: str, stderr: str) -> str:
+    """Both streams: pytest prints collection errors and tracebacks to stdout,
+    while stderr may hold only unrelated plugin warnings."""
+    return f"stdout:\n{stdout}\nstderr:\n{stderr}"
 
 
 def _map_test(test: dict, project_dir: Path) -> TestCaseResult:
