@@ -12,6 +12,7 @@ import dataclasses
 
 import pytest
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 from finecode_extension_runner.impls.dataclass_codec import DataclassCodec
 from finecode_extension_runner.testing import nonexistent_abs_path
@@ -286,3 +287,86 @@ async def test_run_structured_task_keeps_observation_on_agent() -> None:
     )
 
     assert outcome.agent.observation == observation
+
+
+class _StreamingStubRunner(_StubRunner):
+    """`run_action_iter` yields the snapshots, then the final result."""
+
+    def __init__(
+        self,
+        result: RunAgentTaskRunResult,
+        snapshots: list[RunAgentTaskRunResult],
+    ) -> None:
+        super().__init__(result)
+        self.snapshots = snapshots
+
+    async def run_action_iter(
+        self,
+        action_type: object,
+        payload: object,
+        meta: object,
+        caller_kwargs: object | None = None,
+        *,
+        progress: object | None = None,
+    ):
+        _ = (action_type, payload, meta, caller_kwargs, progress)
+        for snapshot in self.snapshots:
+            yield snapshot
+        yield self.result
+
+
+async def test_run_structured_task_streams_snapshots_and_returns_the_same_outcome() -> (
+    None
+):
+    final = RunAgentTaskRunResult(
+        status=AgentRunStatus.SETTLED,
+        output="the raw text",
+        structured_output={"answer": "42"},
+    )
+    runner = _StreamingStubRunner(
+        final,
+        [
+            RunAgentTaskRunResult(status=AgentRunStatus.RUNNING, output="the"),
+            RunAgentTaskRunResult(status=AgentRunStatus.RUNNING, output="the raw"),
+        ],
+    )
+    seen: list[str] = []
+
+    async def on_snapshot(snapshot: RunAgentTaskRunResult) -> None:
+        seen.append(snapshot.output)
+
+    outcome = await task_support.run_structured_task(
+        action_runner=runner,
+        codec=DataclassCodec(),
+        meta=_meta(),
+        prompt="do it",
+        profile=None,
+        report_type=_Report,
+        on_snapshot=on_snapshot,
+    )
+
+    assert seen == ["the", "the raw"]
+    assert outcome.report == _Report(answer="42")
+    assert outcome.agent is final
+
+
+async def test_run_agent_task_streaming_rejects_an_empty_stream() -> None:
+    class EmptyStreamRunner:
+        async def run_action_iter(self, *args: object, **kwargs: object):
+            snapshots: list[RunAgentTaskRunResult] = []
+            for snapshot in snapshots:
+                yield snapshot
+
+    async def on_snapshot(snapshot: RunAgentTaskRunResult) -> None:
+        pytest.fail("an empty stream must not invoke the snapshot callback")
+
+    with pytest.raises(
+        iprojectactionrunner.ActionRunFailed,
+        match="run_agent_task ended without a result",
+    ):
+        await task_support.run_agent_task_streaming(
+            action_runner=EmptyStreamRunner(),
+            payload=RunAgentTaskRunPayload(prompt="do it"),
+            meta=_meta(),
+            on_snapshot=on_snapshot,
+        )

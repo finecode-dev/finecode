@@ -9,6 +9,8 @@ task.
 
 from __future__ import annotations
 
+import collections.abc
+import contextlib
 import dataclasses
 import re
 import typing
@@ -30,7 +32,9 @@ from fine_agent.run_agent_task_action import (
 __all__ = [
     "StructuredTaskOutcome",
     "TemplateError",
+    "SnapshotCallback",
     "render_template",
+    "run_agent_task_streaming",
     "run_structured_task",
     "slots_from_payload",
     "structure_task_outcome",
@@ -38,6 +42,11 @@ __all__ = [
 ]
 
 T = typing.TypeVar("T")
+
+SnapshotCallback = collections.abc.Callable[
+    [RunAgentTaskRunResult], collections.abc.Awaitable[None]
+]
+"""Receives each `RUNNING` snapshot (the agent's text so far) of a streamed run."""
 
 _SLOT_RE = re.compile(r"\{\{([a-z_][a-z0-9_]*)\}\}")
 
@@ -163,6 +172,39 @@ def structure_task_outcome(
     return StructuredTaskOutcome(report=report, agent=agent, error=None)
 
 
+async def run_agent_task_streaming(
+    *,
+    action_runner: iprojectactionrunner.IProjectActionRunner,
+    payload: RunAgentTaskRunPayload,
+    meta: code_action.RunActionMeta,
+    on_snapshot: SnapshotCallback,
+) -> RunAgentTaskRunResult:
+    """Run `run_agent_task`, passing each `RUNNING` snapshot to *on_snapshot*.
+
+    Returns the final result, which is the last item the stream yields.
+
+    Raises:
+        iprojectactionrunner.ActionRunFailed: the run ended without any result.
+    """
+    last: RunAgentTaskRunResult | None = None
+    async with contextlib.aclosing(
+        action_runner.run_action_iter(
+            iprojectactionrunner.ActionRef.from_type(RunAgentTaskAction),
+            payload,
+            meta,
+        )
+    ) as stream:
+        async for snapshot in stream:
+            last = snapshot
+            if snapshot.status is AgentRunStatus.RUNNING:
+                await on_snapshot(snapshot)
+    if last is None:
+        raise iprojectactionrunner.ActionRunFailed(
+            "run_agent_task ended without a result"
+        )
+    return last
+
+
 async def run_structured_task(
     *,
     action_runner: iprojectactionrunner.IProjectActionRunner,
@@ -172,21 +214,34 @@ async def run_structured_task(
     profile: str | None,
     report_type: type[T],
     capture_history: bool = False,
+    on_snapshot: SnapshotCallback | None = None,
 ) -> StructuredTaskOutcome[T]:
     """Run `run_agent_task` for *prompt* and structure its answer into *report_type*.
+
+    With *on_snapshot*, the agent's text-so-far snapshots are passed to it while
+    the run works; the returned outcome is the same either way.
 
     Exceptions from `run_action` propagate -- an action that could not be
     dispatched at all is not a report whose type did not match.
     """
-    agent = await action_runner.run_action(
-        action_type=iprojectactionrunner.ActionRef.from_type(RunAgentTaskAction),
-        payload=structured_task_payload(
-            codec=codec,
-            prompt=prompt,
-            profile=profile,
-            report_type=report_type,
-            capture_history=capture_history,
-        ),
-        meta=meta,
+    payload = structured_task_payload(
+        codec=codec,
+        prompt=prompt,
+        profile=profile,
+        report_type=report_type,
+        capture_history=capture_history,
     )
+    if on_snapshot is None:
+        agent = await action_runner.run_action(
+            action_type=iprojectactionrunner.ActionRef.from_type(RunAgentTaskAction),
+            payload=payload,
+            meta=meta,
+        )
+    else:
+        agent = await run_agent_task_streaming(
+            action_runner=action_runner,
+            payload=payload,
+            meta=meta,
+            on_snapshot=on_snapshot,
+        )
     return structure_task_outcome(agent, codec=codec, report_type=report_type)
