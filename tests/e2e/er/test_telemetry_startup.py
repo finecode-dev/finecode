@@ -294,7 +294,11 @@ async def test_getinfo_after_initialize_is_traced(
     """Requests after `initialize` produce receiver hop records."""
     async with _server_stack(monkeypatch) as stack:
         _no_global_install(monkeypatch)
-        await _request(stack, "initialize", _initialize_params({"mode": "disabled"}))
+        await _request(
+            stack,
+            "initialize",
+            _initialize_params({"mode": "otlp", "otlpEndpoint": "http://127.0.0.1:1"}),
+        )
 
         reply = await _request(stack, "finecodeRunner/getInfo", {})
         assert "result" in reply

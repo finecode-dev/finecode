@@ -21,6 +21,8 @@ import typing
 from pathlib import Path
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.util._once import Once
 
 from tests.e2e.conftest import kill_group, sigint_group, start_server, wait_for_port
 from tests.e2e.otlp_sink import OtlpSink
@@ -320,13 +322,15 @@ async def _er_stack(sink: OtlpSink):
     from pathlib import Path as _Path
 
     from finecode_jsonrpc.server_transport import ServerStdioTransport
+    from opentelemetry import trace as _otel_trace
 
     from finecode_extension_runner import er_server as _er_server
     from finecode_extension_runner import er_telemetry as _er_telemetry
     from finecode_extension_runner import global_state as _global_state
-    from opentelemetry import trace as _otel_trace
 
-    _prior_tracer_provider = _otel_trace.get_tracer_provider()
+    _prior_tracer_provider = _otel_trace._TRACER_PROVIDER
+    _prior_tracer_provider_once = _otel_trace._TRACER_PROVIDER_SET_ONCE
+    _otel_trace._TRACER_PROVIDER_SET_ONCE = Once()
 
     _global_state.env_name = "test"
     _global_state.project_dir_path = _Path("/tmp/otlp-probe")
@@ -361,14 +365,10 @@ async def _er_stack(sink: OtlpSink):
         from finecode_extension_api import phase_timing_runtime
 
         phase_timing_runtime.set_phase_timing_binding(None)
-        # The ER's real `initialize` installs a global TracerProvider, and the
-        # SDK forbids overriding it: a later `set_tracer_provider` (e.g. another
-        # test module's fixture) would be silently ignored and its spans lost.
-        # Reset the once-guard so the saved provider is current again.
-        from opentelemetry.util._once import Once as _Once
-
+        # Preserve None: installing the fallback proxy as its own delegate
+        # makes later tracer lookups recurse indefinitely.
         _otel_trace._TRACER_PROVIDER = _prior_tracer_provider
-        _otel_trace._TRACER_PROVIDER_SET_ONCE = _Once()
+        _otel_trace._TRACER_PROVIDER_SET_ONCE = _prior_tracer_provider_once
         if _er_telemetry._emitter is not None:
             _er_telemetry._emitter.detach()
             _er_telemetry._emitter = None
@@ -415,6 +415,26 @@ def _span_attrs_for_log(record: object) -> dict:
         which = item.value.WhichOneof("value")
         out[item.key] = getattr(item.value, which) if which else None
     return out
+
+
+@pytest.mark.parametrize("install_provider", [False, True])
+async def test_er_stack_preserves_unconfigured_tracer_provider(
+    sink: OtlpSink, monkeypatch: pytest.MonkeyPatch, install_provider: bool
+) -> None:
+    """An in-process ER leaves later tests free to configure tracing."""
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER", None)
+    once = Once()
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER_SET_ONCE", once)
+
+    async with _er_stack(sink):
+        if install_provider:
+            trace.set_tracer_provider(trace.NoOpTracerProvider())
+
+    assert trace._TRACER_PROVIDER is None
+    assert trace._TRACER_PROVIDER_SET_ONCE is once
+    provider = trace.NoOpTracerProvider()
+    trace.set_tracer_provider(provider)
+    assert trace.get_tracer_provider() is provider
 
 
 async def test_er_records_lag_late_phase_and_health_over_otlp(
