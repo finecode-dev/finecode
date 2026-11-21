@@ -463,12 +463,19 @@ async def run_actions(
                 preview_queue: asyncio.Queue[dict[str, typing.Any]] = asyncio.Queue()
                 accepting_previews = True
                 stderr_is_tty = sys.stderr.isatty()
+                # The label and text of the last printed preview. Consecutive
+                # previews of one project, action and interpreter share a label,
+                # and a snapshot that extends the previous one prints only the
+                # new part (snapshots are cumulative until #927).
+                last_preview_label: str | None = None
+                last_preview_text: str = ""
 
                 def clear_progress_line() -> None:
                     if stderr_is_tty:
                         click.echo("\r\033[K", nl=False, err=True)
 
                 def _print_preview(params: dict[str, typing.Any]) -> None:
+                    nonlocal last_preview_label, last_preview_text
                     value = typing.cast(
                         dict[str, typing.Any], params.get("value", {}) if params else {}
                     )
@@ -496,7 +503,16 @@ async def run_actions(
                         if interpreter:
                             label += f" [{interpreter}]"
                         label += f" ({project_str}) --\n"
-                        block = label + text
+                        if label == last_preview_label and text.startswith(
+                            last_preview_text
+                        ):
+                            block = text[len(last_preview_text) :]
+                            if not block:
+                                continue
+                        else:
+                            block = label + text
+                        last_preview_label = label
+                        last_preview_text = text
                         if not block.endswith("\n"):
                             block += "\n"
                         clear_progress_line()
@@ -516,7 +532,11 @@ async def run_actions(
                 preview_task = asyncio.create_task(_print_previews_in_order())
 
                 async def _on_partial_result(params: dict[str, typing.Any]) -> None:
-                    if accepting_previews:
+                    # Previews are for a person watching a terminal. A shell
+                    # tool of an LLM agent captures stderr into the model's
+                    # context, so a piped stderr gets no previews; the final
+                    # result on stdout is unchanged.
+                    if accepting_previews and stderr_is_tty:
                         preview_queue.put_nowait(params)
 
                 client.on_notification("actions/partialResult", _on_partial_result)
