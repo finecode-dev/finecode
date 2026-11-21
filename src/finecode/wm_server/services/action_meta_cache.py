@@ -156,11 +156,12 @@ def _memo_valid(
     key: tuple[Path, str | None],
     entry: context.ActionMetaFailure,
     venv: Path,
+    workspace_root: Path,
 ) -> bool:
     _, source = key
     if source is not None:
         for stamp in entry.stamps:
-            if not isinstance(stamp, dict) or not _fp_unchanged(stamp):
+            if not isinstance(stamp, dict) or not _fp_unchanged(stamp, workspace_root):
                 return False
         return True
     current = _dir_mtime(_site_packages_dir(venv))
@@ -176,9 +177,9 @@ def _dir_mtime(path: Path | None) -> int | None:
         return None
 
 
-def _check_entry_files(files: list[dict]) -> bool:
+def _check_entry_files(files: list[dict], workspace_root: Path) -> bool:
     for item in files:
-        if not isinstance(item, dict) or not _fp_unchanged(item):
+        if not isinstance(item, dict) or not _fp_unchanged(item, workspace_root):
             return False
     return True
 
@@ -237,7 +238,7 @@ def _check_entry_dirs(entry_files: list[dict], dirs: list[dict]) -> bool:
     return True
 
 
-def _header_valid(stored_file: dict, venv: Path) -> bool:
+def _header_valid(stored_file: dict, venv: Path, workspace_root: Path) -> bool:
     header = stored_file.get("header")
     if not isinstance(header, dict):
         return False
@@ -274,13 +275,17 @@ def _header_valid(stored_file: dict, venv: Path) -> bool:
         if current_names != stored_names:
             return False
     for item in stored_pth:
-        if not isinstance(item, dict) or not _fp_unchanged(item):
+        if not isinstance(item, dict) or not _fp_unchanged(item, workspace_root):
             return False
     return True
 
 
 def _identity_valid(
-    stored_identity: dict | None, current: dict | None, *, is_skew: bool
+    stored_identity: dict | None,
+    current: dict | None,
+    workspace_root: Path,
+    *,
+    is_skew: bool,
 ) -> bool:
     if current is None or not isinstance(stored_identity, dict):
         return False
@@ -296,14 +301,14 @@ def _identity_valid(
         ):
             return False
     else:
-        if not _fp_unchanged(stored_record):
+        if not _fp_unchanged(stored_record, workspace_root):
             return False
     stored_action_meta = stored_identity.get("actionMeta")
     if is_skew:
         return True
     if not isinstance(stored_action_meta, dict):
         return False
-    return _fp_unchanged(stored_action_meta)
+    return _fp_unchanged(stored_action_meta, workspace_root)
 
 
 def _merge_key(document_header: dict, er_identity: dict) -> tuple | None:
@@ -404,13 +409,14 @@ async def lookup(
     use_memo: bool = True,
 ) -> LookupResult:
     venv = finecode_cmd.get_venv_dir_path(project.dir_path, env_name)
+    workspace_root = context.pick_workspace_root_dir(ws_context) or project.dir_path
     metas: dict[str, dict] = {}
     failures: dict[str, context.ActionMetaFailure | None] = {}
     wanted = [s for s in sources if s]
     if use_memo:
         env_memo = ws_context.action_meta_failures.get((venv, None))
         if env_memo is not None:
-            if _memo_valid((venv, None), env_memo, venv):
+            if _memo_valid((venv, None), env_memo, venv, workspace_root):
                 for source in wanted:
                     failures[source] = env_memo
                 return LookupResult(metas=metas, failures=failures)
@@ -425,8 +431,9 @@ async def lookup(
         if _identity_valid(
             stored_identity if isinstance(stored_identity, dict) else None,
             current_identity,
+            workspace_root,
             is_skew=is_skew_file,
-        ) and _header_valid(stored_file, venv):
+        ) and _header_valid(stored_file, venv, workspace_root):
             if is_skew_file:
                 skew = stored_file["skew"]
                 accepted = skew.get("acceptedFormats")
@@ -457,7 +464,9 @@ async def lookup(
                         if not isinstance(files, list) or not isinstance(dirs, list):
                             remaining.append(source)
                             continue
-                        if _check_entry_files(files) and _check_entry_dirs(files, dirs):
+                        if _check_entry_files(
+                            files, workspace_root
+                        ) and _check_entry_dirs(files, dirs):
                             metas[source] = entry["meta"]
                         else:
                             remaining.append(source)
@@ -471,7 +480,7 @@ async def lookup(
                 continue
             memo = ws_context.action_meta_failures.get((venv, source))
             if memo is not None:
-                if _memo_valid((venv, source), memo, venv):
+                if _memo_valid((venv, source), memo, venv, workspace_root):
                     failures[source] = memo
                 else:
                     ws_context.action_meta_failures.pop((venv, source), None)
