@@ -1,4 +1,4 @@
-import dataclasses
+import typing
 
 from finecode_extension_api import code_action
 from loguru import logger
@@ -9,9 +9,9 @@ from finecode_extension_runner._converter import converter as _converter
 
 async def merge_results(
     action_name: str,
-    results: list[dict],
+    results: list[dict[str, typing.Any]],
     runner_context: context.RunnerContext,
-) -> dict:
+) -> code_action.RunActionResult | None:
     """Merge multiple serialized action results into one using the action's result type.
 
     Each entry in ``results`` must be a dict produced by ``dataclasses.asdict()``
@@ -34,7 +34,7 @@ async def merge_results(
 
     non_empty = [r for r in results if r]
     if result_type is None or not non_empty:
-        return {}
+        return None
 
     merged: code_action.RunActionResult | None = None
     for result_dict in non_empty:
@@ -44,10 +44,7 @@ async def merge_results(
         else:
             merged.update(typed)
 
-    if merged is None:
-        return {}
-
     logger.trace(
         f"merge_results: merged {len(non_empty)} results for action '{action_name}'"
     )
-    return dataclasses.asdict(merged)
+    return merged

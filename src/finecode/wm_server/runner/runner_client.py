@@ -490,8 +490,12 @@ async def run_handlers(
 async def merge_results(
     runner: ExtensionRunnerInfo,
     action_name: str,
-    results: list[dict],
-) -> dict:
+    results: list[dict[str, Any]],
+    result_formats: list[RunResultFormat] | None = None,
+) -> _internal_client_types.ResultByFormat:
+    requested_formats = (
+        [RunResultFormat.JSON] if result_formats is None else result_formats
+    )
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
@@ -503,14 +507,19 @@ async def merge_results(
     response = await runner.client.send_request(
         method=_internal_client_types.ER_MERGE_RESULTS,
         params=_internal_client_types.ErMergeResultsParams(
-            action_name=action_name, results=results
+            action_name=action_name,
+            results=results,
+            result_formats=[
+                "json" if result_format is RunResultFormat.JSON else "string"
+                for result_format in requested_formats
+            ],
         ),
         timeout=None,
     )
     merge_result = response.result
     if merge_result.error is not None:
         raise ActionRunFailed(merge_result.error)
-    return merge_result.merged
+    return merge_result.result_by_format or {}
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> bool:

@@ -1210,10 +1210,12 @@ async def get_payload_schemas_cmd(server: ErServer, _params: dict | None) -> dic
     return services.get_payload_schemas(server._runner_context)
 
 
-async def merge_results_cmd(server: ErServer, params: dict | None) -> dict:
+async def merge_results_cmd(
+    server: ErServer, params: dict[str, typing.Any] | None
+) -> dict[str, typing.Any]:
     assert params is not None
     action_name: str = params["actionName"]
-    results: list = params["results"]
+    results: list[dict[str, typing.Any]] = params["results"]
     logger.trace(f"Merge results: action={action_name}, count={len(results)}")
     if server._runner_context is None:
         return {"error": "Extension runner not initialized"}
@@ -1223,7 +1225,20 @@ async def merge_results_cmd(server: ErServer, params: dict | None) -> dict:
             results=results,
             runner_context=server._runner_context,
         )
-        return {"merged": merged}
+        result_by_format: dict[str, typing.Any] = {}
+        if merged is not None:
+            result_formats: list[typing.Literal["json", "string"]] = params.get(
+                "resultFormats", ["json"]
+            )
+            if "json" in result_formats:
+                result_by_format["json"] = dataclasses.asdict(merged)
+            if "string" in result_formats:
+                rendered = run_action_service.action_result_to_run_action_response(
+                    merged, ["string"]
+                )
+                assert rendered.result_by_format is not None
+                result_by_format.update(rendered.result_by_format)
+        return {"resultByFormat": result_by_format}
     except Exception as exception:
         logger.exception(f"Merge results error: {exception}")
         return {"error": str(exception)}

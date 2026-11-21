@@ -12,6 +12,7 @@ field than the other three dialogs.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import pathlib
@@ -39,12 +40,15 @@ from fine_agent.run_agent_task_action import (
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
-from finecode_extension_runner.testing import run_handler
+from finecode_extension_runner import partial_result_sender
+from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_runner.testing import handler_test_session, run_handler
 
 from fine_agent_pi import pi_agent_handler, pi_history, pi_rpc
 from fine_agent_pi.pi_agent_handler import PiAgentHandler
@@ -54,6 +58,14 @@ _FAKE_PI = pathlib.Path(__file__).parent / "fake_pi.py"
 
 
 _ACTIVE_SCENARIO: dict[str, Any] = {}
+
+
+def _discard_partial(
+    _token: int | str,
+    _result: code_action.RunActionResult,
+    _formats: list[str] | None,
+) -> None:
+    return None
 
 
 class _FakePiHandler(PiAgentHandler):
@@ -663,6 +675,77 @@ async def test_turn_end_does_not_double_count_the_message_it_repeats() -> None:
     assert result.usage.total_tokens == 120
 
 
+async def test_snapshot_sends_finish_with_full_result_and_token_run_keeps_output(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        run_action_service,
+        "partial_result_sender",
+        partial_result_sender.PartialResultSender(
+            sender=_discard_partial,
+            wait_time_ms=300,
+        ),
+    )
+    action_source = f"{RunAgentTaskAction.__module__}.{RunAgentTaskAction.__qualname__}"
+    handler_source = f"{_FakePiHandler.__module__}.{_FakePiHandler.__qualname__}"
+    actions = {
+        RunAgentTaskAction.__name__: {
+            "source": action_source,
+            "handlers": [{"name": "pi", "source": handler_source}],
+        }
+    }
+    scenario = {
+        "steps": [
+            {"do": "await_prompt"},
+            {
+                "do": "emit",
+                "frame": {"type": "message_end", "message": {"role": "user"}},
+            },
+            {"do": "emit", "frame": _text("hello")},
+            {"do": "emit", "frame": _assistant_message(_usage(1, 2))},
+            {"do": "emit", "frame": {"type": "agent_settled"}},
+        ]
+    }
+    _ACTIVE_SCENARIO.clear()
+    _ACTIVE_SCENARIO.update(scenario)
+    try:
+        async with handler_test_session(
+            project_dir=tmp_path,
+            actions=actions,
+        ) as session:
+            token_result = await session.run_action(
+                RunAgentTaskAction.__name__,
+                RunAgentTaskRunPayload(prompt="test"),
+                partial_result_token="token",
+            )
+            token_events = [
+                typing.cast(RunAgentTaskRunResult, item)
+                for item in session.partial_results.events
+            ]
+
+            _ACTIVE_SCENARIO.clear()
+            _ACTIVE_SCENARIO.update(scenario)
+            plain_result = await session.run_action(
+                RunAgentTaskAction.__name__, RunAgentTaskRunPayload(prompt="test")
+            )
+    finally:
+        _ACTIVE_SCENARIO.clear()
+
+    assert isinstance(token_result, RunAgentTaskRunResult)
+    assert isinstance(plain_result, RunAgentTaskRunResult)
+    assert dataclasses.replace(token_result, duration_sec=None, session=None) == (
+        dataclasses.replace(plain_result, duration_sec=None, session=None)
+    )
+    assert token_result.output == "hello"
+    assert token_events[-1] == token_result
+    assert token_events[-1].usage is not None
+    snapshots = token_events[:-1]
+    assert snapshots
+    assert all(item.status is AgentRunStatus.RUNNING for item in snapshots)
+    assert all(item.usage is None and item.session is None for item in snapshots)
+    assert [item.output for item in snapshots] == ["hello"]
+
+
 async def test_usage_is_reported_on_a_failed_run() -> None:
     """A run that spent real money and then failed is exactly when the number
     is worth having."""
@@ -861,9 +944,7 @@ async def test_profile_thinking_overrides_and_unset_inherits(
     }
     for profile, expected in (("set", "high"), ("inherit", "low"), (None, "low")):
         record = tmp_path / f"record-{profile}.jsonl"
-        await _run(
-            _settled_scenario(record), handler_config=config, profile=profile
-        )
+        await _run(_settled_scenario(record), handler_config=config, profile=profile)
         assert _flag_value(_recorded_argv(record), "--thinking") == expected
 
 
@@ -1581,9 +1662,7 @@ async def test_settled_run_reports_session_and_continuations_reuse_it(
     assert "first" in resumed and "second" in resumed
     assert _native_files(session_dir) == files_before | {decoy.name}
     assert decoy.read_bytes() == decoy_bytes
-    argv = next(
-        entry["argv"] for entry in _records(second_record) if "argv" in entry
-    )
+    argv = next(entry["argv"] for entry in _records(second_record) if "argv" in entry)
     assert "--session" in argv
     assert argv[argv.index("--session") + 1] == first.session.session_id
     assert "--session-id" not in argv
@@ -1652,10 +1731,7 @@ async def test_continuation_argv_carries_current_model_and_provider(
     argv = next(entry["argv"] for entry in _records(record) if "argv" in entry)
     assert argv[:4] == ["--mode", "rpc", "--session", first.session.session_id]
     assert "--model" in argv and argv[argv.index("--model") + 1] == "new-model"
-    assert (
-        "--provider" in argv
-        and argv[argv.index("--provider") + 1] == "new-provider"
-    )
+    assert "--provider" in argv and argv[argv.index("--provider") + 1] == "new-provider"
     prompts = [entry["prompt"] for entry in _records(record) if "prompt" in entry]
     assert prompts == ["again"]
 
@@ -1810,9 +1886,7 @@ async def test_continuation_deleted_session_fails_without_creating_one(
                 path.unlink()
         return found
 
-    monkeypatch.setattr(
-        pi_history, "find_pi_session_file", _find_then_delete
-    )
+    monkeypatch.setattr(pi_history, "find_pi_session_file", _find_then_delete)
     record = tmp_path / "deleted-record.jsonl"
     result = await _run(
         _resume_run_scenario(record),

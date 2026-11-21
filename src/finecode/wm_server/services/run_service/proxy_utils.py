@@ -2099,6 +2099,7 @@ async def _run_multi_env_concurrent(
                 action_name=action_name,
                 results=raw_results,
             )
+            merged_raw = merged_raw.get("json", {})
         except runner_client.BaseRunnerRequestException as error:
             raise ActionRunFailed(
                 f"merge_results failed for {action_name}: {error.message}"

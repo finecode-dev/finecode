@@ -2040,10 +2040,19 @@ class ErReloadActionResponse(BaseResponse):
     result: ErReloadActionResult
 
 
+class ResultByFormat(typing.TypedDict, total=False):
+    json: dict[str, typing.Any]
+    string: str
+    styled_text_json: typing.Any
+
+
 @dataclasses.dataclass
 class ErMergeResultsParams:
     action_name: str
-    results: list
+    results: list[dict[str, typing.Any]]
+    result_formats: list[typing.Literal["json", "string"]] = dataclasses.field(
+        default_factory=lambda: ["json"]
+    )
 
 
 @dataclasses.dataclass
@@ -2053,7 +2062,7 @@ class ErMergeResultsRequest(BaseRequest):
 
 @dataclasses.dataclass
 class ErMergeResultsResult(BaseResult):
-    merged: typing.Any = None
+    result_by_format: ResultByFormat | None = None
     error: str | None = None
 
 

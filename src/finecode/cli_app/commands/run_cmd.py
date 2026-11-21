@@ -1,7 +1,9 @@
 # docs: docs/cli.md
 import asyncio
+import contextlib
 import difflib
 import json
+import os
 import pathlib
 import sys
 import threading
@@ -417,10 +419,6 @@ async def run_actions(
                     run_options=selection_options,
                 )
 
-                # Workspace-scoped actions run once on the root project and stream all
-                # their sub-project output tagged with that single root path.  Repeating
-                # the root header for every partial adds no information, so suppress it
-                # when every requested action is workspace-scoped.
                 scope_by_source = {a["source"]: a.get("scope") for a in all_actions}
                 show_project_header = not (
                     action_sources
@@ -462,32 +460,64 @@ async def run_actions(
                 }
 
                 partial_result_token = str(uuid.uuid4())
+                preview_queue: asyncio.Queue[dict[str, typing.Any]] = asyncio.Queue()
+                accepting_previews = True
+                stderr_is_tty = sys.stderr.isatty()
 
-                async def _on_partial_result(params: dict) -> None:
-                    # Hold output back while a question is on screen, rather than
-                    # printing between the prompt and the cursor.
-                    await prompt_idle.wait()
-                    value = params.get("value", {}) if params else {}
-                    project_str = value.get("project", "")
-                    results = value.get("results", {})
-                    interpreter = value.get("interpreter")
-                    block = _format_project_block(
-                        project_str,
-                        results,
-                        source_to_name,
-                        show_project_header,
-                        interpreter,
+                def clear_progress_line() -> None:
+                    if stderr_is_tty:
+                        click.echo("\r\033[K", nl=False, err=True)
+
+                def _print_preview(params: dict[str, typing.Any]) -> None:
+                    value = typing.cast(
+                        dict[str, typing.Any], params.get("value", {}) if params else {}
                     )
-                    # A partial with no rendered content (e.g. a project with nothing to
-                    # report) would otherwise print just the project header with an empty
-                    # body; skip it. The merged result still lands in the final response.
-                    if block is None:
-                        return
+                    project_str = value.get("project", "")
+                    results = typing.cast(
+                        dict[str, dict[str, typing.Any]], value.get("results", {})
+                    )
+                    interpreter = value.get("interpreter")
+                    for action_source, action_data in results.items():
+                        result_by_format = action_data.get("resultByFormat", {})
+                        if not (
+                            result_by_format.get("string")
+                            or result_by_format.get("styled_text_json")
+                        ):
+                            continue
+                        display_name = source_to_name.get(action_source, action_source)
+                        response = runner_client.RunActionResponse(
+                            result_by_format=result_by_format,
+                            return_code=action_data.get("returnCode", 0),
+                        )
+                        text = utils.run_result_to_str(response.text(), display_name)
+                        if not text:
+                            continue
+                        label = f"-- preview: {display_name}"
+                        if interpreter:
+                            label += f" [{interpreter}]"
+                        label += f" ({project_str}) --\n"
+                        block = label + text
+                        if not block.endswith("\n"):
+                            block += "\n"
+                        clear_progress_line()
+                        _ = sys.stderr.write(block)
+                        _ = sys.stderr.flush()
 
-                    # split blocks with newline
-                    block = "\n" + block
+                async def _print_previews_in_order() -> None:
+                    while True:
+                        params = await preview_queue.get()
+                        try:
+                            await prompt_idle.wait()
+                            if accepting_previews:
+                                _print_preview(params)
+                        finally:
+                            preview_queue.task_done()
 
-                    click.echo(block, nl=False)
+                preview_task = asyncio.create_task(_print_previews_in_order())
+
+                async def _on_partial_result(params: dict[str, typing.Any]) -> None:
+                    if accepting_previews:
+                        preview_queue.put_nowait(params)
 
                 client.on_notification("actions/partialResult", _on_partial_result)
 
@@ -503,6 +533,39 @@ async def run_actions(
                     )
                 except ApiError as exc:
                     raise RunFailed(str(exc)) from exc
+                finally:
+                    accepting_previews = False
+                    _ = preview_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await preview_task
+                    clear_progress_line()
+
+                stdout_is_tty = sys.stdout.isatty()
+                color_output = (
+                    stdout_is_tty
+                    and "NO_COLOR" not in os.environ
+                    and os.environ.get("TERM") != "dumb"
+                )
+                for project_path_str, actions_results in batch_result.get(
+                    "results", {}
+                ).items():
+                    for action_source, action_data in actions_results.items():
+                        result_by_format = action_data.get("resultByFormat", {})
+                        if (
+                            "string" not in result_by_format
+                            and "styled_text_json" not in result_by_format
+                        ):
+                            continue
+                        block = _format_project_block(
+                            project_path_str,
+                            {action_source: action_data},
+                            source_to_name,
+                            show_project_header,
+                            use_color=color_output,
+                        )
+                        if block is not None:
+                            _ = sys.stdout.write(block)
+                            _ = sys.stdout.flush()
 
                 # Use the WM's type-safely merged per-project results (requested via
                 # mergeResults) for the saved/returned data.
@@ -528,6 +591,8 @@ def _format_project_block(
     source_to_name: dict[str, str] | None = None,
     show_project_header: bool = True,
     interpreter: str | None = None,
+    *,
+    use_color: bool = True,
 ) -> str | None:
     """Format one project's action results as a printable block.
 
@@ -554,7 +619,10 @@ def _format_project_block(
         display_name = (source_to_name or {}).get(action_source, action_source)
         action_output = ""
         if run_many_actions:
-            action_output += f"{click.style(display_name, bold=True)}:"
+            action_name = (
+                click.style(display_name, bold=True) if use_color else display_name
+            )
+            action_output += f"{action_name}:"
         action_output += utils.run_result_to_str(response.text(), display_name)
         project_output_parts.append(action_output)
 
@@ -563,12 +631,18 @@ def _format_project_block(
         return None
 
     if interpreter:
-        content = f"{click.style(interpreter, dim=True)}\n" + content
+        interpreter_name = (
+            click.style(interpreter, dim=True) if use_color else interpreter
+        )
+        content = f"{interpreter_name}\n" + content
 
     if show_project_header:
-        block = (
-            f"{click.style(project_path_str, bold=True, underline=True)}\n" + content
+        project_header = (
+            click.style(project_path_str, bold=True, underline=True)
+            if use_color
+            else project_path_str
         )
+        block = f"{project_header}\n" + content
     else:
         block = content
 
@@ -587,9 +661,9 @@ def _build_streaming_result(
 ) -> utils.RunActionsResult:
     """Build a RunActionsResult from collected partial-result notifications.
 
-    Output is empty because each project block was already printed to stdout as
-    the notification arrived.  ``result_by_project`` is populated for callers
-    that need the structured data (e.g. ``--save-results``).
+    ``output`` stays empty because the final blocks were printed directly after
+    the batch returned. ``result_by_project`` carries the structured data for
+    callers that need it (e.g. ``--save-results``).
     """
     result_by_project: dict[
         pathlib.Path, dict[str, runner_client.RunActionResponse]

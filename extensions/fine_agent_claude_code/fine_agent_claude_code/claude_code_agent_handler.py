@@ -30,6 +30,7 @@ from fine_agent.session_support import (
     session_project_error,
     with_session,
 )
+from fine_agent.snapshot_stream import SnapshotStream
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
@@ -176,6 +177,12 @@ class ClaudeCodeAgentHandler(
     Exit codes: non-zero is treated as failure with stderr attached, but `0` is
     *not* sufficient for success. The outcome is decided from the `result`
     frame; the exit code only adds to it.
+
+    One complete snapshot is sent per assistant frame, with no time-driven
+    flush (i = infinity). For M assistant messages over T seconds, at most
+    M + ceil(T / i) + 1, or M + 1, partials are sent. Snapshot text across
+    those hops is bounded by that count times the longest snapshot; terminal
+    fields are not part of this bound.
     """
 
     def __init__(
@@ -197,8 +204,22 @@ class ClaudeCodeAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
+        snapshots = SnapshotStream(
+            run_context.partial_result_sender,
+            min_interval_sec=None,
+            logger=self.logger,
+        )
+        result = await self._run_with_snapshots(payload, run_context, snapshots)
+        return await snapshots.finish(result)
+
+    async def _run_with_snapshots(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+        snapshots: SnapshotStream,
+    ) -> RunAgentTaskRunResult:
         if payload.continue_session is not None:
-            return await self._run_continuation(payload, run_context)
+            return await self._run_continuation(payload, run_context, snapshots)
         settings = self._resolve(payload.profile)
         if isinstance(settings, str):
             # Fail before spawning anything: an unknown profile is a
@@ -258,7 +279,14 @@ class ClaudeCodeAgentHandler(
             return result
 
         return await self._settle_spawned_run(
-            payload, run_context, process, command, settings, project_dir, started
+            payload,
+            run_context,
+            process,
+            command,
+            settings,
+            project_dir,
+            started,
+            snapshots,
         )
 
     async def _settle_spawned_run(
@@ -270,10 +298,11 @@ class ClaudeCodeAgentHandler(
         settings: _ClaudeRunSettings,
         project_dir: pathlib.Path,
         started: float,
+        snapshots: SnapshotStream,
     ) -> RunAgentTaskRunResult:
         try:
             result, observation_state = await self._run_with_process(
-                payload, run_context, process, command, settings
+                payload, run_context, process, command, settings, snapshots
             )
         except BaseException:
             # Anything escaping the drive that the paths inside do not already
@@ -344,6 +373,7 @@ class ClaudeCodeAgentHandler(
         self,
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
+        snapshots: SnapshotStream,
     ) -> RunAgentTaskRunResult:
         ref = payload.continue_session
         assert ref is not None
@@ -447,7 +477,14 @@ class ClaudeCodeAgentHandler(
             return failed
 
         return await self._settle_spawned_run(
-            payload, run_context, process, command, settings, project_dir, started
+            payload,
+            run_context,
+            process,
+            command,
+            settings,
+            project_dir,
+            started,
+            snapshots,
         )
 
     async def _run_with_process(
@@ -457,11 +494,12 @@ class ClaudeCodeAgentHandler(
         process: icommandrunner.IAsyncProcess,
         command: list[str],
         settings: _ClaudeRunSettings,
+        snapshots: SnapshotStream,
     ) -> tuple[RunAgentTaskRunResult, ClaudeObservationState]:
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
                 result, observation_state = await asyncio.wait_for(
-                    self._drive(process, payload.prompt, progress),
+                    self._drive(process, payload.prompt, progress, snapshots),
                     timeout=settings.settle_timeout_sec,
                 )
             except asyncio.CancelledError:
@@ -514,6 +552,7 @@ class ClaudeCodeAgentHandler(
         process: icommandrunner.IAsyncProcess,
         prompt: str,
         progress: code_action.ProgressContext,
+        snapshots: SnapshotStream,
     ) -> tuple[RunAgentTaskRunResult, ClaudeObservationState]:
         # Subscribe before prompting. The stream replays anything produced
         # earlier, so this is not load-bearing -- it just keeps the order on the
@@ -579,6 +618,7 @@ class ClaudeCodeAgentHandler(
                     await progress.report(f"Tool: {tool}")
                 if not tools:
                     await progress.report(f"Turn {turns}")
+                await snapshots.update("".join(streamed), message_end=True)
                 continue
 
             if event == claude_code_stream.ClaudeEvent.RESULT:

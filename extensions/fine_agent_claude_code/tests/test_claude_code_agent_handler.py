@@ -14,11 +14,13 @@ was denied a tool is still a settled run, and a run that ends without a
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import pathlib
 import sys
 import time
+import typing
 from typing import Any
 
 import pytest
@@ -37,13 +39,16 @@ from fine_agent.run_agent_task_action import (
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.resource_uri import (
     ResourceUri,
     path_to_resource_uri,
     resource_uri_to_path,
 )
-from finecode_extension_runner.testing import run_handler
+from finecode_extension_runner import partial_result_sender
+from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_runner.testing import handler_test_session, run_handler
 
 from fine_agent_claude_code import claude_code_agent_handler
 from fine_agent_claude_code.claude_code_agent_handler import ClaudeCodeAgentHandler
@@ -55,6 +60,14 @@ _FAKE_CLAUDE = pathlib.Path(__file__).parent / "fake_claude.py"
 
 
 _ACTIVE_SCENARIO: dict[str, Any] = {}
+
+
+def _discard_partial(
+    _token: int | str,
+    _result: code_action.RunActionResult,
+    _formats: list[str] | None,
+) -> None:
+    return None
 
 
 class _FakeClaudeHandler(ClaudeCodeAgentHandler):
@@ -152,6 +165,74 @@ def _result(
         "permission_denials": denials or [],
         **extra,
     }
+
+
+async def test_snapshot_terminal_matches_final_result_and_preserves_rewritten_output(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        run_action_service,
+        "partial_result_sender",
+        partial_result_sender.PartialResultSender(
+            sender=_discard_partial,
+            wait_time_ms=300,
+        ),
+    )
+    action_source = f"{RunAgentTaskAction.__module__}.{RunAgentTaskAction.__qualname__}"
+    handler_source = (
+        f"{_FakeClaudeHandler.__module__}.{_FakeClaudeHandler.__qualname__}"
+    )
+    actions = {
+        RunAgentTaskAction.__name__: {
+            "source": action_source,
+            "handlers": [{"name": "claude", "source": handler_source}],
+        }
+    }
+    scenario = {
+        "steps": [
+            {"do": "read_prompt"},
+            {"do": "emit", "frame": _assistant(_text("partial answer"))},
+            {
+                "do": "emit",
+                "frame": _result(text="canonical answer", turns=3),
+            },
+        ]
+    }
+    _ACTIVE_SCENARIO.clear()
+    _ACTIVE_SCENARIO.update(scenario)
+    try:
+        async with handler_test_session(
+            project_dir=tmp_path, actions=actions
+        ) as session:
+            token_result = await session.run_action(
+                RunAgentTaskAction.__name__,
+                RunAgentTaskRunPayload(prompt="test"),
+                partial_result_token="token",
+            )
+            token_events = [
+                typing.cast(RunAgentTaskRunResult, item)
+                for item in session.partial_results.events
+            ]
+
+            _ACTIVE_SCENARIO.clear()
+            _ACTIVE_SCENARIO.update(scenario)
+            plain_result = await session.run_action(
+                RunAgentTaskAction.__name__, RunAgentTaskRunPayload(prompt="test")
+            )
+    finally:
+        _ACTIVE_SCENARIO.clear()
+
+    assert isinstance(token_result, RunAgentTaskRunResult)
+    assert isinstance(plain_result, RunAgentTaskRunResult)
+    assert dataclasses.replace(token_result, duration_sec=None, session=None) == (
+        dataclasses.replace(plain_result, duration_sec=None, session=None)
+    )
+    assert token_result.output == "canonical answer"
+    assert token_events[-1] == token_result
+    assert token_events[-1].output == "canonical answer"
+    assert token_events[0].status is AgentRunStatus.RUNNING
+    assert token_events[0].output == "partial answer"
+    assert token_events[0].usage is None and token_events[0].session is None
 
 
 def _model_usage(**models: dict[str, Any]) -> dict[str, Any]:
@@ -529,9 +610,7 @@ async def test_profile_thinking_overrides_and_unset_inherits(
     }
     for profile, expected in (("set", "high"), ("inherit", "low"), (None, "low")):
         record = tmp_path / f"record-{profile}.jsonl"
-        await _run(
-            _settled_scenario(record), handler_config=config, profile=profile
-        )
+        await _run(_settled_scenario(record), handler_config=config, profile=profile)
         assert _flag_value(_recorded_argv(record), "--effort") == expected
 
 

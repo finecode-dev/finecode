@@ -10,6 +10,7 @@ exit code 2 instead of the named failure and exit code 1.
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import typing
 
@@ -36,6 +37,16 @@ class _FakeApiClient:
         self.add_dir_calls: list[tuple[pathlib.Path, bool]] = []
         self.list_actions_calls: list[dict] = []
         self.run_batch_projects_calls: list[list[str] | None] = []
+        self.notification_handlers: dict[
+            str,
+            typing.Callable[[dict[str, typing.Any]], typing.Awaitable[None]],
+        ] = {}
+        self.partial_results_to_send: list[dict[str, typing.Any]] = []
+        self.run_batch_result: dict[str, typing.Any] = {
+            "results": {},
+            "returnCode": 0,
+        }
+        self.run_batch_error: ApiServerError | None = None
         self.closed = False
 
     def configure_reconnect(
@@ -46,7 +57,12 @@ class _FakeApiClient:
     ) -> None:
         self._on_reattach = on_reattach
 
-    def on_notification(self, method: str, handler: object) -> None: ...
+    def on_notification(
+        self,
+        method: str,
+        handler: typing.Callable[[dict[str, typing.Any]], typing.Awaitable[None]],
+    ) -> None:
+        self.notification_handlers[method] = handler
 
     def on_request(self, method: str, handler: object) -> None: ...
 
@@ -108,7 +124,14 @@ class _FakeApiClient:
         **kwargs: object,
     ) -> dict:
         self.run_batch_projects_calls.append(projects)
-        return {"results": {}, "returnCode": 0}
+        handler = self.notification_handlers.get("actions/partialResult")
+        if handler is not None:
+            for partial in self.partial_results_to_send:
+                await handler({"value": partial})
+                await asyncio.sleep(0)
+        if self.run_batch_error is not None:
+            raise self.run_batch_error
+        return self.run_batch_result
 
     async def close(self) -> None:
         self.closed = True
@@ -122,14 +145,16 @@ async def _run(
     own_server: bool = True,
     projects_names: list[str] | None = None,
     unresolved_projects: list[dict] | None = None,
+    client: _FakeApiClient | None = None,
     workdir_path: pathlib.Path,
 ) -> _FakeApiClient:
     async def _fake_wait_ready(*a: object, **k: object) -> int:
         return 1234
 
-    client = _FakeApiClient(
-        actions, workdir_path=workdir_path, unresolved_projects=unresolved_projects
-    )
+    if client is None:
+        client = _FakeApiClient(
+            actions, workdir_path=workdir_path, unresolved_projects=unresolved_projects
+        )
     monkeypatch.setattr(
         run_cmd.wm_lifecycle,
         "start_own_server",
@@ -285,3 +310,225 @@ async def test_project_filter_passes_project_paths_to_listing(
     ]
     assert client.run_batch_projects_calls == [[str(tmp_path)]]
     assert client.closed
+
+
+@pytest.mark.parametrize("stderr_is_tty", [False, True])
+async def test_partial_results_are_previewed_on_stderr_in_arrival_order(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stderr_is_tty: bool,
+) -> None:
+    """People can watch live output without mixing previews into piped stdout."""
+    client = _FakeApiClient(
+        [_action("run agent task", "pkg.RunAgentTask", "project")], tmp_path
+    )
+    client.partial_results_to_send = [
+        {
+            "project": str(tmp_path),
+            "results": {
+                "pkg.RunAgentTask": {
+                    "resultByFormat": {"string": "\x1b[31mfirst snapshot\x1b[0m"},
+                    "returnCode": 0,
+                }
+            },
+        },
+        {
+            "project": str(tmp_path),
+            "interpreter": "cpython@3.14",
+            "results": {
+                "pkg.RunAgentTask": {
+                    "resultByFormat": {"string": "second snapshot"},
+                    "returnCode": 0,
+                }
+            },
+        },
+    ]
+
+    monkeypatch.setattr(run_cmd.sys.stderr, "isatty", lambda: stderr_is_tty)
+    await _run(
+        [_action("run agent task", "pkg.RunAgentTask", "project")],
+        names=["run agent task"],
+        monkeypatch=monkeypatch,
+        client=client,
+        workdir_path=tmp_path,
+    )
+    await client.notification_handlers["actions/partialResult"](
+        {
+            "value": {
+                "project": str(tmp_path),
+                "results": {
+                    "pkg.RunAgentTask": {
+                        "resultByFormat": {"string": "late snapshot"},
+                        "returnCode": 0,
+                    }
+                },
+            }
+        }
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.index("first snapshot") < captured.err.index("second snapshot")
+    assert "late snapshot" not in captured.err
+    assert "\x1b[31mfirst snapshot\x1b[0m" in captured.err
+    assert "-- preview: run agent task (" + str(tmp_path) + ") --" in captured.err
+    assert (
+        "-- preview: run agent task [cpython@3.14] (" + str(tmp_path) + ") --"
+        in captured.err
+    )
+    assert ("\r\x1b[K" in captured.err) is stderr_is_tty
+
+
+async def test_preview_waiting_behind_a_question_is_discarded_when_run_finishes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A preview held behind an open question is not printed after completion."""
+    client = _FakeApiClient(
+        [_action("run agent task", "pkg.RunAgentTask", "project")], tmp_path
+    )
+    client.partial_results_to_send = [
+        {
+            "project": str(tmp_path),
+            "results": {
+                "pkg.RunAgentTask": {
+                    "resultByFormat": {"string": "waiting snapshot"},
+                    "returnCode": 0,
+                }
+            },
+        }
+    ]
+
+    def _hold_prompt(
+        prompt_idle: asyncio.Event,
+    ) -> typing.Callable[
+        [dict[str, typing.Any]], typing.Awaitable[dict[str, typing.Any]]
+    ]:
+        prompt_idle.clear()
+
+        async def _handler(_params: dict[str, typing.Any]) -> dict[str, typing.Any]:
+            return {}
+
+        return _handler
+
+    monkeypatch.setattr(run_cmd.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(run_cmd, "_make_elicit_handler", _hold_prompt)
+
+    await _run(
+        [_action("run agent task", "pkg.RunAgentTask", "project")],
+        names=["run agent task"],
+        monkeypatch=monkeypatch,
+        client=client,
+        workdir_path=tmp_path,
+    )
+
+    assert "waiting snapshot" not in capsys.readouterr().err
+
+
+async def test_final_blocks_use_result_order_and_skip_failed_empty_slots(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Final text is stable in request order and a failed empty slot is harmless."""
+    actions = [
+        _action("agent", "pkg.Agent", "project"),
+        _action("lint", "pkg.Lint", "project"),
+        _action("failed", "pkg.Fail", "project"),
+    ]
+    client = _FakeApiClient(actions, tmp_path)
+    client.run_batch_result = {
+        "results": {
+            "/project-b": {
+                "pkg.Agent": {
+                    "resultByFormat": {"string": "\x1b[31magent-b\x1b[0m\n"},
+                    "returnCode": 0,
+                },
+                "pkg.Lint": {
+                    "resultByFormat": {"string": "lint-b\n"},
+                    "returnCode": 0,
+                },
+                "pkg.Fail": {"resultByFormat": {}, "returnCode": 1},
+            },
+            "/project-a": {
+                "pkg.Lint": {
+                    "resultByFormat": {"string": "lint-a\n"},
+                    "returnCode": 0,
+                }
+            },
+        },
+        "returnCode": 1,
+    }
+
+    await _run(
+        actions,
+        names=["agent", "lint", "failed"],
+        monkeypatch=monkeypatch,
+        client=client,
+        workdir_path=tmp_path,
+    )
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.index("/project-b") < captured.out.index("agent-b")
+    assert captured.out.index("agent-b") < captured.out.index("/project-a")
+    assert "lint-a" in captured.out
+    assert "lint-b" in captured.out
+    assert "pkg.Fail" not in captured.out
+    assert "\x1b[31magent-b\x1b[0m" in captured.out
+    assert captured.out.count("/project-b") == 2
+
+
+async def test_final_blocks_suppress_workspace_project_header(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Workspace output has no repeated root path header."""
+    actions = [_action("inspect", "pkg.Inspect", "workspace")]
+    client = _FakeApiClient(actions, tmp_path)
+    client.run_batch_result = {
+        "results": {
+            str(tmp_path): {
+                "pkg.Inspect": {
+                    "resultByFormat": {"string": "workspace result\n"},
+                    "returnCode": 0,
+                }
+            }
+        },
+        "returnCode": 0,
+    }
+
+    await _run(
+        actions,
+        names=["inspect"],
+        monkeypatch=monkeypatch,
+        client=client,
+        workdir_path=tmp_path,
+    )
+
+    assert capsys.readouterr().out == "workspace result\n"
+
+
+async def test_run_batch_error_does_not_print_final_blocks(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A disconnected batch does not print incomplete final results."""
+    actions = [_action("agent", "pkg.Agent", "project")]
+    client = _FakeApiClient(actions, tmp_path)
+    client.run_batch_error = ApiServerError(-32603, "WM disconnected")
+
+    with pytest.raises(RunFailed, match="WM disconnected"):
+        await _run(
+            actions,
+            names=["agent"],
+            monkeypatch=monkeypatch,
+            client=client,
+            workdir_path=tmp_path,
+        )
+
+    assert capsys.readouterr().out == ""

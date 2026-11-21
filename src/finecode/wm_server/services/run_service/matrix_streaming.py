@@ -30,12 +30,16 @@ from loguru import logger
 
 from finecode.wm_server import context, domain
 from finecode.wm_server.config.interpreter_matrix import Interpreter
-from finecode.wm_server.runner import elicitation_bridge, runner_client
+from finecode.wm_server.runner import (
+    _internal_client_types,
+    elicitation_bridge,
+    runner_client,
+)
 from finecode.wm_server.runner.runner_client import RunActionResponse
 from finecode.wm_server.utils import stream_completion
 
 from . import matrix_runner, proxy_utils
-from .merge_helpers import merge_partial_results_for_action
+from .merge_helpers import merge_slot_results, strip_unrequested_formats
 
 __all__ = ["run_matrix_with_partial_results"]
 
@@ -86,8 +90,20 @@ async def _run_variant(
     variant-keyed result; combination across variants happens in the caller.
     """
     partial_count = 0
-    json_payloads: list[dict] = []
-    final_result_by_format: dict[str, typing.Any] = {}
+    entries: list[_internal_client_types.ResultByFormat] = []
+    requested_formats = (
+        result_formats
+        if result_formats is not None
+        else [runner_client.RunResultFormat.JSON]
+    )
+    result_formats_for_run = list(requested_formats)
+    if (
+        merge_results
+        and runner_client.RunResultFormat.STRING in requested_formats
+        and runner_client.RunResultFormat.JSON not in requested_formats
+    ):
+        result_formats_for_run.append(runner_client.RunResultFormat.JSON)
+    final_result_by_format: _internal_client_types.ResultByFormat = {}
     callback_fault: BaseException | None = None
     runner_error: BaseException | None = None
     # Bound only when the producer context delivered its prefix boundary;
@@ -103,7 +119,7 @@ async def _run_variant(
             dev_env=dev_env,
             ws_context=ws_context,
             initialize_all_handlers=True,
-            result_formats=result_formats,
+            result_formats=result_formats_for_run,
             interpreter=interpreter,
             origin=origin,
         ) as ctx:
@@ -128,11 +144,24 @@ async def _run_variant(
                 value = event.value
                 partial_count += 1
                 if isinstance(value, dict):
-                    final_result_by_format = value
+                    result_by_format = typing.cast(
+                        _internal_client_types.ResultByFormat, value
+                    )
+                    final_result_by_format = result_by_format
                     if merge_results:
-                        json_payloads.append(value.get("json"))
+                        entries.append(result_by_format)
                 try:
-                    await on_partial(interpreter.canonical, value)
+                    await on_partial(
+                        interpreter.canonical,
+                        dict(
+                            strip_unrequested_formats(
+                                typing.cast(
+                                    _internal_client_types.ResultByFormat, value
+                                ),
+                                requested_formats,
+                            )
+                        ),
+                    )
                 except Exception as exc:
                     callback_fault = exc
             # The loop only ends at the shared END marker; record the
@@ -175,29 +204,38 @@ async def _run_variant(
     if partial_count == 0:
         for resp in finished.responses:
             if resp.result_by_format:
-                final_result_by_format = resp.result_by_format
-                if merge_results:
-                    json_payloads.append(resp.result_by_format.get("json"))
-                await on_partial(interpreter.canonical, resp.result_by_format)
+                result_by_format = typing.cast(
+                    _internal_client_types.ResultByFormat, resp.result_by_format
+                )
+                final_result_by_format.update(result_by_format)
+                await on_partial(
+                    interpreter.canonical,
+                    dict(
+                        strip_unrequested_formats(result_by_format, requested_formats)
+                    ),
+                )
+        if merge_results and final_result_by_format:
+            entries.append(final_result_by_format)
 
     if merge_results:
-        merged_json = await merge_partial_results_for_action(
+        merged_result = await merge_slot_results(
             project_path=project.dir_path,
             action_name=action_name,
-            json_payloads=json_payloads,
+            entries=entries,
+            requested_formats=requested_formats,
             ws_context=ws_context,
         )
-        variant_result_by_format: dict[str, typing.Any] = {"json": merged_json}
-        # Merging only applies to the `json` format — preserve a text form when
-        # the (single, or last-seen) streamed/direct result carried one.
-        for fmt in ("string", "styled_text_json"):
-            if fmt in final_result_by_format:
-                variant_result_by_format[fmt] = final_result_by_format[fmt]
+        variant_result_by_format = merged_result or {}
     else:
-        variant_result_by_format = final_result_by_format
+        variant_result_by_format = strip_unrequested_formats(
+            final_result_by_format, requested_formats
+        )
 
     return RunActionResponse(
-        result_by_format=variant_result_by_format,
+        result_by_format=typing.cast(
+            dict[str, runner_client.RunActionRawResult],
+            dict(variant_result_by_format),
+        ),
         return_code=return_code,
         status="success",
     )
@@ -277,6 +315,11 @@ async def run_matrix_with_partial_results(
     given (ADR-0103) — a set of selected concrete env names to restrict the
     fan-out to.
     """
+    requested_formats = (
+        result_formats
+        if result_formats is not None
+        else [runner_client.RunResultFormat.JSON]
+    )
     selected = matrix_runner.selected_variants(action, selected_envs)
 
     interpreters: list[Interpreter] = list(selected.keys())
@@ -317,4 +360,13 @@ async def run_matrix_with_partial_results(
         zip(interpreters, responses, strict=False)
     )
     combined = matrix_runner._combine_variant_responses(variants)
-    return combined.result_by_format, combined.return_code
+    combined_result = typing.cast(
+        _internal_client_types.ResultByFormat, combined.result_by_format
+    )
+    if (
+        merge_results
+        and runner_client.RunResultFormat.JSON not in requested_formats
+        and not any(response.status == "error" for response in responses)
+    ):
+        combined_result = strip_unrequested_formats(combined_result, requested_formats)
+    return dict(combined_result), combined.return_code

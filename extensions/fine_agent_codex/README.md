@@ -97,10 +97,11 @@ handlers = [
 config.sandbox_mode = "workspace-write"  # the default is read-only
 ```
 
-Options (`config.`): `model` (`None` leaves the CLI's default),
-`sandbox_mode` (`read-only` by default), `skip_git_repo_check` (`false`),
+Options (`config.`): `model` (`None` leaves the CLI's default), `thinking`
+(sent as `model_reasoning_effort`; `None` leaves `~/.codex/config.toml` in
+charge), `sandbox_mode` (`read-only` by default), `skip_git_repo_check` (`false`),
 `settle_timeout_sec` (`900.0`), and a `profiles` map of named `{ model,
-settle_timeout_sec }` overrides that inherit whatever they leave unset. A
+thinking, settle_timeout_sec }` overrides that inherit whatever they leave unset. A
 profile can never widen the sandbox: `sandbox_mode` stays top-level.
 
 Explicit limitations, not missing features: the handler never reports

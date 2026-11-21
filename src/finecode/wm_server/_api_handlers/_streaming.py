@@ -27,7 +27,11 @@ from finecode.wm_server._jsonrpc import (
     _NotImplementedError,
     _write_message,
 )
-from finecode.wm_server.runner import elicitation_bridge
+from finecode.wm_server.runner import (
+    _internal_client_types,
+    elicitation_bridge,
+    runner_client,
+)
 from finecode.wm_server.services.run_service.exceptions import (
     ActionNotFoundError,
     ActionRunFailed,
@@ -38,9 +42,15 @@ from finecode.wm_server.services.run_service.execution_scopes import (
     OrchestrationPolicy,
 )
 from finecode.wm_server.services.run_service.merge_helpers import (
-    merge_partial_results_for_action,
+    merge_slot_results,
+    strip_unrequested_formats,
 )
 from finecode.wm_server.utils import stream_completion
+
+
+class BatchSlotResult(typing.TypedDict):
+    resultByFormat: _internal_client_types.ResultByFormat
+    returnCode: int
 
 
 async def _handle_run_action_with_partial_results(
@@ -206,16 +216,17 @@ async def _handle_run_action_with_partial_results(
             return_code = final.get("returnCode", 0) if isinstance(final, dict) else 0
             results: dict[str, dict] = {}
             for project_str, payloads in json_by_project.items():
-                merged_json = await merge_partial_results_for_action(
+                merged_result = await merge_slot_results(
                     project_path=pathlib.Path(project_str),
                     action_name=action_name,
-                    json_payloads=payloads,
+                    entries=[{"json": payload} for payload in payloads],
+                    requested_formats=[runner_client.RunResultFormat.JSON],
                     ws_context=ws_context,
                 )
-                if merged_json is not None:
+                if merged_result is not None:
                     results[project_str] = {
                         action_source: {
-                            "resultByFormat": {"json": merged_json},
+                            "resultByFormat": merged_result,
                             "returnCode": return_code,
                         }
                     }
@@ -394,7 +405,7 @@ async def _handle_run_batch_with_partial_results(
         # project/action so the final response carries complete data for collect-style
         # callers (CLI --save-results).  Keyed by project path str -> action source ->
         # {resultByFormat, returnCode}, matching the runBatch response `results` shape.
-        merged_results: dict[str, dict[str, dict]] = {}
+        merged_results: dict[str, dict[str, BatchSlotResult]] = {}
         # Optional mixed progress pipeline: when the batch request
         # also carries a progressToken, each non-matrix action context is
         # given its existing child progress identity and its progress events
@@ -515,16 +526,23 @@ async def _handle_run_batch_with_partial_results(
                 )
                 if parsed.merge_results:
                     merged_results.setdefault(str(project_path), {})[action_source] = {
-                        "resultByFormat": combined_rbf,
+                        "resultByFormat": typing.cast(
+                            _internal_client_types.ResultByFormat, combined_rbf
+                        ),
                         "returnCode": matrix_return_code,
                     }
                 return matrix_return_code
 
             action_return_code = 0
             partial_count = 0
-            # Accumulate the `json` format of every streamed partial so it can be
-            # type-safely merged at the end when mergeResults is requested.
-            json_payloads: list[dict] = []
+            entries: list[_internal_client_types.ResultByFormat] = []
+            result_formats_for_run = list(parsed.result_formats)
+            if (
+                parsed.merge_results
+                and runner_client.RunResultFormat.STRING in result_formats_for_run
+                and runner_client.RunResultFormat.JSON not in result_formats_for_run
+            ):
+                result_formats_for_run.append(runner_client.RunResultFormat.JSON)
             child_progress_token = batch_progress_tokens.get(
                 (project_path, action_name)
             )
@@ -545,7 +563,7 @@ async def _handle_run_batch_with_partial_results(
                 dev_env=parsed.dev_env,
                 ws_context=ws_context,
                 initialize_all_handlers=True,
-                result_formats=parsed.result_formats,
+                result_formats=result_formats_for_run,
                 progress_token=child_progress_token,
                 origin=origin,
             ) as ctx:
@@ -555,7 +573,11 @@ async def _handle_run_batch_with_partial_results(
                     async for value in ctx:
                         partial_count += 1
                         if parsed.merge_results and isinstance(value, dict):
-                            json_payloads.append(value.get("json"))
+                            entries.append(
+                                typing.cast(
+                                    _internal_client_types.ResultByFormat, value
+                                )
+                            )
                         async with writer_lock:
                             _notify_client(
                                 writer,
@@ -566,7 +588,13 @@ async def _handle_run_batch_with_partial_results(
                                         "project": str(project_path),
                                         "results": {
                                             action_source: {
-                                                "resultByFormat": value,
+                                                "resultByFormat": strip_unrequested_formats(
+                                                    typing.cast(
+                                                        _internal_client_types.ResultByFormat,
+                                                        value,
+                                                    ),
+                                                    parsed.result_formats,
+                                                ),
                                                 "returnCode": 0,
                                             }
                                         },
@@ -609,7 +637,7 @@ async def _handle_run_batch_with_partial_results(
             # Direct result mode: no $/progress notifications were sent, so the complete
             # result sits in ctx.responses. Forward it as a single partialResult notification.
             if partial_count == 0 and ctx.responses:
-                final_result_by_format: dict = {}
+                final_result_by_format: _internal_client_types.ResultByFormat = {}
                 for resp in ctx.responses:
                     if resp.status != "streamed" and not resp.result_by_format:
                         raise ActionRunFailed(
@@ -617,10 +645,15 @@ async def _handle_run_batch_with_partial_results(
                             f" for action={action_name} project={project_path};"
                             " expected 'streamed' status when result_by_format is empty"
                         )
-                    final_result_by_format.update(resp.result_by_format)
+                    final_result_by_format.update(
+                        typing.cast(
+                            _internal_client_types.ResultByFormat,
+                            resp.result_by_format,
+                        )
+                    )
                 if final_result_by_format:
                     if parsed.merge_results:
-                        json_payloads.append(final_result_by_format.get("json"))
+                        entries.append(final_result_by_format)
                     async with writer_lock:
                         _notify_client(
                             writer,
@@ -631,7 +664,10 @@ async def _handle_run_batch_with_partial_results(
                                     "project": str(project_path),
                                     "results": {
                                         action_source: {
-                                            "resultByFormat": final_result_by_format,
+                                            "resultByFormat": strip_unrequested_formats(
+                                                final_result_by_format,
+                                                parsed.result_formats,
+                                            ),
                                             "returnCode": action_return_code,
                                         }
                                     },
@@ -645,15 +681,32 @@ async def _handle_run_batch_with_partial_results(
             # for the response, so a caller that replaces-by-key keeps complete data
             # rather than only the last partial.
             if parsed.merge_results:
-                merged_json = await merge_partial_results_for_action(
-                    project_path=project_path,
-                    action_name=action_name,
-                    json_payloads=json_payloads,
-                    ws_context=ws_context,
-                )
-                if merged_json is not None:
+                try:
+                    merged_result = await merge_slot_results(
+                        project_path=project_path,
+                        action_name=action_name,
+                        entries=entries,
+                        requested_formats=parsed.result_formats,
+                        ws_context=ws_context,
+                    )
+                except ActionRunFailed as exc:
+                    if (
+                        runner_client.RunResultFormat.STRING
+                        not in parsed.result_formats
+                    ):
+                        raise
+                    action_return_code |= 1
                     merged_results.setdefault(str(project_path), {})[action_source] = {
-                        "resultByFormat": {"json": merged_json},
+                        "resultByFormat": {},
+                        "returnCode": action_return_code,
+                    }
+                    logger.bind(project=str(project_path), action=action_name).error(
+                        f"Failed to merge action result: {exc.message}"
+                    )
+                    return action_return_code
+                if merged_result is not None:
+                    merged_results.setdefault(str(project_path), {})[action_source] = {
+                        "resultByFormat": merged_result,
                         "returnCode": action_return_code,
                     }
             return action_return_code
@@ -768,9 +821,23 @@ async def _handle_run_batch_with_partial_results(
             f"runBatch+partialResults: done, projects_count={len(actions_by_project)}"
             f" returnCode={overall_return_code}"
         )
+        ordered_results: dict[str, dict[str, BatchSlotResult]] = {}
+        for project_path, actions_to_run in actions_by_project.items():
+            project_str = str(project_path)
+            project_results = merged_results.get(project_str)
+            if project_results is None:
+                continue
+            ordered_actions: dict[str, BatchSlotResult] = {}
+            for action_name in actions_to_run:
+                action_source = name_to_source.get(action_name, action_name)
+                if action_source in project_results:
+                    ordered_actions[action_source] = project_results[action_source]
+            if ordered_actions:
+                ordered_results[project_str] = ordered_actions
+
         response: dict = {"returnCode": overall_return_code}
         if parsed.merge_results:
-            response["results"] = merged_results
+            response["results"] = ordered_results
         return response
 
 

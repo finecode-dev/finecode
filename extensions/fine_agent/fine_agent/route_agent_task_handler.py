@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import time
 import typing
@@ -78,25 +79,27 @@ class RouteAgentTaskHandler(
         self,
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
-    ) -> RunAgentTaskRunResult:
+    ) -> typing.AsyncGenerator[RunAgentTaskRunResult, None]:
         started = time.monotonic()
         if payload.continue_session is not None:
             failure = self._continuation_precheck(payload)
             if failure is not None:
-                return failure
+                yield failure
+                return
         if payload.profile is None:
             backend = self._config.default_backend
             backend_profile: str | None = None
         else:
             route = self._config.profiles.get(payload.profile)
             if route is None:
-                return RunAgentTaskRunResult(
+                yield RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
                     error=backend_support.unknown_profile_error(
                         payload.profile, self._config.profiles
                     ),
                     duration_sec=0.0,
                 )
+                return
             backend = route.backend
             backend_profile = route.profile
         source = _BACKEND_SOURCES[backend]
@@ -106,44 +109,49 @@ class RouteAgentTaskHandler(
             result_type=RunAgentTaskRunResult,
             action_type=None,
         )
-        accumulated = RunAgentTaskRunResult(
-            status=AgentRunStatus.FAILED,
-            error=f"backend {backend.value} returned no result",
-            duration_sec=time.monotonic() - started,
-        )
         received = False
+        last_partial: RunAgentTaskRunResult | None = None
         try:
-            async with run_context.progress(
-                f"Agent task ({backend.value})"
-            ) as progress:
-                async for partial in self._runner.run_action_iter(
-                    ref, translated, run_context.meta, progress=progress
-                ):
-                    if isinstance(partial, RunAgentTaskRunResult):
-                        if not received:
-                            accumulated = partial
-                            received = True
-                        else:
-                            accumulated.update(partial)
-                    else:
-                        accumulated = typing.cast(RunAgentTaskRunResult, partial)
-                        received = True
+            async with (
+                run_context.progress(f"Agent task ({backend.value})") as progress,
+                contextlib.aclosing(
+                    typing.cast(
+                        typing.AsyncGenerator[RunAgentTaskRunResult, None],
+                        self._runner.run_action_iter(
+                            ref, translated, run_context.meta, progress=progress
+                        ),
+                    )
+                ) as backend_results,
+            ):
+                async for partial in backend_results:
+                    result = partial
+                    received = True
+                    last_partial = result
+                    yield result
         except (
             iprojectactionrunner.ActionRunFailed,
             iprojectactionrunner.ActionNotFound,
         ) as exc:
-            return RunAgentTaskRunResult(
+            yield RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 error=f"backend {backend.value} ({source}): {exc.message}",
                 duration_sec=time.monotonic() - started,
             )
+            return
         if not received:
-            return RunAgentTaskRunResult(
+            yield RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 error=(f"backend {backend.value} ({source}) returned no result"),
                 duration_sec=time.monotonic() - started,
             )
-        return accumulated
+            return
+        if last_partial is not None and last_partial.status is AgentRunStatus.RUNNING:
+            yield RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                output=last_partial.output,
+                error=f"backend {backend.value} ({source}) ended without a final result",
+                duration_sec=time.monotonic() - started,
+            )
 
     def _continuation_precheck(
         self, payload: RunAgentTaskRunPayload

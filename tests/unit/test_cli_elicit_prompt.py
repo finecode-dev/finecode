@@ -139,6 +139,48 @@ async def test_the_prompt_runs_where_shutdown_never_joins_it(
     assert seen["daemon"] is True
 
 
+def test_a_full_size_draft_reaches_stderr_intact(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A complete 8192-byte draft is shown untruncated; stdout stays empty."""
+    prefix = "FIRST-MARKER Add the thing\n\n"
+    suffix = "\nLAST-MARKER\n"
+    filler_len = 8192 - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8"))
+    assert filler_len > 0
+    draft = prefix + "x" * filler_len + suffix
+    assert len(draft.encode("utf-8")) == 8192
+    message = (
+        "Commit the staged changes with the message below? "
+        "Answer 'commit' to commit or 'cancel' to stop without committing.\n\n"
+        + draft
+    )
+    monkeypatch.setattr("builtins.input", lambda: "commit")
+    result = run_cmd._ask_in_terminal(message, ["commit", "cancel"], "cancel")
+    captured = capsys.readouterr()
+    assert result == {"outcome": "answered", "value": "commit"}
+    assert captured.out == ""
+    assert "FIRST-MARKER" in captured.err
+    assert "LAST-MARKER" in captured.err
+    assert draft in captured.err
+
+    monkeypatch.setattr("builtins.input", lambda: "")
+    result = run_cmd._ask_in_terminal(message, ["commit", "cancel"], "cancel")
+    captured = capsys.readouterr()
+    assert result == {"outcome": "answered", "value": "cancel"}
+    assert captured.out == ""
+    assert draft in captured.err
+
+    def _eof() -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _eof)
+    result = run_cmd._ask_in_terminal(message, ["commit", "cancel"], "cancel")
+    captured = capsys.readouterr()
+    assert result == {"outcome": "declined"}
+    assert captured.out == ""
+    assert draft in captured.err
+
+
 async def test_a_cancelled_question_lets_go_of_the_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -35,6 +35,7 @@ from fine_agent.session_support import (
     session_project_error,
     with_session,
 )
+from fine_agent.snapshot_stream import SnapshotStream
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
@@ -153,6 +154,15 @@ class CodexAgentHandler(
         CodexAgentHandlerConfig,
     ],
 ):
+    """Run Codex and stream the latest completed agent message.
+
+    Snapshots flush once per completed agent message, with no time-driven
+    flush (i = infinity). For M agent messages over T seconds, at most
+    M + ceil(T / i) + 1, or M + 1, partials are sent. Snapshot text across
+    those hops is bounded by that count times the longest message; terminal
+    fields are not part of this bound.
+    """
+
     def __init__(
         self,
         config: CodexAgentHandlerConfig,
@@ -172,8 +182,22 @@ class CodexAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
+        snapshots = SnapshotStream(
+            run_context.partial_result_sender,
+            min_interval_sec=None,
+            logger=self.logger,
+        )
+        result = await self._run_with_snapshots(payload, run_context, snapshots)
+        return await snapshots.finish(result)
+
+    async def _run_with_snapshots(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+        snapshots: SnapshotStream,
+    ) -> RunAgentTaskRunResult:
         if payload.continue_session is not None:
-            return await self._run_continuation(payload, run_context)
+            return await self._run_continuation(payload, run_context, snapshots)
         settings = self._resolve(payload.profile)
         if isinstance(settings, str):
             failed = RunAgentTaskRunResult(
@@ -262,6 +286,7 @@ class CodexAgentHandler(
                 answer_path,
                 project_dir,
                 started,
+                snapshots,
             )
         finally:
             tmpdir.cleanup()
@@ -293,6 +318,7 @@ class CodexAgentHandler(
         self,
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
+        snapshots: SnapshotStream,
     ) -> RunAgentTaskRunResult:
         ref = payload.continue_session
         assert ref is not None
@@ -405,6 +431,7 @@ class CodexAgentHandler(
                 answer_path,
                 project_dir,
                 started,
+                snapshots,
             )
         finally:
             tmpdir.cleanup()
@@ -419,12 +446,20 @@ class CodexAgentHandler(
         answer_path: pathlib.Path,
         project_dir: pathlib.Path,
         started: float,
+        snapshots: SnapshotStream,
     ) -> RunAgentTaskRunResult:
         state = _CodexRunState()
         result: RunAgentTaskRunResult | None = None
         try:
             result = await self._run_with_process(
-                payload, run_context, process, command, settings, answer_path, state
+                payload,
+                run_context,
+                process,
+                command,
+                settings,
+                answer_path,
+                state,
+                snapshots,
             )
         finally:
             teardown_error = await self._teardown(process)
@@ -478,11 +513,12 @@ class CodexAgentHandler(
         settings: _CodexRunSettings,
         answer_path: pathlib.Path,
         state: _CodexRunState,
+        snapshots: SnapshotStream,
     ) -> RunAgentTaskRunResult:
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
                 await asyncio.wait_for(
-                    self._drive(process, payload.prompt, progress, state),
+                    self._drive(process, payload.prompt, progress, state, snapshots),
                     timeout=settings.settle_timeout_sec,
                 )
             except asyncio.CancelledError:
@@ -505,6 +541,7 @@ class CodexAgentHandler(
         prompt: str,
         progress: code_action.ProgressContext,
         state: _CodexRunState,
+        snapshots: SnapshotStream,
     ) -> None:
         lines = process.stdout_lines()
         try:
@@ -541,6 +578,10 @@ class CodexAgentHandler(
                     await progress.report(event.narrative)
                 if event.assistant_text is not None:
                     state.last_assistant_text = event.assistant_text
+                    if event.kind is codex_stream.CodexEventKind.ITEM_COMPLETED:
+                        await snapshots.update(
+                            state.last_assistant_text, message_end=True
+                        )
                 continue
 
             if event.kind is codex_stream.CodexEventKind.ERROR:

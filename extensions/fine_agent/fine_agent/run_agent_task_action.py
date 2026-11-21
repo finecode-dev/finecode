@@ -17,6 +17,8 @@ class AgentRunStatus(enum.StrEnum):
     from "the agent was never asked".
     """
 
+    RUNNING = "running"
+    """The agent is still working; this value is used only by partial results."""
     SETTLED = "settled"
     """The agent finished its work and nothing further is pending."""
     FAILED = "failed"
@@ -282,6 +284,8 @@ class RunAgentTaskRunResult(code_action.RunActionResult):
         self.session = other.session
 
     def to_text(self) -> str | textstyler.StyledText:
+        if self.status is AgentRunStatus.RUNNING:
+            return self.output
         if self.status is AgentRunStatus.SETTLED:
             body = self.output or "Agent settled without producing any output."
         else:
@@ -337,9 +341,21 @@ class RunAgentTaskAction(
     - When `output_schema` is set, `SETTLED` implies `structured_output` is
       populated; a settled run with no extracted JSON is `FAILED` with `output`
       kept.
-    - Populate `error` whenever `status` is not `SETTLED`.
+    - Populate `error` on every terminal result whose status is not `SETTLED`;
+      leave it `None` on a `RUNNING` snapshot.
     - Report execution narrative through progress, never the model's text
-      (R-304) -- the text is result data and belongs in `output`.
+      (R-304). A streaming backend sends the model's text as `RUNNING`
+      snapshots in `output`; a `RUNNING` snapshot has no other fields set.
+      Each snapshot replaces the previous text. The final snapshot is the
+      complete final result, with every field populated as applicable.
+    - A streaming backend sends a snapshot only when its text changes: at the
+      end of an assistant message, and, for backends that receive text deltas,
+      at most once per chosen 1–5 second interval. It sends the terminal result
+      immediately. For M assistant messages, T seconds of runtime and interval
+      i seconds, it sends at most M + ceil(T / i) + 1 partials. A backend that
+      cannot stream remains conformant and returns its result as before.
+    - `update()` remains last-writer-wins for every field. Streaming relies on
+      the terminal snapshot replacing the preceding `RUNNING` snapshot.
     - Report `usage` with what the backend reported and nothing more, leaving
       what it did not report as `None`. Never derive a figure the backend did
       not give (see `AgentRunUsage`), and report usage on the failure paths as

@@ -8,6 +8,7 @@ child process.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import math
 import os
@@ -34,6 +35,7 @@ from fine_agent.run_agent_task_action import (
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
+from fine_agent.snapshot_stream import SnapshotStream
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner, iuser_messenger
 from finecode_extension_api.resource_uri import (
@@ -41,7 +43,9 @@ from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
-from finecode_extension_runner.testing import run_handler
+from finecode_extension_runner import partial_result_sender
+from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_runner.testing import handler_test_session, run_handler
 
 import fine_agent_codex
 from fine_agent_codex import codex_agent_handler
@@ -571,6 +575,69 @@ async def test_canonical_answer_wins_over_streamed_text() -> None:
     _assert_accounted(result)
 
 
+def _discard_partial(
+    _token: int | str,
+    _result: code_action.RunActionResult,
+    _formats: list[str] | None,
+) -> None:
+    return None
+
+
+async def test_snapshots_use_current_agent_message_and_terminal_uses_answer_file(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        run_action_service,
+        "partial_result_sender",
+        partial_result_sender.PartialResultSender(
+            sender=_discard_partial,
+            wait_time_ms=300,
+        ),
+    )
+    action_source = f"{RunAgentTaskAction.__module__}.{RunAgentTaskAction.__qualname__}"
+    handler_source = f"{_FakeCodexHandler.__module__}.{_FakeCodexHandler.__qualname__}"
+    actions = {
+        RunAgentTaskAction.__name__: {
+            "source": action_source,
+            "handlers": [{"name": "codex", "source": handler_source}],
+        }
+    }
+    _ACTIVE.update(
+        scenario=FakeScenario.SUCCESS,
+        record="",
+        answer="canonical final",
+    )
+    try:
+        async with handler_test_session(
+            project_dir=tmp_path, actions=actions
+        ) as session:
+            token_result = await session.run_action(
+                RunAgentTaskAction.__name__,
+                RunAgentTaskRunPayload(prompt="test"),
+                partial_result_token="token",
+            )
+            token_events = [
+                typing.cast(RunAgentTaskRunResult, item)
+                for item in session.partial_results.events
+            ]
+            plain_result = await session.run_action(
+                RunAgentTaskAction.__name__, RunAgentTaskRunPayload(prompt="test")
+            )
+    finally:
+        _ACTIVE.update(scenario=FakeScenario.SUCCESS, record="", answer="done")
+
+    assert isinstance(token_result, RunAgentTaskRunResult)
+    assert isinstance(plain_result, RunAgentTaskRunResult)
+    assert dataclasses.replace(token_result, duration_sec=None, session=None) == (
+        dataclasses.replace(plain_result, duration_sec=None, session=None)
+    )
+    assert token_result.output == "canonical final"
+    assert token_events[-1] == token_result
+    assert token_events[0].status is AgentRunStatus.RUNNING
+    assert token_events[0].output == "streamed interim"
+    assert token_events[0].usage is None and token_events[0].session is None
+
+
 class _RecordingSender:
     def __init__(self) -> None:
         self.messages: list[str | None] = []
@@ -694,6 +761,11 @@ async def test_progress_names_work_not_text_and_thread_is_logged() -> None:
         "prompt",
         code_action.ProgressContext(sender, "t"),
         state,
+        SnapshotStream(
+            typing.cast(code_action.PartialResultSender, unittest.mock.AsyncMock()),
+            min_interval_sec=None,
+            logger=handler.logger,
+        ),
     )
 
     assert sender.messages == [

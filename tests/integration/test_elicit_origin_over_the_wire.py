@@ -70,7 +70,10 @@ def bound_connections(monkeypatch: pytest.MonkeyPatch, wm_client):
             result_by_format={}, return_code=0, status="streamed"
         )
 
-    async def _get_partial_results(result_list, partial_result_token, runner):
+    async def _get_partial_results(
+        result_list, partial_result_token, runner, *, subscribed
+    ):
+        subscribed.set()
         return None
 
     async def _start_required_environments(*args, **kwargs):

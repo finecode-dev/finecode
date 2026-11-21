@@ -7,8 +7,16 @@ the unreported fields.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import pytest
+from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri
 from finecode_extension_runner._converter import converter
+from finecode_extension_runner import partial_result_sender
+from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_runner.testing import handler_test_session
 
 from fine_agent.history_types import (
     AgentBackend,
@@ -26,6 +34,7 @@ from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
     AgentSessionRef,
+    RunAgentTaskAction,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
@@ -114,6 +123,24 @@ def test_result_text_has_no_footer_when_nothing_is_known() -> None:
     result = RunAgentTaskRunResult(status=AgentRunStatus.SETTLED, output="the answer")
 
     assert result.to_text() == "the answer"
+
+
+def test_running_result_text_is_only_its_output() -> None:
+    result = RunAgentTaskRunResult(
+        status=AgentRunStatus.RUNNING,
+        output="current answer",
+        usage=AgentRunUsage(total_tokens=10),
+        duration_sec=3.0,
+    )
+
+    assert result.to_text() == "current answer"
+
+
+def test_running_result_has_error_return_code() -> None:
+    assert (
+        RunAgentTaskRunResult(status=AgentRunStatus.RUNNING).return_code
+        is code_action.RunReturnCode.ERROR
+    )
 
 
 def test_merging_carries_the_accounting_fields() -> None:
@@ -228,6 +255,87 @@ def test_merging_carries_the_observation() -> None:
     )
 
     assert target.observation == observation
+
+
+def test_terminal_partial_replaces_every_running_snapshot_field() -> None:
+    running = RunAgentTaskRunResult(
+        status=AgentRunStatus.RUNNING,
+        output="working",
+    )
+    terminal = RunAgentTaskRunResult(
+        status=AgentRunStatus.FAILED,
+        output="final error output",
+        structured_output={"answer": "no"},
+        turns=4,
+        usage=AgentRunUsage(total_tokens=24),
+        duration_sec=7.5,
+        error="backend failed",
+        observation=_sample_observation(),
+        session=_session_ref(AgentBackend.PI),
+    )
+
+    running.update(terminal)
+
+    assert running == terminal
+
+
+async def _running_only_handler(
+    payload: RunAgentTaskRunPayload,
+    run_context: code_action.RunActionContext[RunAgentTaskRunPayload],
+) -> AsyncIterator[RunAgentTaskRunResult]:
+    _ = payload, run_context
+    yield RunAgentTaskRunResult(
+        status=AgentRunStatus.RUNNING,
+        output="snapshot",
+    )
+
+
+def _discard_partial(
+    _token: int | str,
+    _value: code_action.RunActionResult,
+    _formats: list[str] | None,
+) -> None:
+    return None
+
+
+async def test_running_only_run_ends_with_error_without_a_terminal_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        run_action_service,
+        "partial_result_sender",
+        partial_result_sender.PartialResultSender(
+            sender=_discard_partial,
+            wait_time_ms=300,
+        ),
+    )
+    action_source = (
+        f"{RunAgentTaskAction.__module__}.{RunAgentTaskAction.__qualname__}"
+    )
+    handler_source = (
+        f"{_running_only_handler.__module__}.{_running_only_handler.__qualname__}"
+    )
+    actions = {
+        RunAgentTaskAction.__name__: {
+            "source": action_source,
+            "handlers": [{"name": "synthetic", "source": handler_source}],
+        }
+    }
+    async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
+        token_result = await session.run_action(
+            RunAgentTaskAction.__name__,
+            RunAgentTaskRunPayload(prompt="test"),
+            partial_result_token="tok",
+        )
+        plain_result = await session.run_action(
+            RunAgentTaskAction.__name__, RunAgentTaskRunPayload(prompt="test")
+        )
+
+    assert token_result == plain_result
+    assert isinstance(token_result, RunAgentTaskRunResult)
+    assert token_result.status is AgentRunStatus.RUNNING
+    assert token_result.return_code is code_action.RunReturnCode.ERROR
 
 
 def test_result_converter_round_trip_preserves_observation_types() -> None:

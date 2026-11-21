@@ -33,6 +33,7 @@ from fine_agent.session_support import (
     session_project_error,
     with_session,
 )
+from fine_agent.snapshot_stream import SnapshotStream
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
@@ -256,9 +257,13 @@ def _merged_session_identity(
     state_id = identity.session_id if state_ok and identity is not None else None
     state_file = identity.session_file if state_ok and identity is not None else None
     if stats_id and state_id and not _sessions_equal(stats_id, state_id):
-        return None, None, (
-            f"pi reported conflicting session identities {stats_id!r} and "
-            f"{state_id!r}; no session reference is available"
+        return (
+            None,
+            None,
+            (
+                f"pi reported conflicting session identities {stats_id!r} and "
+                f"{state_id!r}; no session reference is available"
+            ),
         )
     if stats_id:
         return stats_id, stats_file, None
@@ -328,6 +333,12 @@ class PiAgentHandler(
     to it. Codes observed in practice should be recorded here as they are found
     -- until then the handling is deliberately coarse rather than pretending to
     a precision it does not have (R-501).
+
+    Text snapshots flush at each assistant ``message_end`` and at most once per
+    2 seconds while deltas arrive. For M assistant messages over T seconds, at
+    most M + ceil(T / 2) + 1 partials are sent. Snapshot text across those hops
+    is bounded by that count times the longest snapshot; terminal fields are
+    not part of this bound.
     """
 
     def __init__(
@@ -349,8 +360,22 @@ class PiAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
+        snapshots = SnapshotStream(
+            run_context.partial_result_sender,
+            min_interval_sec=2.0,
+            logger=self.logger,
+        )
+        result = await self._run_with_snapshots(payload, run_context, snapshots)
+        return await snapshots.finish(result)
+
+    async def _run_with_snapshots(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+        snapshots: SnapshotStream,
+    ) -> RunAgentTaskRunResult:
         if payload.continue_session is not None:
-            return await self._run_continuation(payload, run_context)
+            return await self._run_continuation(payload, run_context, snapshots)
         settings = self._resolve(payload.profile)
         if isinstance(settings, str):
             # Fail before spawning anything: an unknown profile is a
@@ -422,6 +447,7 @@ class PiAgentHandler(
             project_dir,
             started,
             requested_session_id,
+            snapshots,
         )
 
     def _continuation_failure(
@@ -451,6 +477,7 @@ class PiAgentHandler(
         self,
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
+        snapshots: SnapshotStream,
     ) -> RunAgentTaskRunResult:
         ref = payload.continue_session
         assert ref is not None
@@ -489,11 +516,11 @@ class PiAgentHandler(
             or found_id is None
             or not _sessions_equal(found_id, ref.session_id)
         ):
-            reason = "; ".join(gaps) or (
-                f"pi session {ref.session_id!r} was not found"
-            )
+            reason = "; ".join(gaps) or (f"pi session {ref.session_id!r} was not found")
             return self._continuation_failure(
-                payload, reason, started,
+                payload,
+                reason,
+                started,
                 observation=_pre_session_observation([reason]),
             )
 
@@ -543,6 +570,7 @@ class PiAgentHandler(
             project_dir,
             started,
             None,
+            snapshots,
             expected_session=ref,
             expected_session_file=found_path,
         )
@@ -557,6 +585,7 @@ class PiAgentHandler(
         project_dir: pathlib.Path,
         started: float,
         requested_session_id: str | None,
+        snapshots: SnapshotStream,
         *,
         expected_session: AgentSessionRef | None = None,
         expected_session_file: pathlib.Path | None = None,
@@ -568,6 +597,7 @@ class PiAgentHandler(
                 process,
                 command,
                 settings,
+                snapshots,
                 expected_session=expected_session,
                 expected_session_file=expected_session_file,
             )
@@ -627,6 +657,7 @@ class PiAgentHandler(
         process: icommandrunner.IAsyncProcess,
         command: list[str],
         settings: _PiRunSettings,
+        snapshots: SnapshotStream,
         *,
         expected_session: AgentSessionRef | None = None,
         expected_session_file: pathlib.Path | None = None,
@@ -636,9 +667,7 @@ class PiAgentHandler(
             # Appended, not substituted: the task wording is the caller's, and
             # the output instruction is the only thing the backend adds.
             prompt += backend_support.json_output_instruction(payload.output_schema)
-        metadata = _PiRunMetadata(
-            identity_request_id=f"get-state-{uuid.uuid4().hex}"
-        )
+        metadata = _PiRunMetadata(identity_request_id=f"get-state-{uuid.uuid4().hex}")
 
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
@@ -648,6 +677,7 @@ class PiAgentHandler(
                         prompt,
                         progress,
                         metadata,
+                        snapshots,
                         expected_session=expected_session,
                         expected_session_file=expected_session_file,
                     ),
@@ -708,6 +738,7 @@ class PiAgentHandler(
         prompt: str,
         progress: code_action.ProgressContext,
         metadata: _PiRunMetadata,
+        snapshots: SnapshotStream,
         *,
         expected_session: AgentSessionRef | None = None,
         expected_session_file: pathlib.Path | None = None,
@@ -718,8 +749,12 @@ class PiAgentHandler(
         lines = process.stdout_lines()
         if expected_session is not None:
             confirmed = await self._confirm_session(
-                process, lines, metadata, expected_session,
-                expected_session_file, progress,
+                process,
+                lines,
+                metadata,
+                expected_session,
+                expected_session_file,
+                progress,
             )
             if isinstance(confirmed, RunAgentTaskRunResult):
                 state = PiObservationState(
@@ -751,7 +786,9 @@ class PiAgentHandler(
                     error=f"pi closed its prompt pipe before reading it: {error}",
                 ), state
             # The prompt is already sent for new runs; skip the shared send.
-            return await self._drive_events(process, lines, progress, metadata)
+            return await self._drive_events(
+                process, lines, progress, metadata, snapshots
+            )
         try:
             process.write_to_stdin(pi_rpc.prompt_command(prompt))
         except (BrokenPipeError, ConnectionResetError) as error:
@@ -766,7 +803,7 @@ class PiAgentHandler(
                 output="",
                 error=f"pi closed its prompt pipe before reading it: {error}",
             ), state
-        return await self._drive_events(process, lines, progress, metadata)
+        return await self._drive_events(process, lines, progress, metadata, snapshots)
 
     async def _confirm_session(
         self,
@@ -862,8 +899,7 @@ class PiAgentHandler(
             status=AgentRunStatus.FAILED,
             output="",
             error=(
-                "pi stopped without confirming session "
-                f"{expected_session.session_id!r}"
+                f"pi stopped without confirming session {expected_session.session_id!r}"
             ),
         )
 
@@ -873,6 +909,7 @@ class PiAgentHandler(
         lines: AsyncIterator[str],
         progress: code_action.ProgressContext,
         metadata: _PiRunMetadata,
+        snapshots: SnapshotStream,
     ) -> tuple[RunAgentTaskRunResult, PiObservationState]:
 
         output: list[str] = []
@@ -925,6 +962,7 @@ class PiAgentHandler(
                 delta = pi_rpc.text_delta(frame)
                 if delta is not None:
                     output.append(delta)
+                    await snapshots.update("".join(output))
                 continue
 
             if event in (pi_rpc.PiEvent.MESSAGE_END, pi_rpc.PiEvent.TURN_END):
@@ -942,6 +980,9 @@ class PiAgentHandler(
                     reported = pi_rpc.message_usage(frame)
                     if reported is not None:
                         usage = reported if usage is None else usage.combine(reported)
+                    message = frame.get("message")
+                    if isinstance(message, dict) and message.get("role") == "assistant":
+                        await snapshots.update("".join(output), message_end=True)
                 continue
 
             if event == pi_rpc.PiEvent.TURN_START:
@@ -1129,8 +1170,7 @@ class PiAgentHandler(
                 # arrive until the overall stats timeout bounds the wait.
                 if (stats is not None and stats.session_id) or (
                     metadata.identity is not None
-                    and metadata.identity.request_id
-                    == metadata.identity_request_id
+                    and metadata.identity.request_id == metadata.identity_request_id
                     and metadata.identity.error is None
                     and metadata.identity.session_id
                 ):

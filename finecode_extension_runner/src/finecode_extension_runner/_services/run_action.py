@@ -782,14 +782,13 @@ async def run_action(
                         # all subresults are ready
                         logger.trace(f"R{run_id} | all subresults are ready, send them")
                         await partial_result_sender.send_all_immediately()
-                    else:
-                        for subresult_task in subresults_tasks:
-                            result = subresult_task.result()
-                            if result is not None:
-                                if action_result is None:
-                                    action_result = result
-                                else:
-                                    action_result.update(result)
+                    for subresult_task in subresults_tasks:
+                        result = subresult_task.result()
+                        if result is not None:
+                            if action_result is None:
+                                action_result = result
+                            else:
+                                action_result.update(result)
             else:
                 # action payload not iterable, just execute handlers on the whole payload
                 if execute_handlers_concurrently:
@@ -1792,7 +1791,7 @@ async def run_subresult_coros_concurrently(
             action_subresult,
             tracking_sender.result_formats if tracking_sender is not None else None,
         )
-        return None
+        return action_subresult
     else:
         return action_subresult
 
@@ -1870,6 +1869,6 @@ async def run_subresult_coros_sequentially(
             action_subresult,
             tracking_sender.result_formats if tracking_sender is not None else None,
         )
-        return None
+        return action_subresult
     else:
         return action_subresult

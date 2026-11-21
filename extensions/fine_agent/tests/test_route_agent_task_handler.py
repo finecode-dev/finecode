@@ -113,9 +113,11 @@ class _FakeRunner:
         self,
         results: list[RunAgentTaskRunResult] | None = None,
         error: Exception | None = None,
+        error_after: Exception | None = None,
     ) -> None:
         self.results = results or []
         self.error = error
+        self.error_after = error_after
         self.calls: list[dict[str, typing.Any]] = []
 
     async def _gen(
@@ -123,6 +125,8 @@ class _FakeRunner:
     ) -> typing.AsyncIterator[RunAgentTaskRunResult]:
         for item in results:
             yield item
+        if self.error_after is not None:
+            raise self.error_after
 
     def run_action_iter(
         self,
@@ -144,6 +148,14 @@ class _FakeRunner:
         if self.error is not None:
             raise self.error
         return self._gen(self.results)
+
+
+async def _collect_results(
+    handler: RouteAgentTaskHandler,
+    payload: RunAgentTaskRunPayload,
+    run_context: RunAgentTaskRunContext,
+) -> list[RunAgentTaskRunResult]:
+    return [result async for result in handler.run(payload, run_context)]
 
 
 def _full_result(status: AgentRunStatus) -> RunAgentTaskRunResult:
@@ -208,7 +220,11 @@ async def test_default_uses_default_backend_with_top_level() -> None:
     payload = RunAgentTaskRunPayload(
         prompt="do", profile=None, output_schema={"type": "object"}
     )
-    result = await handler.run(payload, typing.cast(RunAgentTaskRunContext, ctx))
+    results = await _collect_results(
+        handler, payload, typing.cast(RunAgentTaskRunContext, ctx)
+    )
+    result = results[-1]
+    assert results == [runner.results[0]]
     assert len(runner.calls) == 1
     call = runner.calls[0]
     assert call["ref"].source == _CANONICAL[AgentBackend.PI]
@@ -231,11 +247,13 @@ async def test_two_roles_share_backend_with_different_bundles() -> None:
         typing.cast(typing.Any, _StubProjectInfo()),
     )
     ctx = _StubContext(_meta())
-    await handler.run(
+    await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="a", profile="review"),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
-    await handler.run(
+    await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="b", profile="quick"),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
@@ -254,10 +272,13 @@ async def test_unknown_role_fails_without_delegation() -> None:
         typing.cast(typing.Any, _StubProjectInfo()),
     )
     ctx = _StubContext(_meta())
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="x", profile="nope", capture_history=True),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
+    assert len(results) == 1
     assert result.status is AgentRunStatus.FAILED
     assert result.duration_sec == 0.0
     assert result.error == backend_support.unknown_profile_error(
@@ -278,10 +299,13 @@ async def test_missing_target_names_backend_and_source() -> None:
         typing.cast(typing.Any, _StubProjectInfo()),
     )
     ctx = _StubContext(_meta())
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="x"),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
+    assert len(results) == 1
     assert result.status is AgentRunStatus.FAILED
     assert "codex" in (result.error or "")
     assert _CANONICAL[AgentBackend.CODEX] in (result.error or "")
@@ -300,10 +324,12 @@ async def test_continuation_delegates_with_its_reference_intact() -> None:
     )
     ctx = _StubContext(_meta())
     ref = _session_ref()
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="again", profile="review", continue_session=ref),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
     assert result.status is AgentRunStatus.SETTLED
     assert len(runner.calls) == 1
     assert runner.calls[0]["payload"].continue_session == ref
@@ -321,7 +347,8 @@ async def test_continuation_rejects_a_partial_id_without_delegation() -> None:
             typing.cast(typing.Any, _StubProjectInfo()),
         )
         ctx = _StubContext(_meta())
-        result = await handler.run(
+        results = await _collect_results(
+            handler,
             RunAgentTaskRunPayload(
                 prompt="x",
                 profile="unknown-role",
@@ -329,6 +356,8 @@ async def test_continuation_rejects_a_partial_id_without_delegation() -> None:
             ),
             typing.cast(RunAgentTaskRunContext, ctx),
         )
+        result = results[-1]
+        assert len(results) == 1
         assert result.status is AgentRunStatus.FAILED
         assert "session ID" in (result.error or "")
         assert runner.calls == []
@@ -346,10 +375,12 @@ async def test_continuation_backend_mismatch_beats_project_mismatch() -> None:
     ref = _session_ref(
         backend=AgentBackend.CODEX, project_dir=ResourceUri("file:///elsewhere")
     )
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="x", continue_session=ref),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
     assert result.status is AgentRunStatus.FAILED
     assert "codex" in (result.error or "")
     assert runner.calls == []
@@ -365,10 +396,12 @@ async def test_continuation_project_mismatch_beats_unknown_role() -> None:
     )
     ctx = _StubContext(_meta())
     ref = _session_ref(project_dir=ResourceUri("file:///elsewhere"))
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="x", profile="nope", continue_session=ref),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
     assert result.status is AgentRunStatus.FAILED
     assert "elsewhere" in (result.error or "")
     assert runner.calls == []
@@ -383,12 +416,14 @@ async def test_continuation_unknown_role_fails_without_delegation() -> None:
         typing.cast(typing.Any, _StubProjectInfo()),
     )
     ctx = _StubContext(_meta())
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(
             prompt="x", profile="nope", continue_session=_session_ref()
         ),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
     assert result.status is AgentRunStatus.FAILED
     assert result.error == backend_support.unknown_profile_error(
         "nope", _config().profiles
@@ -406,7 +441,8 @@ async def test_continuation_yields_to_pending_cancellation() -> None:
     )
     ctx = _StubContext(_meta())
     task = asyncio.create_task(
-        handler.run(
+        _collect_results(
+            handler,
             RunAgentTaskRunPayload(prompt="x", continue_session=_session_ref()),
             typing.cast(RunAgentTaskRunContext, ctx),
         )
@@ -430,10 +466,12 @@ async def test_later_missing_session_clears_an_earlier_reference() -> None:
         typing.cast(typing.Any, _StubProjectInfo()),
     )
     ctx = _StubContext(_meta())
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="x"),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
     assert result.output == "second"
     assert result.session is None
 
@@ -447,13 +485,95 @@ async def test_empty_stream_is_an_explained_failure() -> None:
         typing.cast(typing.Any, _StubProjectInfo()),
     )
     ctx = _StubContext(_meta())
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="x"),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
     assert result.status is AgentRunStatus.FAILED
     assert "no result" in (result.error or "").lower()
     assert (result.duration_sec or 0) >= 0
+
+
+async def test_running_partial_ends_with_a_failed_result_with_its_snapshot() -> None:
+    """An unfinished backend snapshot stays visible and cannot read as success."""
+    running = RunAgentTaskRunResult(
+        status=AgentRunStatus.RUNNING,
+        output="snapshot",
+    )
+    runner = _FakeRunner(results=[running])
+    handler = RouteAgentTaskHandler(
+        _config(),
+        typing.cast(typing.Any, runner),
+        typing.cast(typing.Any, _StubProjectInfo()),
+    )
+
+    results = await _collect_results(
+        handler,
+        RunAgentTaskRunPayload(prompt="x"),
+        typing.cast(RunAgentTaskRunContext, _StubContext(_meta())),
+    )
+
+    assert results[0] is running
+    assert results[0].status is AgentRunStatus.RUNNING
+    assert results[-1].status is AgentRunStatus.FAILED
+    assert results[-1].output == "snapshot"
+    assert "ended without a final result" in (results[-1].error or "")
+
+
+async def test_backend_failure_after_partials_yields_a_fresh_failure() -> None:
+    """A backend failure after live text ends with a clear failed result."""
+    runner = _FakeRunner(
+        results=[_full_result(AgentRunStatus.RUNNING)],
+        error_after=iprojectactionrunner.ActionRunFailed("backend stopped"),
+    )
+    handler = RouteAgentTaskHandler(
+        _config(),
+        typing.cast(typing.Any, runner),
+        typing.cast(typing.Any, _StubProjectInfo()),
+    )
+
+    results = await _collect_results(
+        handler,
+        RunAgentTaskRunPayload(prompt="x"),
+        typing.cast(RunAgentTaskRunContext, _StubContext(_meta())),
+    )
+
+    assert len(results) == 2
+    assert results[0].status is AgentRunStatus.RUNNING
+    assert results[-1].status is AgentRunStatus.FAILED
+    assert results[-1].output == ""
+    assert "backend stopped" in (results[-1].error or "")
+
+
+async def test_first_partial_is_not_mutated_while_later_partials_are_reemitted() -> (
+    None
+):
+    """A parent can retain a yielded snapshot while the router forwards the next."""
+    first = _full_result(AgentRunStatus.RUNNING)
+    first.output = "first snapshot"
+    second = _full_result(AgentRunStatus.SETTLED)
+    second.output = "final"
+    runner = _FakeRunner(results=[first, second])
+    handler = RouteAgentTaskHandler(
+        _config(),
+        typing.cast(typing.Any, runner),
+        typing.cast(typing.Any, _StubProjectInfo()),
+    )
+    stream: typing.AsyncGenerator[RunAgentTaskRunResult, None] = handler.run(
+        RunAgentTaskRunPayload(prompt="x"),
+        typing.cast(RunAgentTaskRunContext, _StubContext(_meta())),
+    )
+
+    first_yielded = await anext(stream)
+    assert first_yielded is first
+    second_yielded = await anext(stream)
+
+    assert second_yielded is second
+    assert first_yielded.status is AgentRunStatus.RUNNING
+    assert first_yielded.output == "first snapshot"
+    await stream.aclose()
 
 
 async def test_result_replacement_across_partials() -> None:
@@ -477,10 +597,13 @@ async def test_result_replacement_across_partials() -> None:
         typing.cast(typing.Any, _StubProjectInfo()),
     )
     ctx = _StubContext(_meta())
-    result = await handler.run(
+    results = await _collect_results(
+        handler,
         RunAgentTaskRunPayload(prompt="x"),
         typing.cast(RunAgentTaskRunContext, ctx),
     )
+    result = results[-1]
+    assert results == [first, second]
     assert result.output == "second"
     assert result.usage is not None
     assert result.usage.input_tokens == 100
@@ -509,7 +632,11 @@ async def test_all_statuses_and_fields_survive() -> None:
             output_schema={"type": "object"},
             capture_history=True,
         )
-        result = await handler.run(payload, typing.cast(RunAgentTaskRunContext, ctx))
+        results = await _collect_results(
+            handler, payload, typing.cast(RunAgentTaskRunContext, ctx)
+        )
+        result = results[-1]
+        assert results == [expected]
         assert result.status is status
         assert result.output == "text"
         assert result.structured_output == {"answer": 42, "extra": "kept"}
