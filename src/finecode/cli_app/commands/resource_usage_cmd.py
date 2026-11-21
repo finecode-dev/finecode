@@ -16,6 +16,7 @@ from finecode.cli_app import resource_usage
 from finecode.wm_client import (
     ApiClient,
     ApiError,
+    ApiMethodNotFoundError,
     ApiServerError,
 )
 from finecode.wm_server import wm_lifecycle
@@ -93,6 +94,12 @@ async def _opening(
             include_processes=include_processes,
             lag_window_sec=lag_window,
         )
+    except ApiMethodNotFoundError as exc:
+        raise ResourceUsageFailed(
+            "the running workspace server does not support "
+            "server/getResourceUsage — it predates this CLI; replace it "
+            "with `restart-wm --shared-server`"
+        ) from exc
     except ApiServerError as exc:
         raise ResourceUsageFailed(
             f"the workspace server answered with an error: {exc}"
