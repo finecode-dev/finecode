@@ -6,7 +6,12 @@ import typing
 
 from finecode_extension_api import service
 
-__all__ = ["ElicitationOutcome", "ElicitationResult", "IUserPrompt"]
+__all__ = [
+    "ElicitationOutcome",
+    "ElicitationResult",
+    "IUserPrompt",
+    "PromptAvailability",
+]
 
 
 class ElicitationOutcome(enum.StrEnum):
@@ -51,6 +56,21 @@ class ElicitationResult:
     the handler supplied is the handler's own fallback, and returning it as if a
     person had picked it would erase the distinction the outcomes exist for.
     """
+
+
+QUESTION_MAX_DEADLINE_SEC: typing.Final = 900.0
+"""Ceiling on how long a question waits for a person.
+
+The WM clamps every ask's ``timeout_sec`` to this, and agent adapters size
+their own deadlines against it, so the two cannot drift apart.
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class PromptAvailability:
+    """Whether a question could be put to a person in the current run right now."""
+
+    can_ask: bool
 
 
 class IUserPrompt(service.Service, typing.Protocol):
@@ -105,3 +125,7 @@ class IUserPrompt(service.Service, typing.Protocol):
             answer from a refusal from having nobody to ask.
         """
         ...
+
+    async def check_availability(self) -> PromptAvailability:
+        """Say whether a question could be put to a person right now."""
+        return PromptAvailability(can_ask=False)

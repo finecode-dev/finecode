@@ -211,6 +211,12 @@ class RunAgentTaskRunPayload(code_action.RunActionPayload):
     The referenced session must still exist; a missing session is an explicit
     failure, never a silent fresh start.
     """
+    start_without_questions: bool = dataclasses.field(default=False, kw_only=True)
+    """Start an opted-in run without questions when nobody can answer them.
+
+    The run then behaves exactly as one that did not opt in. Changes nothing
+    when the start check passes or the profile does not opt in.
+    """
 
 
 class RunAgentTaskRunContext(code_action.RunActionContext[RunAgentTaskRunPayload]): ...

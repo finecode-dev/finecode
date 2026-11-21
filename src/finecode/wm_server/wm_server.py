@@ -23,6 +23,7 @@ import time
 import typing
 
 import finecode_jsonrpc.client as jsonrpc_client
+from finecode_extension_api.interfaces.iuserprompt import QUESTION_MAX_DEADLINE_SEC
 from loguru import logger
 
 import finecode_jsonrpc
@@ -611,11 +612,10 @@ class _WmClientBridge:
 wm_bridge.install(_WmClientBridge())
 
 
-# Deadline for a question nobody ever sees: how long a client that declared it
-# can answer is given before the WM gives up on it. Bounds the case where the
-# client is alive but its person is not looking; a client that *goes* is not
-# waited for at all (`_fail_pending_requests_for`).
-_ELICIT_MAX_TIMEOUT_SEC: typing.Final = 900.0
+# `QUESTION_MAX_DEADLINE_SEC` bounds a question nobody ever sees: how long a
+# client that declared it can answer is given before the WM gives up on it. It
+# covers the case where the client is alive but its person is not looking; a
+# client that *goes* is not waited for at all (`_fail_pending_requests_for`).
 
 
 class _WmElicitationBridge:
@@ -626,6 +626,18 @@ class _WmElicitationBridge:
     entitled to a typed answer for each way of not getting one (ADR-0082 rule 3).
     """
 
+    def can_elicit(self, *, run_writer_key: asyncio.StreamWriter | None) -> bool:
+        """Whether a question could be put to a person right now.
+
+        The same three pre-send facts ``elicit`` checks before sending, so the
+        two agree on every case; sends nothing.
+        """
+        if run_writer_key is None:
+            return False
+        if run_writer_key not in _connected_clients:
+            return False
+        return bool(_client_capabilities.get(run_writer_key, {}).get("elicitation"))
+
     async def elicit(
         self,
         *,
@@ -633,14 +645,10 @@ class _WmElicitationBridge:
         options: list[str],
         default: str | None,
         timeout_sec: float,
-        run_writer_key: object | None,
+        run_writer_key: asyncio.StreamWriter | None,
     ) -> dict:
-        # Opaque to the runner layer that passed it back, an
-        # ``asyncio.StreamWriter`` here: this module put it in the registry the
-        # runner read it from, and this module is the only one that dereferences
-        # it (`elicitation_bridge`'s module docstring).
-        writer = typing.cast("asyncio.StreamWriter", run_writer_key)
-        if run_writer_key is None:
+        writer = run_writer_key
+        if writer is None:
             # A run with no identifiable originating connection: dispatched
             # through a non-streaming path, or through no client at all.
             logger.debug("Elicitation: no originating client for this run")
@@ -657,7 +665,7 @@ class _WmElicitationBridge:
             )
             return {"outcome": "unavailable"}
 
-        bounded = min(max(timeout_sec, 1.0), _ELICIT_MAX_TIMEOUT_SEC)
+        bounded = min(max(timeout_sec, 1.0), QUESTION_MAX_DEADLINE_SEC)
         try:
             result = await _request_client(
                 writer,

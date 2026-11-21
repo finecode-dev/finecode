@@ -38,6 +38,22 @@ from fine_agent.locate_agent_history_action import (
     LocateAgentHistoryRunPayload,
     LocateAgentHistoryRunResult,
 )
+from fine_agent.question_support import (
+    AGENT_QUESTION_OPT_IN_KEY,
+    BACKEND_TIMEOUT_MARGIN_SEC,
+    QUESTION_DECLINED_REPLY,
+    QUESTION_GRACE_SEC,
+    QUESTION_MAX_DEADLINE_SEC,
+    QUESTION_MIN_DEADLINE_SEC,
+    START_REFUSAL_ERROR,
+    AgentQuestionMode,
+    question_deadline_sec,
+    question_not_asked_error,
+    refused_at_start_result,
+    resolve_question_mode,
+    settle_budget_question_error,
+    unanswered_question_error,
+)
 from fine_agent.route_agent_history_handler import (
     RouteAgentHistoryHandler,
     RouteAgentHistoryHandlerConfig,
@@ -67,7 +83,15 @@ from fine_agent.task_support import (
 )
 
 __all__ = [
+    "AGENT_QUESTION_OPT_IN_KEY",
+    "BACKEND_TIMEOUT_MARGIN_SEC",
+    "QUESTION_DECLINED_REPLY",
+    "QUESTION_GRACE_SEC",
+    "QUESTION_MAX_DEADLINE_SEC",
+    "QUESTION_MIN_DEADLINE_SEC",
+    "START_REFUSAL_ERROR",
     "AgentBackend",
+    "AgentQuestionMode",
     "AgentRunArchive",
     "AgentRunObservation",
     "AgentRunStatus",
@@ -112,11 +136,17 @@ __all__ = [
     "file_contains",
     "files_containing",
     "json_output_instruction",
+    "question_deadline_sec",
+    "question_not_asked_error",
+    "refused_at_start_result",
     "render_template",
+    "resolve_question_mode",
     "run_structured_task",
+    "settle_budget_question_error",
     "slots_from_payload",
     "structure_task_outcome",
     "structured_task_payload",
+    "unanswered_question_error",
     "unknown_profile_error",
     "write_archive_file",
 ]

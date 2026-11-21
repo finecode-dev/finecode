@@ -8,7 +8,9 @@ from finecode_extension_api.interfaces.iuserprompt import (
     ElicitationOutcome,
     ElicitationResult,
     IUserPrompt,
+    PromptAvailability,
 )
+from finecode_extension_api.interfaces.iworkslots import WorkSlotScopeError
 from loguru import logger
 
 from finecode_extension_runner import er_errors, run_context
@@ -16,6 +18,7 @@ from finecode_extension_runner import er_errors, run_context
 __all__ = ["UserPrompt"]
 
 _ELICIT = "finecode/elicit"
+_ELICIT_AVAILABILITY = "finecode/elicitAvailability"
 
 
 class UserPrompt(IUserPrompt):
@@ -97,6 +100,26 @@ class UserPrompt(IUserPrompt):
             return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
 
         return self._to_result(raw, options)
+
+    async def check_availability(self) -> PromptAvailability:
+        """Say whether a question could be put to a person right now."""
+        if self._send is None:
+            return PromptAvailability(can_ask=False)
+        try:
+            raw = await self._send(
+                _ELICIT_AVAILABILITY,
+                {"runId": run_context.current_run_id()},
+            )
+        except er_errors.WmCommunicationCancelled as exception:
+            raise ActionRunCancelled(exception.message) from exception
+        except WorkSlotScopeError:
+            raise
+        except Exception as exception:
+            logger.warning(f"Could not check question availability: {exception}")
+            return PromptAvailability(can_ask=False)
+        if not isinstance(raw, dict) or raw.get("canAnswer") is not True:
+            return PromptAvailability(can_ask=False)
+        return PromptAvailability(can_ask=True)
 
     @staticmethod
     def _to_result(raw: Any, options: list[str]) -> ElicitationResult:

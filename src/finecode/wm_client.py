@@ -14,6 +14,7 @@ import collections.abc
 import contextlib
 import dataclasses
 import json
+import os
 import pathlib
 import random
 import typing
@@ -25,6 +26,27 @@ from finecode_extension_runner import schema_utils
 from finecode_jsonrpc import error_codes
 
 CONTENT_LENGTH_HEADER = "Content-Length: "
+
+
+def question_capability_allowed(*, client_label: str) -> bool:
+    """Whether this client may declare question support.
+
+    A FineCode client whose own environment has a non-empty ``CI`` never
+    declares the question capability; every question on that connection is
+    answered unavailable at once. ``CI=\"\"`` counts as unset; ``CI=false``
+    and ``CI=0`` count as set.
+
+    Reads the calling process's environment. Never call from
+    ``ApiClient.connect``/``_open``: direct API users keep declaring for
+    themselves.
+    """
+    if os.environ.get("CI"):
+        logger.info(
+            f"{client_label} does not declare question support "
+            "because CI is set"
+        )
+        return False
+    return True
 
 
 @dataclasses.dataclass(frozen=True)

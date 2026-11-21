@@ -35,7 +35,7 @@ from finecode.mcp_server.contracts import (
     ToolInputSchema,
     ToolOutcome,
 )
-from finecode.wm_client import ApiClient, ReconnectPolicy
+from finecode.wm_client import ApiClient, ReconnectPolicy, question_capability_allowed
 from finecode.wm_server import wm_lifecycle
 
 __all__ = ["ToolService", "prepare_wm"]
@@ -108,6 +108,7 @@ class ToolService:
                 # own.
                 capabilities={"elicitation": {"choice": True}}
                 if config.can_answer_choices
+                and question_capability_allowed(client_label=config.client_id)
                 else None,
             )
         except BaseException:

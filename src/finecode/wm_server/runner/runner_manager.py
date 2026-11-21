@@ -112,6 +112,9 @@ _STARTUP_SLOT_NEUTRAL_METHODS: typing.Final[frozenset[str]] = frozenset(
         _internal_client_types.ER_USER_MESSAGE,
         # Feeds the local log-delivery pipeline: awaits nothing.
         _internal_client_types.ER_LOG_RECORDS,
+        # Synchronous dict read: answers from the origin registry and the
+        # client's declared capabilities, waits on nothing.
+        _internal_client_types.ELICIT_AVAILABILITY,
     }
 )
 
@@ -973,6 +976,33 @@ async def _start_extension_runner_process(
     _register(
         _internal_client_types.ELICIT,
         handle_elicit,
+    )
+
+    async def handle_elicit_availability(
+        params: _internal_client_types.ElicitAvailabilityParams,
+    ) -> _internal_client_types.ElicitAvailabilityResult:
+        """Serve ``finecode/elicitAvailability`` (ER → WM: can anyone be asked?).
+
+        Answered from the same facts ``finecode/elicit`` checks before
+        sending; sends nothing to the client. A nested run's id is already
+        bound to the root connection, so it reports the root client's
+        availability. Raises when no bridge is installed, as ``handle_elicit``
+        does — the ER reads that as "cannot".
+        """
+        installed = elicitation_bridge.handlers()
+        if installed is None:
+            raise errors.InternalError(
+                "This WM has no client-connection layer installed, so it cannot "
+                "say whether anyone could be asked."
+            )
+        origin = elicitation_bridge.originating_client_for_run(params.run_id)
+        return _internal_client_types.ElicitAvailabilityResult(
+            can_answer=installed.can_elicit(run_writer_key=origin)
+        )
+
+    _register(
+        _internal_client_types.ELICIT_AVAILABILITY,
+        handle_elicit_availability,
     )
 
 

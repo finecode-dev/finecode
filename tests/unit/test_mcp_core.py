@@ -28,6 +28,12 @@ from finecode.mcp_server.contracts import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _without_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Capable-client tests assume no CI; the declaration is env-dependent."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 class _RecordingClient:
     """Stands in for ApiClient, recording every call the core makes."""
 

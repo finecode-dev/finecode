@@ -21,6 +21,12 @@ from finecode.mcp_server.core import ToolService
 from finecode_jsonrpc import JsonRpcServerSession
 
 
+@pytest.fixture(autouse=True)
+def _without_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Capability assertions assume no CI; the declaration is env-dependent."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 class _RecordingSession:
     """Stands in for the JSON-RPC session toward the AI client."""
 

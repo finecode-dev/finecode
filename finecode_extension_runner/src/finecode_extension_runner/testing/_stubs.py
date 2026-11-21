@@ -147,12 +147,21 @@ class FakeUserPrompt:
         self,
         answers: list[iuserprompt.ElicitationResult] | None = None,
         default: iuserprompt.ElicitationResult | None = None,
+        availability: iuserprompt.PromptAvailability | None = None,
     ) -> None:
         self.answers = list(answers or [])
         self.default = default or iuserprompt.ElicitationResult(
             outcome=iuserprompt.ElicitationOutcome.UNAVAILABLE
         )
         self.asked: list[tuple[str, list[str]]] = []
+        self.availability = availability or iuserprompt.PromptAvailability(
+            can_ask=False
+        )
+        self.availability_checks: int = 0
+
+    async def check_availability(self) -> iuserprompt.PromptAvailability:
+        self.availability_checks += 1
+        return self.availability
 
     async def ask_choice(
         self,

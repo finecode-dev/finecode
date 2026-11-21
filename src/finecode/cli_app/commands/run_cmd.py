@@ -17,7 +17,12 @@ from loguru import logger
 
 from finecode.cli_app import payload_uris, resource_usage, utils
 from finecode.cli_app.log_render import render_log_records, user_message_log_level
-from finecode.wm_client import ApiClient, ApiError, ReconnectPolicy
+from finecode.wm_client import (
+    ApiClient,
+    ApiError,
+    ReconnectPolicy,
+    question_capability_allowed,
+)
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_server.runner import runner_client
 
@@ -275,7 +280,9 @@ async def run_actions(
         # answered "nobody could be asked" without a round trip — which is the
         # difference between an interactive action that works unattended and one
         # that hangs until its deadline.
-        can_answer_questions = sys.stdin.isatty()
+        can_answer_questions = sys.stdin.isatty() and question_capability_allowed(
+            client_label="cli"
+        )
         # Set except while a question is on screen; the partial-result renderer
         # waits on it so streamed output does not interleave with the prompt.
         prompt_idle = asyncio.Event()

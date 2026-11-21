@@ -9,13 +9,21 @@ properties are the interface's whole point, so both are pinned here.
 from __future__ import annotations
 
 import asyncio
+import typing
 
+import finecode_jsonrpc as finecode_jsonrpc_module
 import pytest
 from finecode_extension_api.interfaces.iprojectactionrunner import ActionRunCancelled
-from finecode_extension_api.interfaces.iuserprompt import ElicitationOutcome
+from finecode_extension_api.interfaces.iuserprompt import (
+    ElicitationOutcome,
+    PromptAvailability,
+)
+from finecode_extension_api.interfaces.iworkslots import WorkSlotScopeError
 
-from finecode_extension_runner import er_errors, run_context
+from finecode_extension_runner import er_errors, er_server, run_context
 from finecode_extension_runner.impls.user_prompt import UserPrompt
+from finecode_extension_runner.process_slots import ProcessSlots
+from finecode_extension_runner.work_slots import WorkSlots
 
 
 def _prompt_returning(value: object) -> UserPrompt:
@@ -178,3 +186,148 @@ async def test_a_question_outside_any_run_names_none() -> None:
     await UserPrompt(_send).ask_choice("keep it?", ["keep"])
 
     assert sent[0][1]["runId"] is None
+
+
+# ---------------------------------------------------------------------------
+# check_availability: the start probe, answered without a question
+# ---------------------------------------------------------------------------
+
+
+def _available(value: object) -> UserPrompt:
+    async def _send(_method: str, _params: dict) -> object:
+        return value
+
+    return UserPrompt(_send)
+
+
+async def test_no_wm_at_all_cannot_be_asked() -> None:
+    """An ER exercised standalone has no back-channel, which is not a defect."""
+    result = await UserPrompt(None).check_availability()
+
+    assert result == PromptAvailability(can_ask=False)
+
+
+async def test_a_true_answer_is_the_only_yes() -> None:
+    """Only a dict result whose ``canAnswer`` is exactly ``True`` reads "can"."""
+    assert await _available({"canAnswer": True}).check_availability() == (
+        PromptAvailability(can_ask=True)
+    )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"canAnswer": False},
+        {"canAnswer": "yes"},
+        {"canAnswer": 1},
+        {"canAnswer": None},
+        {},
+        "not even a dict",
+        None,
+    ],
+)
+async def test_anything_but_true_is_cannot(answer: object) -> None:
+    """An older WM answers method-not-found (an error, not data); a malformed
+    result is the same "cannot" rather than a crash."""
+    assert await _available(answer).check_availability() == PromptAvailability(
+        can_ask=False
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        er_errors.WmCommunicationError("socket is gone"),
+        RuntimeError("something nobody enumerated"),
+        ConnectionResetError(),
+    ],
+)
+async def test_a_failed_probe_is_cannot_not_an_exception(
+    failure: Exception,
+) -> None:
+    """Transport errors and the WM's own errors (an older WM's method-not-found
+    arrives as one) all mean the same thing: nobody's availability is known."""
+    assert await _prompt_raising(failure).check_availability() == PromptAvailability(
+        can_ask=False
+    )
+
+
+async def test_a_method_not_found_becomes_cannot_through_the_sender() -> None:
+    """The real sender translates the older WM's method-not-found into an
+    error, which the probe reads as "cannot" rather than raising."""
+
+    class _OldWm:
+        async def send_request_to_wm(self, method: str, params: dict) -> typing.Any:
+            raise finecode_jsonrpc_module.JsonRpcError(
+                finecode_jsonrpc_module.METHOD_NOT_FOUND, "no such method"
+            )
+
+    sender = er_server.make_wm_request_sender(_OldWm())  # type: ignore[arg-type]
+    assert await UserPrompt(sender).check_availability() == PromptAvailability(
+        can_ask=False
+    )
+
+
+async def test_probe_cancellation_still_propagates() -> None:
+    """Cancelling a run mid-probe must not look like an unattended one."""
+    with pytest.raises(ActionRunCancelled):
+        await _prompt_raising(
+            er_errors.WmCommunicationCancelled("run cancelled")
+        ).check_availability()
+
+
+async def test_a_probe_inside_a_work_slot_is_loud() -> None:
+    """A check made where it would wait on the slot it holds is a programming
+    error (C27): it must raise, never silently refuse a capable run."""
+    gate = ProcessSlots(target=8)
+    scopes = WorkSlots(gate)
+
+    class _NeverReached:
+        async def send_request_to_wm(self, method: str, params: dict) -> typing.Any:
+            raise AssertionError("the scope guard must fire first")
+
+    sender = er_server.make_wm_request_sender(_NeverReached())  # type: ignore[arg-type]
+    prompt = UserPrompt(sender)
+
+    async with scopes.acquire():
+        with pytest.raises(WorkSlotScopeError):
+            await prompt.check_availability()
+
+
+async def test_the_probe_goes_out_as_finecode_elicit_availability() -> None:
+    """The probe names its own method and the asking run, and nothing else."""
+    sent: list[tuple[str, dict]] = []
+
+    async def _send(method: str, params: dict) -> object:
+        sent.append((method, params))
+        return {"canAnswer": True}
+
+    with run_context.run("run-0042"):
+        result = await UserPrompt(_send).check_availability()
+
+    assert result == PromptAvailability(can_ask=True)
+    assert sent == [("finecode/elicitAvailability", {"runId": "run-0042"})]
+
+
+async def test_elicit_reaches_the_wm_without_a_transport_timeout() -> None:
+    """The WM enforces the question deadline (C6): the ER transport must not
+    impose its own. A ``finecode/elicit`` sent through the guarded sender
+    arrives at ``send_request_to_wm`` with no timeout attached."""
+    seen: dict[str, object] = {}
+
+    class _Session:
+        async def send_request(
+            self, method: str, params: dict, **kwargs: object
+        ) -> object:
+            seen["method"] = method
+            seen["kwargs"] = kwargs
+            return {"outcome": "unavailable"}
+
+    server = er_server.ErServer()
+    server._session = _Session()  # type: ignore[assignment]
+    sender = er_server.make_wm_request_sender(server)
+
+    await UserPrompt(sender).ask_choice("keep it?", ["keep"])
+
+    assert seen["method"] == "finecode/elicit"
+    assert seen["kwargs"] == {}

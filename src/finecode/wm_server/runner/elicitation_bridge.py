@@ -40,6 +40,7 @@ intermediate signatures carry is a cost, not a structural blocker.
 
 from __future__ import annotations
 
+import asyncio
 import collections.abc
 import contextlib
 import dataclasses
@@ -69,11 +70,16 @@ class RunDispatchOrigin:
     never had a client to begin with, and binds nothing.
     """
 
-    connection: object | None
+    connection: asyncio.StreamWriter | None
 
 
 class ElicitationBridge(typing.Protocol):
     """What the runner needs from whoever owns client connections."""
+
+    def can_elicit(self, *, run_writer_key: asyncio.StreamWriter | None) -> bool:
+        """Whether a question could be put to a person right now.
+        """
+        ...
 
     async def elicit(
         self,
@@ -82,7 +88,7 @@ class ElicitationBridge(typing.Protocol):
         options: list[str],
         default: str | None,
         timeout_sec: float,
-        run_writer_key: object | None,
+        run_writer_key: asyncio.StreamWriter | None,
     ) -> dict:
         """Put a multiple-choice question to one client and return the outcome.
 
@@ -132,7 +138,7 @@ def handlers() -> ElicitationBridge | None:
 # Run id → the connection that started it. Written for the life of the dispatch
 # and read by an ER on a different connection entirely, which is why this is a
 # registry rather than a value carried on the run's own call stack.
-_runs: dict[str, object] = {}
+_runs: dict[str, asyncio.StreamWriter] = {}
 
 
 @contextlib.contextmanager
@@ -166,7 +172,7 @@ def bind_run(
         _runs.pop(run_id, None)
 
 
-def originating_client_for_run(run_id: str | None) -> object | None:
+def originating_client_for_run(run_id: str | None) -> asyncio.StreamWriter | None:
     """The connection that started *run_id*, or ``None``.
 
     ``None`` is an ordinary answer rather than a failure: a run dispatched

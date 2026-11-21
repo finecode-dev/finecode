@@ -56,6 +56,7 @@ RELEASE_PROCESS_BUDGET = "finecode/releaseProcessBudget"
 GET_ACTIONS_FOR_PARENT = "finecode/getActionsForParent"
 LIST_WORKSPACE_ACTIONS = "finecode/listWorkspaceActions"
 ELICIT = "finecode/elicit"
+ELICIT_AVAILABILITY = "finecode/elicitAvailability"
 KNOWLEDGE_REGISTER_SCHEMA = "knowledge/registerSchema"
 KNOWLEDGE_QUERY = "knowledge/query"
 KNOWLEDGE_RECORDS = "knowledge/records"
@@ -1829,6 +1830,41 @@ class ElicitResponse(BaseResponse):
     result: ElicitResult
 
 
+# ---------------------------------------------------------------------------
+# finecode/elicitAvailability  (ER → WM: can a question be put to anyone?)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class ElicitAvailabilityParams:
+    """Which run is asking, as the WM handed it to the ER at dispatch.
+
+    ``None`` — an ER that predates this field, or a call made outside any
+    run — is answered "cannot" rather than guessed at.
+    """
+
+    run_id: str | None = None
+
+
+@dataclasses.dataclass
+class ElicitAvailabilityRequest(BaseRequest):
+    params: ElicitAvailabilityParams
+    method = ELICIT_AVAILABILITY
+
+
+@dataclasses.dataclass
+class ElicitAvailabilityResult(BaseResult):
+    """Whether a question could be put to a person right now.
+    """
+
+    can_answer: bool
+
+
+@dataclasses.dataclass
+class ElicitAvailabilityResponse(BaseResponse):
+    result: ElicitAvailabilityResult
+
+
 @dataclasses.dataclass
 class ErResolveActionMetaResponse(BaseResponse):
     result: dict[str, dict] = dataclasses.field(default_factory=dict)
@@ -2430,6 +2466,12 @@ METHOD_TO_TYPES: dict[
         ElicitParams,
         ElicitResponse,
         ElicitResult,
+    ),
+    ELICIT_AVAILABILITY: (
+        ElicitAvailabilityRequest,
+        ElicitAvailabilityParams,
+        ElicitAvailabilityResponse,
+        ElicitAvailabilityResult,
     ),
     WORKSPACE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,
