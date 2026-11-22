@@ -213,6 +213,16 @@ def task_done_log_callback(future: asyncio.Future[typing.Any], task_id: str = ""
             logger.trace(f"{task_id} done")
 
 
+@dataclasses.dataclass
+class _InboundRequest:
+    """An incoming request being served, tracked for ``$/cancelRequest``."""
+
+    method: str
+    task: asyncio.Task[typing.Any]
+    started: bool = False
+    cancelled_before_start: bool = False
+
+
 class RequestCancelledError(asyncio.CancelledError):
     def __init__(self, request_id: int | str) -> None:
         super().__init__()
@@ -300,6 +310,12 @@ class JsonRpcClient:
         # are removed by the sync future's done-callback.
         self._sync_request_hops: dict[str, HopToken] = {}
         self.feature_impls: dict[str, collections.abc.Callable] = {}
+        self._peer_cancel_hooks: dict[
+            str, collections.abc.Callable[[asyncio.Task[typing.Any]], None]
+        ] = {}
+        # Incoming requests being served, by request id; removed when the
+        # serving task finishes.
+        self._inbound_requests: dict[str | int, _InboundRequest] = {}
         self._sync_feature_impls: dict[
             str, collections.abc.Callable[[typing.Any], None]
         ] = {}
@@ -313,7 +329,23 @@ class JsonRpcClient:
         self._async_tasks_in_io_thread: list[asyncio.Task[typing.Any]] = []
         self._tcp_port_future: asyncio.Future[int] | None = None
 
-    def feature(self, name: str, impl: collections.abc.Callable) -> None:
+    def feature(
+        self,
+        name: str,
+        impl: collections.abc.Callable,
+        *,
+        on_peer_cancel: (
+            collections.abc.Callable[[asyncio.Task[typing.Any]], None] | None
+        ) = None,
+    ) -> None:
+        """Register *impl* for incoming ``name`` requests or notifications.
+
+        *on_peer_cancel* opts a request method into acting on the peer's
+        ``$/cancelRequest``: the hook is called synchronously with the task
+        serving the request, then the task is cancelled and the request is
+        answered once with the cancelled error code. Without it, a peer cancel
+        is ignored and the request keeps being served.
+        """
         # NOTE: registering a feature here is necessary but NOT sufficient. Incoming
         # requests and notifications are also gated and deserialized against the
         # client's `message_types` table: `_handle_incoming_*` drops any method missing
@@ -325,6 +357,8 @@ class JsonRpcClient:
                 f"Method {name!r} already has a synchronous feature registration"
             )
         self.feature_impls[name] = impl
+        if on_peer_cancel is not None:
+            self._peer_cancel_hooks[name] = on_peer_cancel
 
     def feature_sync(self, name: str, impl: collections.abc.Callable[_P, None]) -> None:
         """Register an opt-in synchronous notification handler.
@@ -1348,6 +1382,9 @@ class JsonRpcClient:
                         message_id, impl(request.params), result_type, hop
                     )
                 )
+                self._inbound_requests[message_id] = _InboundRequest(
+                    method=method, task=new_task
+                )
                 new_task.add_done_callback(
                     functools.partial(
                         task_done_log_callback,
@@ -1425,6 +1462,14 @@ class JsonRpcClient:
 
             method = message["method"]
             if (
+                method == "$/cancelRequest"
+                and method not in self.feature_impls
+                and method not in self._sync_feature_impls
+            ):
+                self._handle_peer_cancel(message.get("params"))
+                return
+
+            if (
                 method not in self.feature_impls
                 and method not in self._sync_feature_impls
             ):
@@ -1487,6 +1532,37 @@ class JsonRpcClient:
             )
             self._async_tasks.append(new_task)
 
+    def _handle_peer_cancel(self, params: dict[str, typing.Any] | None) -> None:
+        """Act on an inbound ``$/cancelRequest`` without suspending.
+
+        Only requests whose method registered ``on_peer_cancel`` are cancelled;
+        any other id is ignored and its request keeps being served.
+        """
+        request_id = params.get("id") if isinstance(params, dict) else None
+        inbound = (
+            self._inbound_requests.get(request_id) if request_id is not None else None
+        )
+        hook = self._peer_cancel_hooks.get(inbound.method) if inbound else None
+        if inbound is None or hook is None:
+            logger.debug(
+                f"Ignoring $/cancelRequest for id={request_id}: no cancellable request | {self.readable_id}"
+            )
+            return
+
+        try:
+            hook(inbound.task)
+        except Exception as hook_error:
+            logger.warning(
+                f"on_peer_cancel hook of {inbound.method} failed: {hook_error} | {self.readable_id}"
+            )
+        if inbound.started:
+            inbound.task.cancel()
+        else:
+            # A task cancelled before its first step never enters its handler
+            # `try`, so it would send no response. run_feature_impl answers it
+            # when it starts instead.
+            inbound.cancelled_before_start = True
+
     async def run_feature_impl(
         self,
         message_id: str | int,
@@ -1497,7 +1573,14 @@ class JsonRpcClient:
         observer = self._hop_observer
         if hop is not None and observer is not None:
             self._hop_stage(hop, "handler_started", capture_stage_time())
+        inbound = self._inbound_requests.get(message_id)
         try:
+            if inbound is not None:
+                if inbound.cancelled_before_start:
+                    if inspect.iscoroutine(impl_coro):
+                        impl_coro.close()
+                    raise asyncio.CancelledError
+                inbound.started = True
             if hop is not None and observer is not None:
                 with guarded_handler_scope(observer, hop):
                     result = await impl_coro
@@ -1572,6 +1655,7 @@ class JsonRpcClient:
                 hop=hop,
             )
         finally:
+            self._inbound_requests.pop(message_id, None)
             current_task = asyncio.current_task()
             with contextlib.suppress(ValueError):
                 self._async_tasks.remove(current_task)

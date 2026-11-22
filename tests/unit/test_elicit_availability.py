@@ -70,7 +70,9 @@ class _RecordingClient:
         self.server_exit_callback: object = None
         self.startup_timeline = finecode_jsonrpc.StartupTimeline()
 
-    def feature(self, name: str, impl: object) -> None:
+    def feature(
+        self, name: str, impl: object, *, on_peer_cancel: object = None
+    ) -> None:
         self.feature_impls[name] = impl
 
     def feature_sync(self, name: str, impl: object) -> None:

@@ -21,6 +21,12 @@ from finecode.cli_app.commands.run_cmd import RunFailed
 from finecode.wm_client import ActionListing, ApiServerError
 
 
+@pytest.fixture(autouse=True)
+def _without_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The handler-installation tests assume no CI; D13 mutes it otherwise."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 class _FakeApiClient:
     """Scriptable stand-in for ``ApiClient`` covering everything ``run_actions``
     touches, recording the calls that decide runner scope."""
@@ -64,7 +70,7 @@ class _FakeApiClient:
     ) -> None:
         self.notification_handlers[method] = handler
 
-    def on_request(self, method: str, handler: object) -> None: ...
+    def on_request(self, method: str, handler: object, **kwargs: object) -> None: ...
 
     async def subscribe_logs(self, min_level: str) -> None: ...
 
@@ -312,12 +318,10 @@ async def test_project_filter_passes_project_paths_to_listing(
     assert client.closed
 
 
-@pytest.mark.parametrize("stderr_is_tty", [False, True])
-async def test_partial_results_are_previewed_on_stderr_in_arrival_order(
+async def test_partial_results_are_previewed_on_a_terminal_stderr_in_arrival_order(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    stderr_is_tty: bool,
 ) -> None:
     """People can watch live output without mixing previews into piped stdout."""
     client = _FakeApiClient(
@@ -345,7 +349,7 @@ async def test_partial_results_are_previewed_on_stderr_in_arrival_order(
         },
     ]
 
-    monkeypatch.setattr(run_cmd.sys.stderr, "isatty", lambda: stderr_is_tty)
+    monkeypatch.setattr(run_cmd.sys.stderr, "isatty", lambda: True)
     await _run(
         [_action("run agent task", "pkg.RunAgentTask", "project")],
         names=["run agent task"],
@@ -377,7 +381,131 @@ async def test_partial_results_are_previewed_on_stderr_in_arrival_order(
         "-- preview: run agent task [cpython@3.14] (" + str(tmp_path) + ") --"
         in captured.err
     )
-    assert ("\r\x1b[K" in captured.err) is stderr_is_tty
+    assert "\r\x1b[K" in captured.err
+
+
+async def test_partial_results_are_not_previewed_when_stderr_is_not_a_terminal(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An agent's shell tool captures stderr into the model's context, so a
+    piped run shows only the final result on stdout."""
+    client = _FakeApiClient(
+        [_action("run agent task", "pkg.RunAgentTask", "project")], tmp_path
+    )
+    client.partial_results_to_send = [
+        {
+            "project": str(tmp_path),
+            "results": {
+                "pkg.RunAgentTask": {
+                    "resultByFormat": {"string": text},
+                    "returnCode": 0,
+                }
+            },
+        }
+        for text in ("first snapshot", "first snapshot grows")
+    ]
+    client.run_batch_result = {
+        "results": {
+            str(tmp_path): {
+                "pkg.RunAgentTask": {
+                    "resultByFormat": {"string": "final answer"},
+                    "returnCode": 0,
+                }
+            }
+        },
+        "returnCode": 0,
+    }
+
+    monkeypatch.setattr(run_cmd.sys.stderr, "isatty", lambda: False)
+    await _run(
+        [_action("run agent task", "pkg.RunAgentTask", "project")],
+        names=["run agent task"],
+        monkeypatch=monkeypatch,
+        client=client,
+        workdir_path=tmp_path,
+    )
+
+    captured = capsys.readouterr()
+    assert "snapshot" not in captured.err
+    assert "-- preview:" not in captured.err
+    assert "final answer" in captured.out
+
+
+async def test_cumulative_previews_print_only_the_new_text_under_one_label(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A snapshot that extends the previous one adds only its new part; a
+    single project's stream is headed once, not before every snapshot."""
+    client = _FakeApiClient(
+        [_action("run agent task", "pkg.RunAgentTask", "project")], tmp_path
+    )
+    client.partial_results_to_send = [
+        {
+            "project": str(tmp_path),
+            "results": {
+                "pkg.RunAgentTask": {
+                    "resultByFormat": {"string": text},
+                    "returnCode": 0,
+                }
+            },
+        }
+        for text in ("one", "one two", "one two", "one two three")
+    ]
+
+    monkeypatch.setattr(run_cmd.sys.stderr, "isatty", lambda: True)
+    await _run(
+        [_action("run agent task", "pkg.RunAgentTask", "project")],
+        names=["run agent task"],
+        monkeypatch=monkeypatch,
+        client=client,
+        workdir_path=tmp_path,
+    )
+
+    err = capsys.readouterr().err
+    label = "-- preview: run agent task (" + str(tmp_path) + ") --"
+    assert err.count(label) == 1
+    assert err.count("one") == 1
+    assert err.index("one") < err.index(" two") < err.index(" three")
+
+
+async def test_a_snapshot_that_does_not_extend_the_previous_one_is_printed_whole(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = _FakeApiClient(
+        [_action("run agent task", "pkg.RunAgentTask", "project")], tmp_path
+    )
+    client.partial_results_to_send = [
+        {
+            "project": str(tmp_path),
+            "results": {
+                "pkg.RunAgentTask": {
+                    "resultByFormat": {"string": text},
+                    "returnCode": 0,
+                }
+            },
+        }
+        for text in ("first draft", "second draft")
+    ]
+
+    monkeypatch.setattr(run_cmd.sys.stderr, "isatty", lambda: True)
+    await _run(
+        [_action("run agent task", "pkg.RunAgentTask", "project")],
+        names=["run agent task"],
+        monkeypatch=monkeypatch,
+        client=client,
+        workdir_path=tmp_path,
+    )
+
+    err = capsys.readouterr().err
+    label = "-- preview: run agent task (" + str(tmp_path) + ") --"
+    assert err.count(label) == 2
+    assert "first draft" in err and "second draft" in err
 
 
 async def test_preview_waiting_behind_a_question_is_discarded_when_run_finishes(
@@ -401,20 +529,22 @@ async def test_preview_waiting_behind_a_question_is_discarded_when_run_finishes(
         }
     ]
 
-    def _hold_prompt(
-        prompt_idle: asyncio.Event,
-    ) -> typing.Callable[
-        [dict[str, typing.Any]], typing.Awaitable[dict[str, typing.Any]]
-    ]:
-        prompt_idle.clear()
+    class _HoldingPrompt:
+        """A terminal question that is on screen for the whole run."""
 
-        async def _handler(_params: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        def __init__(self, *, prompt_idle: asyncio.Event, **_kwargs: object) -> None:
+            prompt_idle.clear()
+
+        async def ask(self, _request_id: int | str, _params: dict | None) -> dict:
             return {}
 
-        return _handler
+        async def on_withdrawn(self, _params: dict | None) -> None: ...
+
+        def end_all_on_connection_lost(self) -> None: ...
 
     monkeypatch.setattr(run_cmd.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(run_cmd, "_make_elicit_handler", _hold_prompt)
+    monkeypatch.setattr(run_cmd, "TerminalQuestions", _HoldingPrompt)
+    monkeypatch.setattr(run_cmd.sys.stderr, "isatty", lambda: True)
 
     await _run(
         [_action("run agent task", "pkg.RunAgentTask", "project")],

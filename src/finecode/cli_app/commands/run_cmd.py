@@ -5,8 +5,8 @@ import difflib
 import json
 import os
 import pathlib
+import signal
 import sys
-import threading
 import time
 import typing
 import uuid
@@ -17,6 +17,10 @@ from loguru import logger
 
 from finecode.cli_app import payload_uris, resource_usage, utils
 from finecode.cli_app.log_render import render_log_records, user_message_log_level
+from finecode.cli_app.terminal_questions import (
+    TerminalQuestions,
+    discard_pending_terminal_input,
+)
 from finecode.wm_client import (
     ApiClient,
     ApiError,
@@ -30,122 +34,6 @@ from finecode.wm_server.runner import runner_client
 class RunFailed(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
-
-
-def _ask_in_terminal(message: str, options: list[str], default: str | None) -> dict:
-    """Put one question to the person at this terminal. Blocking; run off-loop.
-
-    Everything is written to stderr, including the prompt itself: the answer
-    belongs to the interaction, not to the run's output, and a caller piping
-    stdout somewhere should get the same bytes whether or not something asked.
-
-    Returns the ``client/elicit`` result: ``answered`` with the chosen option,
-    or ``declined`` when the person ends the interaction (Ctrl-D).
-    """
-    click.echo("", err=True)
-    click.echo(click.style(message, bold=True), err=True)
-    for index, option in enumerate(options, start=1):
-        marker = " (default)" if option == default else ""
-        click.echo(f"  {index}) {option}{marker}", err=True)
-
-    has_default = default in options
-    hint = f" [{default}]" if has_default else ""
-    while True:
-        # The prompt goes out separately rather than as `input(...)`'s argument:
-        # `input` writes its argument to *stdout*, which is the one stream this
-        # function promises not to touch.
-        click.echo(f"Choose 1-{len(options)}{hint}: ", nl=False, err=True)
-        try:
-            answer = input().strip()
-        except EOFError:
-            # Ctrl-D here ends *the question*, not the run: the person was asked
-            # and did not choose, which is a decision the handler can act on
-            # (ADR-0082 rule 3). Ctrl-C is not catchable here — CPython delivers
-            # SIGINT to the main thread and this runs off it — and ends the whole
-            # run, which is what Ctrl-C means everywhere else in this CLI.
-            click.echo("", err=True)
-            return {"outcome": "declined"}
-
-        if not answer and has_default:
-            # Enter on a defaulted question is a person accepting the default,
-            # which is an answer — unlike the handler applying it unasked.
-            return {"outcome": "answered", "value": default}
-        if answer.isdigit() and 1 <= int(answer) <= len(options):
-            return {"outcome": "answered", "value": options[int(answer) - 1]}
-        if answer in options:
-            return {"outcome": "answered", "value": answer}
-        click.echo("Not one of the options. Try again.", err=True)
-
-
-async def _ask_off_loop(message: str, options: list[str], default: str | None) -> dict:
-    """Await :func:`_ask_in_terminal` on a thread this loop never has to join.
-
-    Deliberately not ``asyncio.to_thread``: that borrows the default executor,
-    whose threads are non-daemon and joined by ``asyncio.run`` on the way out. A
-    prompt still parked in ``input()`` when the run ends — Ctrl-C, or the client
-    closing while a question is outstanding — would hold that join open (forever
-    before Python 3.12, five minutes after) for an answer the server has already
-    stopped waiting for. A daemon thread is abandoned instead, which is the
-    honest end for a question nobody is going to answer.
-    """
-    loop = asyncio.get_running_loop()
-    answered: asyncio.Future[dict] = loop.create_future()
-
-    def _settle(outcome: dict | None, error: BaseException | None) -> None:
-        if answered.done():  # the run was torn down while the prompt was open
-            return
-        if error is not None:
-            answered.set_exception(error)
-        else:
-            answered.set_result(outcome or {})
-
-    def _prompt() -> None:
-        try:
-            result = _ask_in_terminal(message, options, default)
-        except BaseException as exception:
-            loop.call_soon_threadsafe(_settle, None, exception)
-        else:
-            loop.call_soon_threadsafe(_settle, result, None)
-
-    threading.Thread(target=_prompt, name="finecode-prompt", daemon=True).start()
-    return await answered
-
-
-def _make_elicit_handler(prompt_idle: asyncio.Event) -> typing.Callable:
-    """Return the ``client/elicit`` request handler for an attached terminal.
-
-    Registered only when this CLI can actually answer; see ``run_actions``.
-    While the question is on screen, *prompt_idle* is cleared so the streamed
-    output still arriving does not print between the question and the cursor.
-    """
-    # One question at a time. A multi-project or multi-env run can have two ERs
-    # ask at once; without this they would race two threads on the same stdin,
-    # and whichever finished first would set `prompt_idle` again while the other
-    # prompt was still on screen.
-    asking = asyncio.Lock()
-
-    async def handler(params: dict | None) -> dict:
-        value = params or {}
-        options = [str(option) for option in value.get("options") or []]
-        if not options:
-            # Nobody can be asked a question with no answers. Not "declined":
-            # that means a person refused, which handlers are documented to
-            # honour by aborting or taking the safe branch — a malformed
-            # question must not read as a decision somebody took.
-            return {"outcome": "unavailable"}
-
-        async with asking:
-            prompt_idle.clear()
-            try:
-                return await _ask_off_loop(
-                    str(value.get("message", "")),
-                    options,
-                    value.get("default"),
-                )
-            finally:
-                prompt_idle.set()
-
-    return handler
 
 
 def _make_progress_handler(is_tty: bool) -> typing.Callable:
@@ -287,8 +175,21 @@ async def run_actions(
         # waits on it so streamed output does not interleave with the prompt.
         prompt_idle = asyncio.Event()
         prompt_idle.set()
+        terminal_questions: TerminalQuestions | None = None
         if can_answer_questions:
-            client.on_request("client/elicit", _make_elicit_handler(prompt_idle))
+            terminal_questions = TerminalQuestions(
+                prompt_idle=prompt_idle,
+                discard_pending_input=discard_pending_terminal_input,
+                # Ctrl-C reaches a raw-mode prompt as a key, not as a signal;
+                # re-delivering it takes the same path as Ctrl-C outside one.
+                on_interrupt=lambda: signal.raise_signal(signal.SIGINT),
+            )
+            client.on_request(
+                "client/elicit", terminal_questions.ask, pass_request_id=True
+            )
+            client.on_notification(
+                "client/elicitWithdrawn", terminal_questions.on_withdrawn
+            )
 
         async def _attach_session(*, first_connect: bool) -> None:
             """Establish the session state the WM holds for this client.
@@ -308,6 +209,13 @@ async def run_actions(
             # the one the command was given (ADR-0074 rule 4).
             None if own_server else ReconnectPolicy(workdir=workdir_path),
             on_reattach=_attach_session,
+            # Before any reconnect can carry a new question, so a question left
+            # on screen cannot take the answer meant for the next one.
+            on_session_lost=(
+                (lambda _recoverable: terminal_questions.end_all_on_connection_lost())
+                if terminal_questions is not None
+                else None
+            ),
         )
 
         try:

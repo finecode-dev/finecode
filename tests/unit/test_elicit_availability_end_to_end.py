@@ -66,6 +66,7 @@ def _er_side_prompt() -> UserPrompt:
             default=params["default"],
             timeout_sec=params["timeoutSec"],
             run_writer_key=origin,
+            run_id=params["runId"],
         )
 
     return UserPrompt(_send_request_to_wm)

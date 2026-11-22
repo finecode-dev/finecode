@@ -71,6 +71,7 @@ def _er_side_prompt() -> UserPrompt:
             run_writer_key=elicitation_bridge.originating_client_for_run(
                 params["runId"]
             ),
+            run_id=params["runId"],
         )
 
     return UserPrompt(_send_request_to_wm)

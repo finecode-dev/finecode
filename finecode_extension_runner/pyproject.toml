@@ -9,7 +9,9 @@ dependencies = [
   "click==8.1.*",
   "debugpy==1.8.*",
   "deepmerge==2.0.*",
+  "finecode_common~=0.1.0",
   "finecode_extension_api~=0.5.0",
+  "finecode_jsonrpc~=0.1.1",
   "loguru==0.7.*",
   "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
   "opentelemetry-sdk==1.41.*",
@@ -104,3 +106,9 @@ where = ["src"]
 [tool.setuptools_scm]
 version_file = "src/finecode_extension_runner/_version.py"
 root = ".."
+
+[tool.setuptools_scm.tag]
+# Only v<version> tags count; non-release tags (e.g. "thesis-iter2") must not
+# be picked as the base version by `git describe`.
+prefix = "v"
+strict = true

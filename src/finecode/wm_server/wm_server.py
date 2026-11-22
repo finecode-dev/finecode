@@ -14,7 +14,9 @@ Protocol:  see _jsonrpc.py (framing) and _api_handlers.py (method implementation
 from __future__ import annotations
 
 import asyncio
+import collections.abc
 import contextlib
+import dataclasses
 import importlib.metadata
 import os
 import pathlib
@@ -296,11 +298,40 @@ class ClientRequestFailed(Exception):
     """
 
 
+class ClientRequestTimedOut(ClientRequestFailed):
+    """The deadline passed with no answer. The request is already off the registry."""
+
+
+class ElicitWithdrawnParams(typing.TypedDict):
+    """Params of the ``client/elicitWithdrawn`` notification."""
+
+    id: int
+    reason: elicitation_bridge.WithdrawalReason
+
+
+@dataclasses.dataclass
+class _PendingQuestion:
+    """A ``client/elicit`` the WM has put to a client and not yet finished with."""
+
+    request_id: int
+    writer: asyncio.StreamWriter
+    run_id: str | None
+    # The task awaiting the question: the one the ER's ``$/cancelRequest`` names.
+    request_task: asyncio.Task[typing.Any] | None
+    ending: elicitation_bridge.WithdrawalReason | None = None
+
+
+# By ``client/elicit`` request id; an entry lives until its ``elicit`` call ends.
+_pending_questions: dict[int, _PendingQuestion] = {}
+
+
 async def _request_client(
     writer: asyncio.StreamWriter,
     method: str,
     params: dict,
     timeout_sec: float,
+    *,
+    on_registered: collections.abc.Callable[[int], None] | None = None,
 ) -> dict:
     """Ask one specific client something and wait for its answer.
 
@@ -312,9 +343,12 @@ async def _request_client(
     registry by then, and the response route below has nowhere to put it, which
     is the intended outcome and not a leak.
 
+    *on_registered* is called with the request id once the request is registered
+    and before anything is written, with no suspension in between.
+
     Raises:
-        ClientRequestFailed: the client disconnected, answered with an error, or
-            did not answer within *timeout_sec*.
+        ClientRequestTimedOut: the client did not answer within *timeout_sec*.
+        ClientRequestFailed: the client disconnected or answered with an error.
     """
     global _last_client_request_id
     _last_client_request_id += 1
@@ -323,6 +357,8 @@ async def _request_client(
     future: asyncio.Future = asyncio.get_running_loop().create_future()
     _pending_client_requests[request_id] = future
     _pending_client_request_owners[request_id] = writer
+    if on_registered is not None:
+        on_registered(request_id)
     try:
         _write_message(
             writer,
@@ -343,7 +379,7 @@ async def _request_client(
     try:
         response = await asyncio.wait_for(future, timeout=timeout_sec)
     except TimeoutError as exception:
-        raise ClientRequestFailed(
+        raise ClientRequestTimedOut(
             f"the client did not answer {method} within {timeout_sec}s"
         ) from exception
     finally:
@@ -361,6 +397,66 @@ async def _request_client(
 def _discard_pending_client_request(request_id: int) -> None:
     _pending_client_requests.pop(request_id, None)
     _pending_client_request_owners.pop(request_id, None)
+
+
+def _withdrawal_reason(
+    question: _PendingQuestion, default: elicitation_bridge.WithdrawalReason
+) -> elicitation_bridge.WithdrawalReason:
+    """``runCancelled`` when the WM marked the asking run, else *default*."""
+    if question.run_id is not None and elicitation_bridge.run_cancelled_by_wm(
+        question.run_id
+    ):
+        return "runCancelled"
+    return default
+
+
+def _withdraw_question(
+    question: _PendingQuestion,
+    reason: elicitation_bridge.WithdrawalReason,
+    *,
+    fail_waiter: bool,
+) -> None:
+    """Stop waiting for *question* and tell its client it is withdrawn.
+
+    Synchronous throughout: the answer is no longer accepted before the
+    notification is written, and the notification is written before the waiting
+    caller can proceed. A withdrawal the client cannot receive is
+    dropped; it never changes what the asking handler is told.
+    """
+    future = _pending_client_requests.get(question.request_id)
+    question.ending = reason
+    _discard_pending_client_request(question.request_id)
+    params: ElicitWithdrawnParams = {"id": question.request_id, "reason": reason}
+    try:
+        if question.writer.is_closing():
+            logger.debug(
+                f"Elicitation: not withdrawing question {question.request_id}; "
+                f"its client connection is closing"
+            )
+        else:
+            _write_message(
+                question.writer,
+                {
+                    "jsonrpc": "2.0",
+                    "method": "client/elicitWithdrawn",
+                    "params": params,
+                },
+            )
+    except Exception as exception:
+        logger.debug(
+            f"Elicitation: could not send the withdrawal of question "
+            f"{question.request_id}: {exception}"
+        )
+    if fail_waiter and future is not None and not future.done():
+        future.set_exception(
+            ClientRequestFailed(f"the question was withdrawn ({reason})")
+        )
+
+
+def _is_waiting(question: _PendingQuestion) -> bool:
+    """Whether *question* still has no ending and no answer that has arrived."""
+    future = _pending_client_requests.get(question.request_id)
+    return question.ending is None and future is not None and not future.done()
 
 
 def _resolve_client_response(
@@ -396,6 +492,17 @@ def _resolve_client_response(
         return
     if not future.done():
         future.set_result(msg)
+
+
+def _cancel_client_request_task(task: asyncio.Task[typing.Any]) -> None:
+    """Cancel a client request task the WM is dropping, telling its questions why.
+
+    The mark goes first, so a question the run has pending is withdrawn as
+    ``runCancelled`` instead of ``noLongerNeeded``. Every WM-side cancellation of
+    a client request task goes through here.
+    """
+    elicitation_bridge.mark_cancelled_by_wm(task)
+    task.cancel()
 
 
 def _fail_pending_requests_for(writer: asyncio.StreamWriter) -> None:
@@ -646,6 +753,7 @@ class _WmElicitationBridge:
         default: str | None,
         timeout_sec: float,
         run_writer_key: asyncio.StreamWriter | None,
+        run_id: str | None,
     ) -> dict:
         writer = run_writer_key
         if writer is None:
@@ -666,6 +774,21 @@ class _WmElicitationBridge:
             return {"outcome": "unavailable"}
 
         bounded = min(max(timeout_sec, 1.0), QUESTION_MAX_DEADLINE_SEC)
+        asked: list[_PendingQuestion] = []
+
+        # Registered with no suspension between the caller's origin lookup and
+        # the write: a run whose dispatch is ending is swept by ``end_run``, so
+        # a question registered later than the sweep would never be withdrawn.
+        def _register(request_id: int) -> None:
+            question = _PendingQuestion(
+                request_id=request_id,
+                writer=writer,
+                run_id=run_id,
+                request_task=asyncio.current_task(),
+            )
+            asked.append(question)
+            _pending_questions[request_id] = question
+
         try:
             result = await _request_client(
                 writer,
@@ -680,10 +803,24 @@ class _WmElicitationBridge:
                     "timeoutSec": bounded,
                 },
                 timeout_sec=bounded,
+                on_registered=_register,
             )
+        except ClientRequestTimedOut as exception:
+            for question in asked:
+                if question.ending is None:
+                    _withdraw_question(
+                        question,
+                        _withdrawal_reason(question, "expired"),
+                        fail_waiter=False,
+                    )
+            logger.info(f"Elicitation: no answer — {exception}")
+            return {"outcome": "unavailable"}
         except ClientRequestFailed as exception:
             logger.info(f"Elicitation: no answer — {exception}")
             return {"outcome": "unavailable"}
+        finally:
+            for question in asked:
+                _pending_questions.pop(question.request_id, None)
 
         outcome = result.get("outcome")
         if outcome == "answered":
@@ -701,6 +838,26 @@ class _WmElicitationBridge:
             return {"outcome": "declined"}
         logger.warning(f"Elicitation: client returned unknown outcome {outcome!r}")
         return {"outcome": "unavailable"}
+
+    def end_run(self, *, run_id: str) -> None:
+        for question in list(_pending_questions.values()):
+            if question.run_id == run_id and _is_waiting(question):
+                _withdraw_question(
+                    question,
+                    _withdrawal_reason(question, "noLongerNeeded"),
+                    fail_waiter=True,
+                )
+
+    def abandon(self, *, request_task: asyncio.Task[typing.Any]) -> None:
+        for question in list(_pending_questions.values()):
+            if question.request_task is request_task and _is_waiting(question):
+                # The caller's task is cancelled right after this returns, so
+                # its wait ends on its own.
+                _withdraw_question(
+                    question,
+                    _withdrawal_reason(question, "noLongerNeeded"),
+                    fail_waiter=False,
+                )
 
 
 elicitation_bridge.install(_WmElicitationBridge())
@@ -1066,7 +1223,7 @@ async def _handle_client(
         # Cancel any running partial result tasks for this client
         if writer in _running_partial_result_tasks:
             for task in _running_partial_result_tasks[writer]:
-                task.cancel()
+                _cancel_client_request_task(task)
             del _running_partial_result_tasks[writer]
 
         writer.close()
@@ -1206,7 +1363,7 @@ def stop() -> None:
     # Cancel any running partial result tasks
     for tasks in _running_partial_result_tasks.values():
         for task in tasks:
-            task.cancel()
+            _cancel_client_request_task(task)
     _running_partial_result_tasks.clear()
 
 

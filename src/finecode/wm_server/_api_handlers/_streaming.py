@@ -145,7 +145,9 @@ async def _handle_run_action_with_partial_results(
         # streamed paths, which are the ones that still hold their caller's
         # connection; the dispatch below binds it to the run id it mints,
         # which is what the ER names when it asks.
-        origin = elicitation_bridge.RunDispatchOrigin(connection=writer)
+        origin = elicitation_bridge.RunDispatchOrigin(
+            connection=writer, request_task=asyncio.current_task()
+        )
         # The service context is entered before the sinks start: production
         # runs concurrently with forwarding, and a failed sink exits the
         # context — aborting the producer — instead of waiting for a runner
@@ -333,7 +335,9 @@ async def _handle_run_batch_with_partial_results(
     # including the ones the per-project tasks below dispatch: `origin` is
     # captured in `_stream_action`'s closure, so a task created from it carries
     # the same descriptor to every dispatch it makes (ADR-0082 rule 1).
-    origin = elicitation_bridge.RunDispatchOrigin(connection=writer)
+    origin = elicitation_bridge.RunDispatchOrigin(
+        connection=writer, request_task=asyncio.current_task()
+    )
     with telemetry.attach_incoming_traceparent(params):
         parsed = _parse_run_batch_params(params)
         token = params["partialResultToken"]
@@ -1034,7 +1038,8 @@ async def _handle_run_action_with_progress(
                             # whole run, so it is just as much the run's origin
                             # as on the partial-results paths.
                             origin=elicitation_bridge.RunDispatchOrigin(
-                                connection=writer
+                                connection=writer,
+                                request_task=asyncio.current_task(),
                             ),
                         )
                     )
@@ -1261,7 +1266,8 @@ async def _handle_run_batch_with_progress(
                             # Aggregated progress goes to this connection until
                             # the batch ends, so it is the origin of every run.
                             origin=elicitation_bridge.RunDispatchOrigin(
-                                connection=writer
+                                connection=writer,
+                                request_task=asyncio.current_task(),
                             ),
                         )
                     )

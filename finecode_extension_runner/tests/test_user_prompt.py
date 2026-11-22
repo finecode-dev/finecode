@@ -330,4 +330,4 @@ async def test_elicit_reaches_the_wm_without_a_transport_timeout() -> None:
     await UserPrompt(sender).ask_choice("keep it?", ["keep"])
 
     assert seen["method"] == "finecode/elicit"
-    assert seen["kwargs"] == {}
+    assert "timeout" not in typing.cast(dict, seen["kwargs"])

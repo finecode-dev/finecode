@@ -324,6 +324,50 @@ async def _apply_workspace_edit(
     return await bridge.apply_workspace_edit(params)
 
 
+async def handle_elicit(
+    params: _internal_client_types.ElicitParams,
+) -> _internal_client_types.ElicitResult:
+    """Serve ``finecode/elicit`` (ER → WM → the run's originating client).
+
+    The addressee is resolved from the run the ER names, which is the run id
+    the WM handed it at dispatch. A run with no recorded origin — one
+    dispatched through a path that never held a client, or named by an ER
+    too old to send one — is told at once that nobody could be asked, rather
+    than waiting out a deadline for a client that was never listening.
+
+    A run that fans out across the workspace resolves just as exactly: the
+    nested dispatch inherits the calling run's connection, and the run it
+    mints is bound to that same client, so which project the asking ER
+    happens to serve never enters into it.
+    """
+    installed = elicitation_bridge.handlers()
+    if installed is None:
+        raise errors.InternalError(
+            "This WM has no client-connection layer installed, so it cannot "
+            "put a question to anyone."
+        )
+    origin = elicitation_bridge.originating_client_for_run(params.run_id)
+    answer = await installed.elicit(
+        message=params.message,
+        options=list(params.options),
+        default=params.default,
+        timeout_sec=params.timeout_sec,
+        run_writer_key=origin,
+        run_id=params.run_id,
+    )
+    return _internal_client_types.ElicitResult(
+        outcome=answer.get("outcome", "unavailable"),
+        value=answer.get("value"),
+    )
+
+
+def abandon_elicit(request_task: asyncio.Task[typing.Any]) -> None:
+    """The ER cancelled its ``finecode/elicit``: withdraw the question."""
+    installed = elicitation_bridge.handlers()
+    if installed is not None:
+        installed.abandon(request_task=request_task)
+
+
 async def lease_for_runner(
     ws_context: context.WorkspaceContext,
     runner: runner_client.ExtensionRunnerInfo,
@@ -633,7 +677,14 @@ async def _start_extension_runner_process(
 
     runner.client.server_exit_callback = on_exit
 
-    def _register(method: str, handler: collections.abc.Callable) -> None:
+    def _register(
+        method: str,
+        handler: collections.abc.Callable,
+        *,
+        on_peer_cancel: (
+            collections.abc.Callable[[asyncio.Task[typing.Any]], None] | None
+        ) = None,
+    ) -> None:
         """Register a back-channel handler, classified for the startup slot (ADR-0100).
 
         A yielding method's handler can wait on another runner, the process
@@ -652,7 +703,10 @@ async def _start_extension_runner_process(
                 )
             return await handler(params)
 
-        client.feature(method, _wrapped)
+        if on_peer_cancel is None:
+            client.feature(method, _wrapped)
+        else:
+            client.feature(method, _wrapped, on_peer_cancel=on_peer_cancel)
 
     _register(_internal_client_types.WORKSPACE_APPLY_EDIT, _apply_workspace_edit)
 
@@ -938,44 +992,10 @@ async def _start_extension_runner_process(
         handle_list_workspace_actions,
     )
 
-    async def handle_elicit(
-        params: _internal_client_types.ElicitParams,
-    ) -> _internal_client_types.ElicitResult:
-        """Serve ``finecode/elicit`` (ER → WM → the run's originating client).
-
-        The addressee is resolved from the run the ER names, which is the run id
-        the WM handed it at dispatch. A run with no recorded origin — one
-        dispatched through a path that never held a client, or named by an ER
-        too old to send one — is told at once that nobody could be asked, rather
-        than waiting out a deadline for a client that was never listening.
-
-        A run that fans out across the workspace resolves just as exactly: the
-        nested dispatch inherits the calling run's connection, and the run it
-        mints is bound to that same client, so which project the asking ER
-        happens to serve never enters into it.
-        """
-        installed = elicitation_bridge.handlers()
-        if installed is None:
-            raise errors.InternalError(
-                "This WM has no client-connection layer installed, so it cannot "
-                "put a question to anyone."
-            )
-        origin = elicitation_bridge.originating_client_for_run(params.run_id)
-        answer = await installed.elicit(
-            message=params.message,
-            options=list(params.options),
-            default=params.default,
-            timeout_sec=params.timeout_sec,
-            run_writer_key=origin,
-        )
-        return _internal_client_types.ElicitResult(
-            outcome=answer.get("outcome", "unavailable"),
-            value=answer.get("value"),
-        )
-
     _register(
         _internal_client_types.ELICIT,
         handle_elicit,
+        on_peer_cancel=abandon_elicit,
     )
 
     async def handle_elicit_availability(

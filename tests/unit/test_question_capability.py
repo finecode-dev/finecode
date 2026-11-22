@@ -103,7 +103,7 @@ class _RecordingCliClient:
     def on_notification(self, method: str, handler: typing.Any) -> None:
         pass
 
-    def on_request(self, method: str, handler: typing.Any) -> None:
+    def on_request(self, method: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[method] = handler
 
     def configure_reconnect(self, policy: object, **kwargs: object) -> None:
@@ -361,6 +361,7 @@ def _ask() -> typing.Any:
             run_writer_key=elicitation_bridge.originating_client_for_run(
                 params["runId"]
             ),
+            run_id=params["runId"],
         )
 
     return UserPrompt(_send_request_to_wm)

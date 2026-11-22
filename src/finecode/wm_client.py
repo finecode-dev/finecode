@@ -96,6 +96,14 @@ class ActionListing:
     unresolved_projects: list[dict]
 
 
+class RequestEndedWithoutAnswer(Exception):
+    """Raised by an inbound-request callback to end the request with no response.
+
+    For a request the server itself has stopped waiting for (it withdrew it), so
+    an answer would only be discarded.
+    """
+
+
 class ApiError(Exception):
     """Base class for API client errors."""
 
@@ -176,6 +184,7 @@ class ApiClient:
         self._request_handlers: dict[
             str, collections.abc.Callable[..., collections.abc.Coroutine]
         ] = {}
+        self._request_handlers_taking_id: set[str] = set()
         # Strong references to in-flight inbound-request handlers. They run as
         # tasks rather than inline in the read loop: a handler may wait on a
         # person for minutes, and handling it inline would stall every other
@@ -403,6 +412,8 @@ class ApiClient:
         self,
         method: str,
         callback: collections.abc.Callable[..., collections.abc.Coroutine],
+        *,
+        pass_request_id: bool = False,
     ) -> None:
         """Register an async callback for a server→client *request*.
 
@@ -412,8 +423,17 @@ class ApiClient:
         than being allowed to take down the reader loop: the server is waiting
         on this id and a dead reader would leave it waiting for its whole
         deadline.
+
+        With *pass_request_id* the callback is awaited as
+        ``callback(request_id, params)``, so it can match a later notification
+        that names the request. A callback that raises
+        :class:`RequestEndedWithoutAnswer` ends the request with no response.
         """
         self._request_handlers[method] = callback
+        if pass_request_id:
+            self._request_handlers_taking_id.add(method)
+        else:
+            self._request_handlers_taking_id.discard(method)
 
     # -- Server methods -----------------------------------------------------
 
@@ -999,7 +1019,13 @@ class ApiClient:
 
         async def _run() -> None:
             try:
-                result = await handler(msg.get("params"))
+                if method in self._request_handlers_taking_id:
+                    result = await handler(req_id, msg.get("params"))
+                else:
+                    result = await handler(msg.get("params"))
+            except RequestEndedWithoutAnswer:
+                logger.debug(f"WmClient: request {req_id} ended without an answer")
+                return
             # The handler is a surface's own code — a terminal prompt, an MCP
             # round trip — so the reachable exception set is open. Narrowing this
             # would let an unlisted failure kill the reader loop and leave the

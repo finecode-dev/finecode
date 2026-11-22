@@ -15,13 +15,16 @@ dependencies = [
   "fine_inspect_code~=0.1.0",
   "fine_python_uv~=0.2.0",
   "fine_semantic_tokens~=0.1.0",
+  "finecode_common~=0.1.0",
   "finecode_extension_api~=0.5.0",
-  "finecode_extension_runner~=0.4.0",
-  "finecode_jsonrpc~=0.1.0",
+  # SCM-versioned via setuptools-scm: keep a0 so pre-releases between tags satisfy the range (see developing-finecode.md). Do not stabilize until the stable tag exists.
+  "finecode_extension_runner~=0.4.0a0",
+  "finecode_jsonrpc~=0.1.1",
   "finecode_knowledge~=0.1.0",
   "loguru==0.7.*",
   "lsprotocol==2025.0.0",
   "ordered-set==4.1.*",
+  "prompt-toolkit==3.0.*",
   "psutil==7.2.*",
   "tomlkit==0.11.*",
   "typing-extensions (>=4.12.2,<5.0.0)",
@@ -45,9 +48,6 @@ dev_workspace = [
   "finecode",
   "finecode_dev_common_preset",
   "finecode_httpclient~=0.1.0",
-  # Imported by .agents/tools/issue_store (issue_links.py), which runs under the
-  # dev_workspace python3; the tool refuses any version other than this one.
-  "markdown-it-py==4.2.0",
   "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
   "opentelemetry-instrumentation==0.62.*",
   "opentelemetry-sdk==1.41.*",
@@ -76,6 +76,9 @@ handlers = [
   ] },
   { name = "install_pi", source = "fine_agent_pi.InstallPiHandler", env = "dev_workspace", dependencies = [
     "fine_agent_pi~=0.1.0",
+  ] },
+  { name = "install_codex", source = "fine_agent_codex.InstallCodexHandler", env = "dev_workspace", dependencies = [
+    "fine_agent_codex~=0.1.0",
   ] },
 ]
 
@@ -180,6 +183,35 @@ forbidden_modules = [
   "finecode.cli_app",
 ]
 
+# The MCP tool core and its neutral modules must not import a protocol front,
+# the assembly or the CLI. A front may depend on the core, never the reverse.
+[[tool.importlinter.contracts]]
+id = "mcp-core-no-front-imports"
+name = "MCP core and neutral modules import no front, assembly or CLI"
+type = "forbidden"
+source_modules = [
+  "finecode.mcp_server.core",
+  "finecode.mcp_server.contracts",
+  "finecode.mcp_server.catalog",
+]
+forbidden_modules = [
+  "finecode.mcp_server.legacy",
+  "finecode.mcp_server.modern",
+  "finecode.mcp_server.server",
+  "finecode.mcp_server.cli",
+]
+
+# The legacy and modern MCP fronts are independent: each era's protocol rules stay
+# in its own front, so removing the legacy path means deleting one module.
+[[tool.importlinter.contracts]]
+id = "mcp-fronts-independent"
+name = "MCP legacy and modern fronts do not import each other"
+type = "independence"
+modules = [
+  "finecode.mcp_server.legacy",
+  "finecode.mcp_server.modern",
+]
+
 # lsprotocol types must stay confined to the LSP server subsystem. The original contract
 # ignored `finecode.runner.runner_client` (no such module) and `lsp_server.lsp_server`;
 # since then the LSP code was refactored into `lsp_server/endpoints/*`, which legitimately
@@ -240,3 +272,9 @@ where = ["src"]
 
 [tool.setuptools_scm]
 version_file = "src/finecode/_version.py"
+
+[tool.setuptools_scm.tag]
+# Only v<version> tags count; non-release tags (e.g. "thesis-iter2") must not
+# be picked as the base version by `git describe`.
+prefix = "v"
+strict = true

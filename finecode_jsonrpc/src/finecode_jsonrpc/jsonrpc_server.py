@@ -98,6 +98,11 @@ class JsonRpcServerSession:
     ``$/cancelRequest`` is handled internally: when the client sends it,
     the corresponding in-flight request task is cancelled and a cancellation
     error is sent back to the client.
+
+    In the other direction, ``send_request(..., cancel_on_abandon=True)`` sends
+    ``$/cancelRequest`` to the client when the awaiting task is cancelled, so the
+    client can stop work nobody waits for. It is opt-in per request because a
+    client may treat a cancel as the end of the request.
     """
 
     def __init__(
@@ -119,6 +124,10 @@ class JsonRpcServerSession:
         # outlives its future after a timeout so a late response can still be
         # matched; everything is released in _resolve_response/_handle_exit.
         self._caller_hops: dict[int, tuple[HopToken, str]] = {}
+        # Ids of opted-in requests (``cancel_on_abandon``) whose caller was
+        # cancelled. The client still answers them; the late response is
+        # dropped quietly and the id is released then or in _handle_exit.
+        self._cancelled_request_ids: set[int] = set()
 
         self._notification_handlers: dict[
             str,
@@ -195,8 +204,15 @@ class JsonRpcServerSession:
         method: str,
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
+        *,
+        cancel_on_abandon: bool = False,
     ) -> Any:
-        """Send a request to the client and return the result."""
+        """Send a request to the client and return the result.
+
+        With *cancel_on_abandon*, cancelling the awaiting task writes a
+        ``$/cancelRequest`` frame for this request before the ``CancelledError``
+        leaves this method. A timeout is not an abandonment and sends none.
+        """
         msg_id = self._next_id
         self._next_id += 1
 
@@ -231,6 +247,17 @@ class JsonRpcServerSession:
             self._finish_caller(hop, "timeout")
             raise
         except asyncio.CancelledError:
+            if cancel_on_abandon:
+                self._request_futures.pop(msg_id, None)
+                self._caller_hops.pop(msg_id, None)
+                self._cancelled_request_ids.add(msg_id)
+                self._transport.send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "$/cancelRequest",
+                        "params": {"id": msg_id},
+                    }
+                )
             self._finish_caller(hop, "cancelled")
             raise
         except JsonRpcError:
@@ -368,6 +395,11 @@ class JsonRpcServerSession:
         message: dict[str, Any],
         frame_read: StageTime | None = None,
     ) -> None:
+        if msg_id in self._cancelled_request_ids:
+            self._cancelled_request_ids.discard(msg_id)
+            logger.debug(f"Dropping response for abandoned request id={msg_id}")
+            return
+
         hop_info = self._caller_hops.pop(msg_id, None)
         future = self._request_futures.pop(msg_id, None)
         if future is None:
@@ -557,6 +589,7 @@ class JsonRpcServerSession:
             if not fut.done():
                 fut.set_exception(err)
         self._request_futures.clear()
+        self._cancelled_request_ids.clear()
 
         observer = self._hop_observer
         for hop, _method in self._caller_hops.values():

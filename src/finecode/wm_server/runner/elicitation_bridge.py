@@ -46,16 +46,23 @@ import contextlib
 import dataclasses
 import typing
 
+from loguru import logger
+
 __all__ = [
     "ElicitationBridge",
     "RunDispatchOrigin",
+    "WithdrawalReason",
     "bind_run",
     "handlers",
     "install",
+    "mark_cancelled_by_wm",
     "originating_client_for_run",
     "reset",
     "reset_origins",
+    "run_cancelled_by_wm",
 ]
+
+WithdrawalReason = typing.Literal["expired", "runCancelled", "noLongerNeeded"]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -68,17 +75,22 @@ class RunDispatchOrigin:
     explicitly down to :func:`bind_run`. ``connection=None`` is the honest
     answer for anything the WM started on its own behalf, or a dispatch that
     never had a client to begin with, and binds nothing.
+
+    ``request_task`` is the WM-owned task serving the client request the run
+    started from, so the WM's own cancellation of that task can be told apart
+    from every other reason a run ends (:func:`mark_cancelled_by_wm`). A nested
+    dispatch leaves it ``None``: its run is not the one the WM cancels.
     """
 
     connection: asyncio.StreamWriter | None
+    request_task: asyncio.Task[typing.Any] | None = None
 
 
 class ElicitationBridge(typing.Protocol):
     """What the runner needs from whoever owns client connections."""
 
     def can_elicit(self, *, run_writer_key: asyncio.StreamWriter | None) -> bool:
-        """Whether a question could be put to a person right now.
-        """
+        """Whether a question could be put to a person right now."""
         ...
 
     async def elicit(
@@ -89,8 +101,13 @@ class ElicitationBridge(typing.Protocol):
         default: str | None,
         timeout_sec: float,
         run_writer_key: asyncio.StreamWriter | None,
+        run_id: str | None,
     ) -> dict:
         """Put a multiple-choice question to one client and return the outcome.
+
+        *run_id* is the run that asks, so the question can be withdrawn from the
+        client when that run ends. ``None`` (an ER too old to name its run) is
+        never swept, and only its deadline ends the question.
 
         *run_writer_key* identifies the connection that started the run, as
         obtained from :func:`originating_client_for_run`. ``None`` means the run has
@@ -103,6 +120,22 @@ class ElicitationBridge(typing.Protocol):
         Every way of not getting an answer is one of those outcomes: this
         coroutine does not raise to report one.
         """
+
+    def end_run(self, *, run_id: str) -> None:
+        """Withdraw every question of *run_id* that is still waiting for an answer.
+
+        Synchronous: it is called from the dispatch's ``finally``, before the
+        run's response is written, and must not suspend.
+        """
+        ...
+
+    def abandon(self, *, request_task: asyncio.Task[typing.Any]) -> None:
+        """Withdraw the question being served by *request_task*, if it is waiting.
+
+        Synchronous, for the same reason as :meth:`end_run`: the withdrawal has
+        to be on the wire before anything the ER sends afterwards.
+        """
+        ...
 
 
 _installed: ElicitationBridge | None = None
@@ -135,10 +168,13 @@ def handlers() -> ElicitationBridge | None:
 # Addressing: which connection started a given run
 # ---------------------------------------------------------------------------
 
-# Run id → the connection that started it. Written for the life of the dispatch
+# Run id → the origin that started it. Written for the life of the dispatch
 # and read by an ER on a different connection entirely, which is why this is a
 # registry rather than a value carried on the run's own call stack.
-_runs: dict[str, asyncio.StreamWriter] = {}
+_runs: dict[str, RunDispatchOrigin] = {}
+# Runs whose client request task the WM itself cancelled. Lives as long as the
+# run is bound.
+_cancelled_by_wm: set[str] = set()
 
 
 @contextlib.contextmanager
@@ -161,15 +197,24 @@ def bind_run(
     genuinely had nobody to ask. That is the failure this parameter replaced a
     ``ContextVar`` to avoid, so it must not be reintroduced as a default.
     """
-    connection = origin.connection if origin is not None else None
-    if connection is None:
+    if origin is None or origin.connection is None:
         yield
         return
-    _runs[run_id] = connection
+    _runs[run_id] = origin
     try:
         yield
     finally:
+        # Before the unbind: the sweep still needs the run's cause.
+        installed = handlers()
+        if installed is not None:
+            try:
+                installed.end_run(run_id=run_id)
+            except Exception as error:
+                logger.warning(
+                    f"Withdrawing the questions of run {run_id} failed: {error}"
+                )
         _runs.pop(run_id, None)
+        _cancelled_by_wm.discard(run_id)
 
 
 def originating_client_for_run(run_id: str | None) -> asyncio.StreamWriter | None:
@@ -182,9 +227,36 @@ def originating_client_for_run(run_id: str | None) -> asyncio.StreamWriter | Non
     """
     if run_id is None:
         return None
-    return _runs.get(run_id)
+    origin = _runs.get(run_id)
+    return origin.connection if origin is not None else None
+
+
+def mark_cancelled_by_wm(task: asyncio.Task[typing.Any]) -> None:
+    """Record that the WM is about to cancel *task*, then withdraw its questions.
+
+    ``asyncio`` cancellation carries no cause, so the WM states it here, before
+    it cancels a client request task: the runs that started from *task* are
+    marked, and their waiting questions are withdrawn with the cause the client
+    should be told. Every WM-side site that cancels a client request task must
+    call this first.
+    """
+    run_ids = [
+        run_id for run_id, origin in _runs.items() if origin.request_task is task
+    ]
+    _cancelled_by_wm.update(run_ids)
+    installed = handlers()
+    if installed is None:
+        return
+    for run_id in run_ids:
+        installed.end_run(run_id=run_id)
+
+
+def run_cancelled_by_wm(run_id: str) -> bool:
+    """Whether the WM marked *run_id* as cancelled by itself."""
+    return run_id in _cancelled_by_wm
 
 
 def reset_origins() -> None:
-    """Forget every recorded origin. Tests only."""
+    """Forget every recorded origin and mark. Tests only."""
     _runs.clear()
+    _cancelled_by_wm.clear()

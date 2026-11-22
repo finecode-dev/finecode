@@ -315,8 +315,14 @@ class ErServer:
         )
 
     async def send_request_to_wm(self, method: str, params: dict) -> typing.Any:
-        """Send an arbitrary request to the WM (e.g. ``projects/getRawConfig``)."""
-        return await self._session.send_request(method, params)
+        """Send an arbitrary request to the WM (e.g. ``projects/getRawConfig``).
+
+        Only ``finecode/elicit`` is cancelled on the WM when the awaiting task is
+        cancelled; every other request keeps being served by the WM.
+        """
+        return await self._session.send_request(
+            method, params, cancel_on_abandon=method == "finecode/elicit"
+        )
 
     def shutdown(self) -> None:
         """Signal the transport read loop to stop."""

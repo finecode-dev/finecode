@@ -249,6 +249,7 @@ async def test_a_client_that_declared_nothing_is_never_asked() -> None:
         default=None,
         timeout_sec=300.0,
         run_writer_key=writer,
+        run_id=None,
     )
 
     assert answer == {"outcome": "unavailable"}
@@ -263,6 +264,7 @@ async def test_a_run_with_no_originating_client_is_told_immediately() -> None:
         default=None,
         timeout_sec=300.0,
         run_writer_key=None,
+        run_id=None,
     )
     assert answer == {"outcome": "unavailable"}
 
@@ -280,6 +282,7 @@ async def test_an_answered_question_comes_back_with_its_value() -> None:
             default="keep",
             timeout_sec=300.0,
             run_writer_key=writer,
+            run_id=None,
         )
     )
     await asyncio.sleep(0)
@@ -310,6 +313,7 @@ async def test_an_answer_nobody_offered_is_not_an_answer() -> None:
             default=None,
             timeout_sec=300.0,
             run_writer_key=writer,
+            run_id=None,
         )
     )
     await asyncio.sleep(0)
@@ -334,6 +338,7 @@ async def test_a_person_who_declined_is_not_a_person_who_was_never_there() -> No
             default=None,
             timeout_sec=300.0,
             run_writer_key=writer,
+            run_id=None,
         )
     )
     await asyncio.sleep(0)
