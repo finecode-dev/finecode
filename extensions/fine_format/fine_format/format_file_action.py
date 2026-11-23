@@ -1,5 +1,6 @@
 # docs: docs/reference/actions.md
 import dataclasses
+import enum
 import sys
 from typing import NamedTuple
 
@@ -118,6 +119,22 @@ class FormatFileRunContext(code_action.RunActionContext[FormatFileRunPayload]):
             )
 
 
+class FormatFileStatus(enum.StrEnum):
+    """What happened to the file, reported by ``SaveFormatFileHandler``."""
+
+    UNCHANGED = "unchanged"
+    """Formatting produced no change, so the file was not written. Also reported
+    when no formatter covers the file; the result's coverage says so."""
+    CHANGED = "changed"
+    """Formatting changed the content, but it was not written because ``save`` was
+    False. ``code`` holds the formatted content."""
+    SAVED = "saved"
+    """The formatted content was committed through the file editor."""
+    SAVE_REFUSED = "save_refused"
+    """The file changed after it was read, so the formatted content, derived from
+    the older version, was not written."""
+
+
 @dataclasses.dataclass
 class FormatFileRunResult(code_action.RunActionResult):
     changed: bool
@@ -126,6 +143,8 @@ class FormatFileRunResult(code_action.RunActionResult):
     """Formatted content when ``changed=True``; empty string when ``changed=False``.
     Callers must check ``changed`` before using ``code``.
     """
+    status: FormatFileStatus | None = None
+    """What happened to the file."""
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
@@ -134,9 +153,29 @@ class FormatFileRunResult(code_action.RunActionResult):
         if other.changed:
             self.changed = True
             self.code = other.code
+        if other.status is not None:
+            self.status = other.status
 
     def to_text(self) -> str | textstyler.StyledText:
+        if self.status is not None:
+            return _STATUS_TEXT[self.status]
         return "reformatted" if self.changed else "unchanged"
+
+    @property
+    @override
+    def return_code(self) -> code_action.RunReturnCode:
+        # Saving was requested and did not happen: not a success.
+        if self.status is FormatFileStatus.SAVE_REFUSED:
+            return code_action.RunReturnCode.ERROR
+        return code_action.RunReturnCode.SUCCESS
+
+
+_STATUS_TEXT = {
+    FormatFileStatus.UNCHANGED: "unchanged",
+    FormatFileStatus.CHANGED: "would reformat",
+    FormatFileStatus.SAVED: "reformatted",
+    FormatFileStatus.SAVE_REFUSED: "not saved: changed since it was read",
+}
 
 
 class FormatFileAction(
@@ -155,6 +194,12 @@ class FormatFileAction(
       produce ``changed=False``.
     - ``payload.save=False`` is a hard invariant: no handler in the pipeline
       may write to disk.
+    - ``result.status`` reports what happened to the file: ``unchanged`` and
+      ``changed`` (``save=False``) were not written, ``saved`` was committed
+      through the file editor, and ``save_refused`` was not written because the
+      file changed after it was read. Read the saved content through the file
+      editor, not from ``code``. A ``save_refused`` file makes the run's return
+      code ``ERROR``.
 
     **Handler implementation contract** — pipeline participation rules:
 

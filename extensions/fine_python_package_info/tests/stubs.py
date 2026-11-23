@@ -12,7 +12,11 @@ from fine_envs.list_obtainable_toolchains_action import (
 )
 from fine_python_lang import list_obtainable_python_interpreters_action
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger
+from finecode_extension_api.interfaces import (
+    ifileeditor,
+    ilogger,
+    iprojectinfoprovider,
+)
 
 OBTAINABLE = [
     "cpython@3.10",
@@ -40,6 +44,53 @@ class StubObtainableInterpretersHandler(
         payload: list_obtainable_python_interpreters_action.ListObtainablePythonInterpretersRunPayload,
         run_context: list_obtainable_python_interpreters_action.ListObtainablePythonInterpretersRunContext,
     ) -> ListObtainableToolchainsRunResult:
+        return ListObtainableToolchainsRunResult(toolchains=list(OBTAINABLE))
+
+
+CONCURRENT_EDIT_MARKER = "# edited while sync_toolchains was running\n"
+
+
+@dataclasses.dataclass
+class ConcurrentEditObtainableHandlerConfig(code_action.ActionHandlerConfig): ...
+
+
+class ConcurrentEditObtainableHandler(
+    code_action.ActionHandler[
+        list_obtainable_python_interpreters_action.ListObtainablePythonInterpretersAction,
+        ConcurrentEditObtainableHandlerConfig,
+    ]
+):
+    """Answers like StubObtainableInterpretersHandler, but first edits the project
+    definition file through the file editor.
+
+    The sync asks for obtainable interpreters after reading the file and before
+    writing it, so this simulates another writer (e.g. the IDE) changing the file
+    while the sync is in flight.
+    """
+
+    def __init__(
+        self,
+        file_editor: ifileeditor.IFileEditor,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
+    ) -> None:
+        self.file_editor = file_editor
+        self.project_info_provider = project_info_provider
+
+    async def run(
+        self,
+        payload: list_obtainable_python_interpreters_action.ListObtainablePythonInterpretersRunPayload,
+        run_context: list_obtainable_python_interpreters_action.ListObtainablePythonInterpretersRunContext,
+    ) -> ListObtainableToolchainsRunResult:
+        project_def_path = self.project_info_provider.get_current_project_def_path()
+        async with self.file_editor.session(
+            author=ifileeditor.FileOperationAuthor(id="concurrent-editor")
+        ) as session:
+            async with session.read_file(project_def_path) as file_info:
+                content = file_info.content
+            await session.save_file(
+                file_path=project_def_path,
+                file_content=CONCURRENT_EDIT_MARKER + content,
+            )
         return ListObtainableToolchainsRunResult(toolchains=list(OBTAINABLE))
 
 

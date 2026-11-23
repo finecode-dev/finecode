@@ -29,6 +29,7 @@ from fine_envs.remove_envs_discover_envs_handler import RemoveEnvsDiscoverEnvsHa
 from fine_envs.remove_envs_remove_handler import RemoveEnvsRemoveHandler
 from fine_envs.sync_toolchains_action import SyncToolchainsAction
 from fine_envs.sync_toolchains_dispatch_handler import SyncToolchainsDispatchHandler
+from fine_envs.sync_toolchains_format_handler import SyncToolchainsFormatHandler
 
 __all__ = [
     "CheckToolchainsAction",
@@ -58,4 +59,5 @@ __all__ = [
     "RemoveEnvsRemoveHandler",
     "SyncToolchainsAction",
     "SyncToolchainsDispatchHandler",
+    "SyncToolchainsFormatHandler",
 ]

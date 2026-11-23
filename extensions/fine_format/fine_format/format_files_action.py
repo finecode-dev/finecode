@@ -17,6 +17,7 @@ from finecode_extension_api import code_action, textstyler
 
 from fine_format.format_file_action import (
     FILE_OPERATION_AUTHOR,
+    FormatFileStatus,
 )
 
 
@@ -85,6 +86,8 @@ class FormatRunFileResult:
     # Formatted content when changed=True; empty string when changed=False.
     # Callers must check changed before using code.
     code: str
+    status: FormatFileStatus | None = None
+    """What happened to the file; see ``FormatFileStatus``."""
 
 
 @dataclasses.dataclass
@@ -114,18 +117,46 @@ class FormatFilesRunResult(code_action.RunActionResult):
         unchanged_counter: int = 0
 
         for file_uri, file_result in self.result_by_file_path.items():
-            if file_result.changed:
-                text.append("reformatted ")
-                text.append_styled(file_uri, bold=True)
-                text.append("\n")
-            else:
+            label = _file_status_label(file_result)
+            if label is None:
                 unchanged_counter += 1
+                continue
+            text.append(f"{label} ")
+            text.append_styled(file_uri, bold=True)
+            text.append("\n")
         text.append_styled(
             f"{unchanged_counter} files", foreground=textstyler.Color.BLUE
         )
         text.append(" unchanged.")
 
         return text
+
+    @property
+    @override
+    def return_code(self) -> code_action.RunReturnCode:
+        # A refused save is reported with the rest of the batch rather than
+        # aborting it, but the run as a whole did not do what was asked.
+        if any(
+            file_result.status is FormatFileStatus.SAVE_REFUSED
+            for file_result in self.result_by_file_path.values()
+        ):
+            return code_action.RunReturnCode.ERROR
+        return code_action.RunReturnCode.SUCCESS
+
+
+def _file_status_label(file_result: FormatRunFileResult) -> str | None:
+    """Line prefix for a file the run reformatted or could not, None if unchanged."""
+    match file_result.status:
+        case FormatFileStatus.SAVED:
+            return "reformatted"
+        case FormatFileStatus.CHANGED:
+            return "would reformat"
+        case FormatFileStatus.SAVE_REFUSED:
+            return "not saved (changed since it was read):"
+        case FormatFileStatus.UNCHANGED:
+            return None
+        case None:
+            return "reformatted" if file_result.changed else None
 
 
 class FormatFilesAction(

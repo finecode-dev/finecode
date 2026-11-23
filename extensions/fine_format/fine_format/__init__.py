@@ -20,6 +20,7 @@ from fine_format.format_file_action import (
     FormatFileRunContext,
     FormatFileRunPayload,
     FormatFileRunResult,
+    FormatFileStatus,
 )
 from fine_format.format_file_dispatch_handler import FormatFileDispatchHandler
 from fine_format.format_file_save_handler import SaveFormatFileHandler
@@ -48,6 +49,7 @@ __all__ = [
     "FormatFileRunContext",
     "FormatFileRunPayload",
     "FormatFileRunResult",
+    "FormatFileStatus",
     "FormatFilesAction",
     "FormatFilesIterateHandler",
     "FormatFilesRunContext",

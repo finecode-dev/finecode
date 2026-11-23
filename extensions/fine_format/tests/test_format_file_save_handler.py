@@ -18,15 +18,17 @@ _AUTHOR = ifileeditor.FileOperationAuthor(id="test")
 
 
 class _RunContextStub:
-    """Only the two attributes SaveFormatFileHandler reads off the run context."""
+    """Only the attributes SaveFormatFileHandler reads off the run context."""
 
     def __init__(
         self,
         file_editor_session: ifileeditor.IFileEditorSession,
         file_info: format_file_action.FileInfo,
+        current_result: format_file_action.FormatFileRunResult,
     ) -> None:
         self.file_editor_session = file_editor_session
         self.file_info = file_info
+        self.current_result = current_result
 
 
 async def _run_save(
@@ -35,6 +37,7 @@ async def _run_save(
     formatted_content: str,
     based_on_version: str,
     save: bool = True,
+    formatter_changed: bool = True,
 ) -> format_file_action.FormatFileRunResult:
     handler = SaveFormatFileHandler(logger=NoOpLogger())
     async with file_editor.session(author=_AUTHOR) as session:
@@ -43,6 +46,11 @@ async def _run_save(
             file_info=format_file_action.FileInfo(
                 file_content=formatted_content,
                 file_version=based_on_version,
+            ),
+            # what the formatter handlers before the save handler reported
+            current_result=format_file_action.FormatFileRunResult(
+                changed=formatter_changed,
+                code=formatted_content if formatter_changed else "",
             ),
         )
         return await handler.run(
@@ -68,7 +76,7 @@ async def test_formatted_content_is_committed_when_the_file_is_unchanged(
     file_path = (tmp_path / "subject.py").resolve()
     file_editor.seed(file_path, "x=1\n")
 
-    await _run_save(
+    result = await _run_save(
         file_editor,
         file_path,
         formatted_content="x = 1\n",
@@ -77,6 +85,7 @@ async def test_formatted_content_is_committed_when_the_file_is_unchanged(
 
     assert file_editor.contents(file_path) == "x = 1\n"
     assert file_editor.writes == [FileWrite(file_path, "x = 1\n")]
+    assert result.status is format_file_action.FormatFileStatus.SAVED
 
 
 async def test_commit_is_refused_when_the_file_changed_since_it_was_read(
@@ -96,7 +105,7 @@ async def test_commit_is_refused_when_the_file_changed_since_it_was_read(
     # someone else edits the file while formatting is in flight
     file_editor.seed(file_path, "y = 2\n")
 
-    await _run_save(
+    result = await _run_save(
         file_editor,
         file_path,
         formatted_content="x = 1\n",
@@ -105,6 +114,7 @@ async def test_commit_is_refused_when_the_file_changed_since_it_was_read(
 
     assert file_editor.contents(file_path) == "y = 2\n"
     assert file_editor.writes == []
+    assert result.status is format_file_action.FormatFileStatus.SAVE_REFUSED
 
 
 async def test_nothing_is_written_when_save_is_not_requested(
@@ -126,6 +136,26 @@ async def test_nothing_is_written_when_save_is_not_requested(
     assert file_editor.contents(file_path) == "x=1\n"
     assert file_editor.writes == []
     assert result.code == "x = 1\n"
+    assert result.status is format_file_action.FormatFileStatus.CHANGED
+
+
+async def test_unchanged_file_is_not_rewritten(tmp_path: pathlib.Path) -> None:
+    """Rewriting identical content would notify the editor's subscribers of a
+    change that is not one, so an already-formatted file is left alone."""
+    file_editor = InMemoryFileEditor()
+    file_path = (tmp_path / "subject.py").resolve()
+    file_editor.seed(file_path, "x = 1\n")
+
+    result = await _run_save(
+        file_editor,
+        file_path,
+        formatted_content="x = 1\n",
+        based_on_version=await _current_version(file_editor, file_path),
+        formatter_changed=False,
+    )
+
+    assert file_editor.writes == []
+    assert result.status is format_file_action.FormatFileStatus.UNCHANGED
 
 
 async def test_version_conflict_surfaces_as_a_typed_error_from_the_editor(

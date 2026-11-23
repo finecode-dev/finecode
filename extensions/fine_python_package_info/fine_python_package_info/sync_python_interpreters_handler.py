@@ -3,7 +3,12 @@ import dataclasses
 import pathlib
 
 import tomlkit
-from fine_envs.sync_toolchains_action import EnvToolchainAxis, SyncToolchainsRunResult
+from fine_envs.sync_toolchains_action import (
+    EnvToolchainAxis,
+    ProjectDefFileOutcome,
+    ProjectDefFileStatus,
+    SyncToolchainsRunResult,
+)
 from fine_python_lang import (
     list_obtainable_python_interpreters_action,
     sync_python_interpreters_action,
@@ -11,12 +16,14 @@ from fine_python_lang import (
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ifileeditor,
-    ifilemanager,
     ilogger,
     iprojectactionrunner,
     iprojectinfoprovider,
 )
-from finecode_extension_api.resource_uri import resource_uri_to_path
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 from packaging.version import InvalidVersion, Version
 
 from fine_python_package_info import requires_python as requires_python_utils
@@ -151,14 +158,12 @@ class SyncPythonInterpretersHandler(
     def __init__(
         self,
         config: SyncPythonInterpretersHandlerConfig,
-        file_manager: ifilemanager.IFileManager,
         file_editor: ifileeditor.IFileEditor,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
     ) -> None:
         self.config = config
-        self.file_manager = file_manager
         self.file_editor = file_editor
         self.project_info_provider = project_info_provider
         self.action_runner = action_runner
@@ -184,9 +189,16 @@ class SyncPythonInterpretersHandler(
         # axis another layer supplies is therefore not "already up to date" -- it is an
         # axis this file has yet to take ownership of, so drift is measured against the
         # file we write to. tomlkit also round-trips comments and formatting.
-        document = tomlkit.parse(
-            await self.file_manager.get_content(file_path=project_def_path)
-        )
+        #
+        # Read through the file editor, not the disk: it holds the current version,
+        # including edits the IDE has not saved yet. The version read is the basis of
+        # the write below.
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(project_def_path) as file_info,
+        ):
+            document = tomlkit.parse(file_info.content)
+            based_on_version = file_info.version
 
         requires_python = document.get("project", {}).get("requires-python", None)
         if requires_python is None:
@@ -245,9 +257,22 @@ class SyncPythonInterpretersHandler(
                 EnvToolchainAxis(env_name=env_name, declared=declared, derived=derived)
             )
 
+        project_def_uri = path_to_resource_uri(project_def_path)
         stale_axes = [axis for axis in axes if axis.changed]
-        if not payload.save or not stale_axes:
-            return SyncToolchainsRunResult(axes=axes, saved=False)
+        if not stale_axes:
+            return SyncToolchainsRunResult(
+                axes=axes,
+                project_def_file=ProjectDefFileOutcome(
+                    path=project_def_uri, status=ProjectDefFileStatus.UP_TO_DATE
+                ),
+            )
+        if not payload.save:
+            return SyncToolchainsRunResult(
+                axes=axes,
+                project_def_file=ProjectDefFileOutcome(
+                    path=project_def_uri, status=ProjectDefFileStatus.OUT_OF_DATE
+                ),
+            )
 
         for axis in stale_axes:
             self._write_interpreters(
@@ -260,11 +285,26 @@ class SyncPythonInterpretersHandler(
         async with self.file_editor.session(
             author=self.FILE_OPERATION_AUTHOR
         ) as session:
-            await session.save_file(
-                file_path=project_def_path, file_content=tomlkit.dumps(document)
-            )
+            try:
+                await session.save_file(
+                    file_path=project_def_path,
+                    file_content=tomlkit.dumps(document),
+                    if_version=based_on_version,
+                )
+            except ifileeditor.FileVersionConflict as conflict:
+                # The axis was derived from a version that is no longer current;
+                # writing it would discard whatever produced the newer version.
+                raise code_action.ActionFailedException(
+                    f"{project_def_path} changed while sync_toolchains was running,"
+                    " so the derived axis was not written. Run sync_toolchains again."
+                ) from conflict
 
-        return SyncToolchainsRunResult(axes=axes, saved=True)
+        return SyncToolchainsRunResult(
+            axes=axes,
+            project_def_file=ProjectDefFileOutcome(
+                path=project_def_uri, status=ProjectDefFileStatus.UPDATED
+            ),
+        )
 
     def _assert_env_declared(
         self,

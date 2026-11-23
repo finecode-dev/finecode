@@ -1,5 +1,6 @@
 # docs: docs/reference/actions.md
 import dataclasses
+import enum
 import sys
 
 if sys.version_info >= (3, 12):
@@ -51,11 +52,41 @@ class EnvToolchainAxis:
         return self.declared != self.derived
 
 
+class ProjectDefFileStatus(enum.StrEnum):
+    """State of the project definition file on disk after the sync."""
+
+    UP_TO_DATE = "up_to_date"
+    """Every declared axis already matched the derived one; the file was not written."""
+    OUT_OF_DATE = "out_of_date"
+    """At least one axis drifted, and the file was left stale because ``save`` was
+    False."""
+    UPDATED = "updated"
+    """At least one axis drifted, and the derived axes were written to the file."""
+
+
+_STATUS_PRECEDENCE = {
+    ProjectDefFileStatus.UP_TO_DATE: 0,
+    ProjectDefFileStatus.OUT_OF_DATE: 1,
+    ProjectDefFileStatus.UPDATED: 2,
+}
+
+
+@dataclasses.dataclass
+class ProjectDefFileOutcome:
+    """The project definition file a sync targeted, and what happened to it."""
+
+    path: ResourceUri
+    status: ProjectDefFileStatus
+
+
 @dataclasses.dataclass
 class SyncToolchainsRunResult(code_action.RunActionResult):
     axes: list[EnvToolchainAxis] = dataclasses.field(default_factory=list)
-    saved: bool = False
-    """Whether a derived axis was written to the project definition file."""
+    project_def_file: ProjectDefFileOutcome | None = None
+    """The project definition file the sync targeted and its state on disk.
+
+    None when no file was targeted, e.g. the language handler has no envs
+    configured."""
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
@@ -67,7 +98,15 @@ class SyncToolchainsRunResult(code_action.RunActionResult):
             if axis.env_name not in known_envs:
                 self.axes.append(axis)
                 known_envs.add(axis.env_name)
-        self.saved = self.saved or other.saved
+
+        # One run targets one file, so the outcome is a scalar: keep the most
+        # consequential status any handler reported for it.
+        if other.project_def_file is not None and (
+            self.project_def_file is None
+            or _STATUS_PRECEDENCE[other.project_def_file.status]
+            > _STATUS_PRECEDENCE[self.project_def_file.status]
+        ):
+            self.project_def_file = other.project_def_file
 
     @override
     def to_text(self) -> str | textstyler.StyledText:
@@ -76,12 +115,21 @@ class SyncToolchainsRunResult(code_action.RunActionResult):
             text.append("No env declares a derived toolchain axis.\n")
             return text
 
+        updated_path = (
+            self.project_def_file.path
+            if self.project_def_file is not None
+            and self.project_def_file.status is ProjectDefFileStatus.UPDATED
+            else None
+        )
+        updated = updated_path is not None
         for axis in self.axes:
             text.append_styled(axis.env_name, bold=True)
             text.append(f": {', '.join(axis.derived)}")
             if axis.changed:
-                text.append(" (updated)" if self.saved else " (out of date)")
+                text.append(" (updated)" if updated else " (out of date)")
             text.append("\n")
+        if updated_path is not None:
+            text.append(f"Updated {updated_path}\n")
         return text
 
     @property

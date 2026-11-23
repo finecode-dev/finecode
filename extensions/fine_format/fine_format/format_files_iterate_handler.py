@@ -68,6 +68,7 @@ class FormatFilesIterateHandler(
                 file_uri: format_files_action.FormatRunFileResult(
                     changed=item_result.changed,
                     code=item_result.code,
+                    status=item_result.status,
                 )
             }
         )

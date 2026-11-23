@@ -24,7 +24,18 @@ class SaveFormatFileHandler(
         payload: format_file_action.FormatFileRunPayload,
         run_context: format_file_action.FormatFileRunContext,
     ) -> format_file_action.FormatFileRunResult:
-        if payload.save:
+        formatted = run_context.current_result
+        changed = (
+            isinstance(formatted, format_file_action.FormatFileRunResult)
+            and formatted.changed
+        )
+        if not changed:
+            # Nothing to commit: rewriting identical content would still bump the
+            # file and notify the editor's subscribers of a change that is not one.
+            status = format_file_action.FormatFileStatus.UNCHANGED
+        elif not payload.save:
+            status = format_file_action.FormatFileStatus.CHANGED
+        else:
             # Conditional on the version the formatting was based on: if the file
             # changed underneath the pipeline, the formatted content is derived
             # from stale input and writing it would discard the other change.
@@ -39,8 +50,12 @@ class SaveFormatFileHandler(
                 self.logger.warning(
                     f"Not saving formatted {payload.file_path}: {conflict.message}"
                 )
+                status = format_file_action.FormatFileStatus.SAVE_REFUSED
+            else:
+                status = format_file_action.FormatFileStatus.SAVED
 
         return format_file_action.FormatFileRunResult(
             changed=False,  # this handler doesn't change files, only saves them
             code=run_context.file_info.file_content,
+            status=status,
         )

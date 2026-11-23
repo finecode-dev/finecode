@@ -106,6 +106,12 @@ source = "fine_envs.SyncToolchainsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.2.0"]
 
+[[tool.finecode.action.sync_toolchains.handlers]]
+name = "sync_toolchains_format"
+source = "fine_envs.SyncToolchainsFormatHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs[format]~=0.2.0"]
+
 [tool.finecode.action.check_toolchains]
 source = "fine_envs.CheckToolchainsAction"
 
