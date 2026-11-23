@@ -23,7 +23,13 @@ import json
 import sys
 import time
 import typing
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Sequence,
+)
 from pathlib import Path
 from typing import Any, Self
 
@@ -76,6 +82,7 @@ class _StdioLspSession:
         self._request_handlers: dict[str, Any] = {}
         self._next_id = 0
         self._server_capabilities: dict[str, Any] = {}
+        self._exit_callback: Callable[[], Awaitable[None]] | None = None
 
     async def __aenter__(self) -> Self:
         self._process = await asyncio.create_subprocess_exec(
@@ -123,6 +130,14 @@ class _StdioLspSession:
     def on_request(self, method: str, handler: Any) -> None:
         self._request_handlers[method] = handler
 
+    def on_exit(self, callback: Callable[[], Awaitable[None]]) -> None:
+        # One callback per session; registering again replaces it (ILspSession).
+        self._exit_callback = callback
+
+    def force_kill(self) -> None:
+        if self._process is not None and self._process.returncode is None:
+            self._process.kill()
+
     async def send_request(
         self,
         method: str,
@@ -156,6 +171,9 @@ class _StdioLspSession:
             while True:
                 line = await stdout.readline()
                 if not line:
+                    # The server closed its output: it has exited.
+                    if self._exit_callback is not None:
+                        await self._exit_callback()
                     return
                 if line in (b"\r\n", b"\n"):
                     break
