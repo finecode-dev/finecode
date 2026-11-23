@@ -225,7 +225,7 @@ async def run_actions(
             await client.connect(
                 "127.0.0.1",
                 port,
-                capabilities={"elicitation": {"choice": True}}
+                capabilities={"elicitation": {"choice": True, "text": True, "multiChoice": True}}
                 if can_answer_questions
                 else None,
             )

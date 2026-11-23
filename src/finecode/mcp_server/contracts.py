@@ -75,6 +75,12 @@ class WmQuestionParams(TypedDict, total=False):
     message: JsonValue
     options: list[JsonValue]
     timeoutSec: float | None
+    kind: str
+    multiline: bool
+    initialValue: str | None
+    placeholder: str | None
+    default: JsonValue
+    descriptions: dict[str, str]
 
 
 class QuestionOutcome(enum.StrEnum):
@@ -87,6 +93,7 @@ class QuestionOutcome(enum.StrEnum):
 class WmConnectionConfig:
     client_id: str
     can_answer_choices: bool
+    can_answer_text: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -94,6 +101,10 @@ class Question:
     message: str
     options: tuple[str, ...]
     timeout_seconds: float | None
+    kind: typing.Literal["choice", "text"] = "choice"
+    multiline: bool = False
+    initial_value: str | None = None
+    placeholder: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)

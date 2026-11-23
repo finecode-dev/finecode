@@ -72,10 +72,10 @@ class _RecordingClient:
     def on_notification(self, name: str, handler: typing.Any) -> None:
         self.notification_handlers[name] = handler
 
-    def on_request(self, name: str, handler: typing.Any) -> None:
+    def on_request(self, name: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[name] = handler
 
-    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any) -> None:
+    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object) -> None:
         self.configure_calls.append({"policy": policy, "on_reattach": on_reattach})
 
     async def connect(
@@ -179,7 +179,7 @@ class _RecordingClient:
             await self.run_action_gate.wait()
         if self.answer_elicitation and "client/elicit" in self.request_handlers:
             reply = await self.request_handlers["client/elicit"](
-                {"message": "Continue?", "options": ["yes", "no"], "timeoutSec": 1}
+                1, {"message": "Continue?", "options": ["yes", "no"], "timeoutSec": 1}
             )
             self.elicit_requests.append(reply)
         if (
@@ -758,7 +758,7 @@ async def test_answered_question_carries_its_value() -> None:
     await service.ensure_connected()
 
     reply = await client.request_handlers["client/elicit"](
-        {"message": "Continue?", "options": ["yes", "no"], "timeoutSec": 1}
+        1, {"message": "Continue?", "options": ["yes", "no"], "timeoutSec": 1}
     )
 
     assert reply == {"outcome": "answered", "value": "yes"}
@@ -785,7 +785,7 @@ async def test_non_answers_carry_no_value(outcome: str) -> None:
     await service.ensure_connected()
 
     reply = await client.request_handlers["client/elicit"](
-        {"message": "m?", "options": ["a"], "timeoutSec": None}
+        1, {"message": "m?", "options": ["a"], "timeoutSec": None}
     )
 
     assert reply == {"outcome": outcome}
@@ -799,7 +799,7 @@ async def test_question_effect_error_maps_to_unavailable() -> None:
     await service.ensure_connected()
 
     reply = await client.request_handlers["client/elicit"](
-        {"message": "m?", "options": ["a"]}
+        1, {"message": "m?", "options": ["a"]}
     )
 
     assert reply == {"outcome": "unavailable"}
@@ -810,7 +810,7 @@ async def test_empty_options_are_unavailable_without_asking() -> None:
     service, client, recorder = _make_service()
     await service.ensure_connected()
 
-    reply = await client.request_handlers["client/elicit"]({"message": "m?"})
+    reply = await client.request_handlers["client/elicit"](1, {"message": "m?"})
 
     assert reply == {"outcome": "unavailable"}
     assert recorder.questions == []
@@ -870,3 +870,72 @@ async def test_invalidate_failure_propagates_to_the_caller() -> None:
 
     with pytest.raises(_Sentinel, match="send failed"):
         await service.invalidate_tools()
+
+
+# ---------------------------------------------------------------------------
+# Per-shape declaration and unknown-kind handling (issue 983, A27)
+# ---------------------------------------------------------------------------
+
+
+async def test_core_declares_text_only_when_front_reports_it() -> None:
+    from finecode.mcp_server.contracts import WmConnectionConfig as Cfg
+
+    service, client, _ = _make_service()
+    service._dependencies = ToolDependencies(
+        connection_config=lambda: Cfg(client_id="m", can_answer_choices=True, can_answer_text=True),
+        current_client_label=lambda: "m",
+    )
+    await service.ensure_connected()
+    assert client.connect_calls[0]["capabilities"] == {
+        "elicitation": {"choice": True, "text": True}
+    }
+
+    service2, client2, _ = _make_service()
+    service2._dependencies = ToolDependencies(
+        connection_config=lambda: Cfg(client_id="m", can_answer_choices=True),
+        current_client_label=lambda: "m",
+    )
+    await service2.ensure_connected()
+    assert client2.connect_calls[0]["capabilities"] == {"elicitation": {"choice": True}}
+
+
+async def test_multi_or_unknown_kind_never_reaches_front() -> None:
+    service, client, recorder = _make_service()
+    await service.ensure_connected()
+    for params in [
+        {"kind": "multiChoice", "message": "m?", "options": ["a"]},
+        {"kind": "bogus", "message": "m?", "options": ["a"]},
+        {"kind": "text", "message": "m?"},
+    ]:
+        reply = await client.request_handlers["client/elicit"](1, params)
+        assert reply == {"outcome": "unavailable"}
+    assert recorder.questions == []
+
+
+async def test_text_question_forwards_and_answers() -> None:
+    from finecode.mcp_server.contracts import Question as Q
+    from finecode.mcp_server.contracts import QuestionOutcome as Outcome
+
+    service, client, recorder = _make_service()
+    from finecode.mcp_server.contracts import WmConnectionConfig as Cfg
+
+    async def _text_answer(question: Q) -> QuestionResult:
+        assert question.kind == "text"
+        return QuestionResult(Outcome.ANSWERED, "hello")
+
+    service._effects = ToolEffects(
+        partial_result=service._effects.partial_result,
+        progress=service._effects.progress,
+        question=_text_answer,
+        catalog_changed=service._effects.catalog_changed,
+    )
+    service._dependencies = ToolDependencies(
+        connection_config=lambda: Cfg(client_id="m", can_answer_choices=True, can_answer_text=True),
+        current_client_label=lambda: "m",
+    )
+    await service.ensure_connected()
+    reply = await client.request_handlers["client/elicit"](
+        1, {"kind": "text", "message": "Name?", "timeoutSec": 5.0}
+    )
+    assert reply == {"outcome": "answered", "value": "hello"}
+    assert recorder.questions == []

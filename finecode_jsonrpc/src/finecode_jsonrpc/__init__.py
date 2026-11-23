@@ -13,7 +13,7 @@ from .client import (
 from .error_codes import DEFAULT_REQUEST_CANCELLED
 from .error_codes import DEFAULT_REQUEST_CANCELLED as REQUEST_CANCELLED
 from .jsonrpc_client import JsonRpcError
-from .jsonrpc_server import JsonRpcHandlerError, JsonRpcServerSession
+from .jsonrpc_server import CancelNotice, JsonRpcHandlerError, JsonRpcServerSession
 from .server_transport import ServerStdioTransport, TcpServerTransport
 from .tracing import (
     CallerOutcome,
@@ -32,6 +32,7 @@ from .tracing import (
 from .transports import StdioTransport
 
 __all__ = [
+    "CancelNotice",
     "DEFAULT_REQUEST_CANCELLED",
     "REQUEST_CANCELLED",
     "BaseRunnerRequestException",

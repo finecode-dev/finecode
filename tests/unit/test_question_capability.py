@@ -225,7 +225,7 @@ async def test_cli_declaration_follows_tty_and_ci(
 
     if declares:
         assert client.connect_kwargs["capabilities"] == {
-            "elicitation": {"choice": True}
+            "elicitation": {"choice": True, "text": True, "multiChoice": True}
         }
         assert "client/elicit" in client.request_handlers
     else:
@@ -243,10 +243,10 @@ class _RecordingMcpClient:
     def on_notification(self, name: str, handler: typing.Any) -> None:
         pass
 
-    def on_request(self, name: str, handler: typing.Any) -> None:
+    def on_request(self, name: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[name] = handler
 
-    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any) -> None:
+    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object) -> None:
         pass
 
     async def connect(

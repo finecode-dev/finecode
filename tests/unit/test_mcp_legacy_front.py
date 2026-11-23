@@ -43,7 +43,7 @@ class _RecordingSession:
         self.notify_gate: asyncio.Event | None = None
         self.notify_error: BaseException | None = None
 
-    def on_request(self, method: str, handler: typing.Any) -> None:
+    def on_request(self, method: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[method] = handler
 
     def on_notification(self, method: str, handler: typing.Any) -> None:
@@ -54,6 +54,7 @@ class _RecordingSession:
         method: str,
         params: dict[str, typing.Any] | None = None,
         timeout: float | None = None,
+        **_kwargs: object,
     ) -> typing.Any:
         self.requests_sent.append(
             {"method": method, "params": params, "timeout": timeout}
@@ -93,10 +94,10 @@ class _RecordingClient:
     def on_notification(self, name: str, handler: typing.Any) -> None:
         self.notification_handlers[name] = handler
 
-    def on_request(self, name: str, handler: typing.Any) -> None:
+    def on_request(self, name: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[name] = handler
 
-    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any) -> None:
+    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object) -> None:
         self.configure_calls.append({"policy": policy, "on_reattach": on_reattach})
 
     async def connect(
@@ -296,7 +297,9 @@ async def test_initialize_before_first_connect_sets_identity_and_capability() ->
     await service.ensure_connected()
 
     assert client.connect_calls[0]["client_id"] == "mcp-editor"
-    assert client.connect_calls[0]["capabilities"] == {"elicitation": {"choice": True}}
+    assert client.connect_calls[0]["capabilities"] == {
+        "elicitation": {"choice": True, "text": True}
+    }
 
 
 async def test_initialize_after_connect_toggles_questions_without_reconnect_config() -> (
@@ -311,7 +314,7 @@ async def test_initialize_after_connect_toggles_questions_without_reconnect_conf
     await service.ensure_connected()
     elicit = client.request_handlers["client/elicit"]
 
-    assert await elicit({"message": "m?", "options": ["a"]}) == {
+    assert await elicit(1, {"message": "m?", "options": ["a"]}) == {
         "outcome": "unavailable"
     }
 
@@ -321,7 +324,7 @@ async def test_initialize_after_connect_toggles_questions_without_reconnect_conf
             "clientInfo": {"name": "e", "version": "1"},
         }
     )
-    assert await elicit({"message": "m?", "options": ["yes", "no"]}) == {
+    assert await elicit(1, {"message": "m?", "options": ["yes", "no"]}) == {
         "outcome": "answered",
         "value": "yes",
     }
@@ -329,7 +332,7 @@ async def test_initialize_after_connect_toggles_questions_without_reconnect_conf
     await front.handle_initialize(
         {"capabilities": {}, "clientInfo": {"name": "e", "version": "1"}}
     )
-    assert await elicit({"message": "m?", "options": ["a"]}) == {
+    assert await elicit(1, {"message": "m?", "options": ["a"]}) == {
         "outcome": "unavailable"
     }
     assert len(client.connect_calls) == 1
@@ -344,7 +347,7 @@ async def test_replacing_the_session_moves_later_questions() -> None:
     second = _RecordingSession()
     second.request_result = {"action": "decline"}
 
-    assert await elicit({"message": "m?", "options": ["a"]}) == {
+    assert await elicit(1, {"message": "m?", "options": ["a"]}) == {
         "outcome": "unavailable"
     }
     await front.handle_initialize(
@@ -353,13 +356,13 @@ async def test_replacing_the_session_moves_later_questions() -> None:
             "clientInfo": {"name": "e", "version": "1"},
         }
     )
-    assert await elicit({"message": "m?", "options": ["yes", "no"]}) == {
+    assert await elicit(1, {"message": "m?", "options": ["yes", "no"]}) == {
         "outcome": "answered",
         "value": "yes",
     }
 
     front._session = typing.cast(typing.Any, second)
-    assert await elicit({"message": "m?", "options": ["a"]}) == {"outcome": "declined"}
+    assert await elicit(1, {"message": "m?", "options": ["a"]}) == {"outcome": "declined"}
     assert len(first.requests_sent) == 1
     assert len(second.requests_sent) == 1
 
@@ -588,17 +591,17 @@ async def test_two_pairs_keep_separate_identity_and_targets() -> None:
     assert client_a.connect_calls[0]["client_id"] == "mcp-a"
     assert client_b.connect_calls[0]["client_id"] == "mcp-b"
     assert client_a.connect_calls[0]["capabilities"] == {
-        "elicitation": {"choice": True}
+        "elicitation": {"choice": True, "text": True}
     }
     assert client_b.connect_calls[0]["capabilities"] is None
 
     elicit_a = client_a.request_handlers["client/elicit"]
     elicit_b = client_b.request_handlers["client/elicit"]
-    assert await elicit_a({"message": "m?", "options": ["yes", "no"]}) == {
+    assert await elicit_a(1, {"message": "m?", "options": ["yes", "no"]}) == {
         "outcome": "answered",
         "value": "yes",
     }
-    assert await elicit_b({"message": "m?", "options": ["x"]}) == {
+    assert await elicit_b(2, {"message": "m?", "options": ["x"]}) == {
         "outcome": "unavailable"
     }
     assert len(session_a.requests_sent) == 1
@@ -606,3 +609,61 @@ async def test_two_pairs_keep_separate_identity_and_targets() -> None:
 
     service_a._tool_name_to_source["only-a"] = "pkg.A"
     assert service_b._tool_name_to_source == {}
+
+
+# ---------------------------------------------------------------------------
+# Text rendering (issue 983, A28)
+# ---------------------------------------------------------------------------
+
+
+async def test_text_schema_and_replies() -> None:
+    front, _, session, _ = _assemble()
+    await front.handle_initialize(
+        {"capabilities": {"elicitation": True}, "clientInfo": {"name": "e"}}
+    )
+    from finecode.mcp_server.contracts import Question as Q
+
+    session.request_result = {"action": "accept", "content": {"answer": ""}}
+    result = await front.ask_question(Q(message="Name?", options=(), timeout_seconds=5.0, kind="text"))
+    assert result.outcome.value == "answered"
+    assert result.value == ""
+    sent = session.requests_sent[-1]
+    assert sent["method"] == "elicitation/create"
+    schema = sent["params"]["requestedSchema"]
+    assert schema["properties"]["answer"] == {
+        "type": "string",
+        "title": "Answer",
+        "maxLength": 65536,
+    }
+    assert schema["required"] == ["answer"]
+    assert "description" not in schema["properties"]["answer"]
+
+    session.request_result = {
+        "action": "accept",
+        "content": {"answer": "x"},
+    }
+    session.requests_sent.clear()
+    await front.handle_initialize(
+        {"capabilities": {"elicitation": True}, "clientInfo": {"name": "e"}}
+    )
+    result2 = await front.ask_question(
+        Q(message="Name?", options=(), timeout_seconds=5.0, kind="text", placeholder="Ada")
+    )
+    assert result2.value == "x"
+    assert session.requests_sent[-1]["params"]["requestedSchema"]["properties"]["answer"][
+        "description"
+    ] == "Ada"
+
+    for bad in [{"action": "accept", "content": {}}, {"action": "accept", "content": {"answer": 3}}]:
+        session.request_result = bad
+        result_bad = await front.ask_question(
+            Q(message="Name?", options=(), timeout_seconds=5.0, kind="text")
+        )
+        assert result_bad.outcome.value == "unavailable"
+
+    for action in ["decline", "cancel"]:
+        session.request_result = {"action": action}
+        result_declined = await front.ask_question(
+            Q(message="Name?", options=(), timeout_seconds=5.0, kind="text")
+        )
+        assert result_declined.outcome.value == "declined"

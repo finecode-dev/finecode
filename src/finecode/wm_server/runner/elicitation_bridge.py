@@ -49,8 +49,12 @@ import typing
 from loguru import logger
 
 __all__ = [
+    "QUESTION_TEXT_MAX_CHARS",
+    "ElicitAnswer",
     "ElicitationBridge",
+    "QuestionKind",
     "RunDispatchOrigin",
+    "ShapeAvailability",
     "WithdrawalReason",
     "bind_run",
     "handlers",
@@ -63,6 +67,28 @@ __all__ = [
 ]
 
 WithdrawalReason = typing.Literal["expired", "runCancelled", "noLongerNeeded"]
+
+QuestionKind = typing.Literal["choice", "text", "multiChoice"]
+
+QUESTION_TEXT_MAX_CHARS: typing.Final = 65_536
+"""Longest accepted text for a prefill or a text answer, in code points."""
+
+
+class ElicitAnswer(typing.TypedDict):
+    """What the connection owner returns for one elicitation."""
+
+    outcome: typing.Literal["answered", "declined", "unavailable"]
+    value: typing.NotRequired[str]
+    values: typing.NotRequired[list[str]]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ShapeAvailability:
+    """Which question shapes the run's originating client declared."""
+
+    choice: bool
+    text: bool
+    multi_choice: bool
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -93,6 +119,12 @@ class ElicitationBridge(typing.Protocol):
         """Whether a question could be put to a person right now."""
         ...
 
+    def shape_availability(
+        self, *, run_writer_key: asyncio.StreamWriter | None
+    ) -> ShapeAvailability:
+        """Which shapes the run's originating client declared. Sends nothing."""
+        ...
+
     async def elicit(
         self,
         *,
@@ -102,7 +134,13 @@ class ElicitationBridge(typing.Protocol):
         timeout_sec: float,
         run_writer_key: asyncio.StreamWriter | None,
         run_id: str | None,
-    ) -> dict:
+        kind: str = "choice",
+        multiline: bool = False,
+        initial_value: str | None = None,
+        placeholder: str | None = None,
+        descriptions: collections.abc.Mapping[str, str] | None = None,
+        preselected: list[str] | None = None,
+    ) -> ElicitAnswer:
         """Put a multiple-choice question to one client and return the outcome.
 
         *run_id* is the run that asks, so the question can be withdrawn from the

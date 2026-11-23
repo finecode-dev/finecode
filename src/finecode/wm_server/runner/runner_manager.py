@@ -347,17 +347,31 @@ async def handle_elicit(
             "put a question to anyone."
         )
     origin = elicitation_bridge.originating_client_for_run(params.run_id)
+    raw_default = params.default
+    default: str | None = raw_default if isinstance(raw_default, str) else None
+    preselected: list[str] | None = None
+    if isinstance(raw_default, list) and all(
+        isinstance(entry, str) for entry in raw_default
+    ):
+        preselected = list(raw_default)
     answer = await installed.elicit(
         message=params.message,
         options=list(params.options),
-        default=params.default,
+        default=default,
         timeout_sec=params.timeout_sec,
         run_writer_key=origin,
         run_id=params.run_id,
+        kind=params.kind,
+        multiline=params.multiline,
+        initial_value=params.initial_value,
+        placeholder=params.placeholder,
+        descriptions=params.descriptions,
+        preselected=preselected,
     )
     return _internal_client_types.ElicitResult(
         outcome=answer.get("outcome", "unavailable"),
         value=answer.get("value"),
+        values=answer.get("values"),
     )
 
 
@@ -1016,8 +1030,11 @@ async def _start_extension_runner_process(
                 "say whether anyone could be asked."
             )
         origin = elicitation_bridge.originating_client_for_run(params.run_id)
+        shapes = installed.shape_availability(run_writer_key=origin)
         return _internal_client_types.ElicitAvailabilityResult(
-            can_answer=installed.can_elicit(run_writer_key=origin)
+            can_answer=installed.can_elicit(run_writer_key=origin),
+            can_answer_text=shapes.text,
+            can_answer_multi_choice=shapes.multi_choice,
         )
 
     _register(

@@ -20,9 +20,11 @@ from finecode_extension_runner.testing._session import (
     run_handler,
 )
 from finecode_extension_runner.testing._stubs import (
+    FakeUserPrompt,
     InMemoryWalWriter,
     NoOpLogger,
     NullWalWriter,
+    RecordedAsk,
     WalEvent,
 )
 from finecode_extension_runner.testing._virtual_time import (
@@ -33,6 +35,7 @@ from finecode_extension_runner.testing._virtual_time import (
 __all__ = [
     "CollectingPartialResultSender",
     "CollectingProgressSender",
+    "FakeUserPrompt",
     "FileOperation",
     "FileOperationKind",
     "FileWrite",
@@ -41,6 +44,7 @@ __all__ = [
     "LanguageDispatchCoverageTests",
     "NoOpLogger",
     "NullWalWriter",
+    "RecordedAsk",
     "Session",
     "VirtualTimeLoop",
     "WalEvent",

@@ -10,7 +10,7 @@ dependencies = [
   "debugpy==1.8.*",
   "deepmerge==2.0.*",
   "finecode_common~=0.1.0",
-  "finecode_extension_api~=0.5.0",
+  "finecode_extension_api~=0.5.1",
   "finecode_jsonrpc~=0.1.1",
   "loguru==0.7.*",
   "opentelemetry-exporter-otlp-proto-grpc==1.41.*",

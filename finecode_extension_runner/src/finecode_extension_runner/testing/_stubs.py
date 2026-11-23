@@ -129,6 +129,21 @@ class FakeUserMessenger:
         self.infos.append(message)
 
 
+@dataclasses.dataclass(frozen=True)
+class RecordedAsk:
+    """One question a ``FakeUserPrompt`` was asked, with the full arguments."""
+
+    kind: typing.Literal["choice", "text", "multiChoice"]
+    message: str
+    options: tuple[str, ...]
+    default: str | tuple[str, ...] | None
+    descriptions: typing.Mapping[str, str] | None
+    multiline: bool
+    initial_value: str | None
+    placeholder: str | None
+    timeout_sec: float
+
+
 class FakeUserPrompt:
     """IUserPrompt that answers from a script, and records what it was asked.
 
@@ -138,7 +153,7 @@ class FakeUserPrompt:
     for, so it is what a handler under test meets unless the test says otherwise
     (ADR-0082 rule 3).
 
-    Scripted answers are consumed in order, one per ``ask_choice``; running out
+    Scripted answers are consumed in order, one per ask; running out
     falls back to the default rather than raising, so a test that adds a second
     question does not fail in the fixture instead of in the assertion.
     """
@@ -154,6 +169,7 @@ class FakeUserPrompt:
             outcome=iuserprompt.ElicitationOutcome.UNAVAILABLE
         )
         self.asked: list[tuple[str, list[str]]] = []
+        self.asks: list[RecordedAsk] = []
         self.availability = availability or iuserprompt.PromptAvailability(
             can_ask=False
         )
@@ -169,9 +185,75 @@ class FakeUserPrompt:
         options: list[str],
         *,
         default: str | None = None,
+        descriptions: typing.Mapping[str, str] | None = None,
         timeout_sec: float = 300.0,
     ) -> iuserprompt.ElicitationResult:
         self.asked.append((message, list(options)))
+        self.asks.append(
+            RecordedAsk(
+                kind="choice",
+                message=message,
+                options=tuple(options),
+                default=default,
+                descriptions=descriptions,
+                multiline=False,
+                initial_value=None,
+                placeholder=None,
+                timeout_sec=timeout_sec,
+            )
+        )
+        if self.answers:
+            return self.answers.pop(0)
+        return self.default
+
+    async def ask_text(
+        self,
+        message: str,
+        *,
+        multiline: bool = False,
+        initial_value: str | None = None,
+        placeholder: str | None = None,
+        timeout_sec: float = 300.0,
+    ) -> iuserprompt.ElicitationResult:
+        self.asks.append(
+            RecordedAsk(
+                kind="text",
+                message=message,
+                options=(),
+                default=None,
+                descriptions=None,
+                multiline=multiline,
+                initial_value=initial_value,
+                placeholder=placeholder,
+                timeout_sec=timeout_sec,
+            )
+        )
+        if self.answers:
+            return self.answers.pop(0)
+        return self.default
+
+    async def ask_multi_choice(
+        self,
+        message: str,
+        options: list[str],
+        *,
+        default: list[str] | None = None,
+        descriptions: typing.Mapping[str, str] | None = None,
+        timeout_sec: float = 300.0,
+    ) -> iuserprompt.ElicitationResult:
+        self.asks.append(
+            RecordedAsk(
+                kind="multiChoice",
+                message=message,
+                options=tuple(options),
+                default=tuple(default) if default is not None else None,
+                descriptions=descriptions,
+                multiline=False,
+                initial_value=None,
+                placeholder=None,
+                timeout_sec=timeout_sec,
+            )
+        )
         if self.answers:
             return self.answers.pop(0)
         return self.default

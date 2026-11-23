@@ -210,6 +210,15 @@ async def test_the_handler_answers_from_the_origin_registry(
             seen.append(run_writer_key)
             return run_writer_key is not None
 
+        def shape_availability(
+            self, *, run_writer_key: object | None
+        ) -> elicitation_bridge.ShapeAvailability:
+            return elicitation_bridge.ShapeAvailability(
+                choice=run_writer_key is not None,
+                text=False,
+                multi_choice=False,
+            )
+
     monkeypatch.setattr(elicitation_bridge, "handlers", lambda: _StubBridge())
     terminal = object()
     with elicitation_bridge.bind_run(
@@ -347,4 +356,4 @@ def test_the_new_request_is_registered_for_the_wire() -> None:
     assert request.params.run_id == "run-1"
     assert converter.unstructure(
         _internal_client_types.ElicitAvailabilityResult(can_answer=True)
-    ) == {"canAnswer": True}
+    ) == {"canAnswer": True, "canAnswerText": False, "canAnswerMultiChoice": False}

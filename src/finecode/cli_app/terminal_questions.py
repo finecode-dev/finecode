@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import dataclasses
+import re
 import sys
 import typing
 
@@ -28,6 +29,7 @@ import prompt_toolkit.output
 from loguru import logger
 
 from finecode.wm_client import RequestEndedWithoutAnswer
+from finecode.wm_server.runner import elicitation_bridge
 
 if sys.platform == "win32":
     import msvcrt
@@ -48,6 +50,45 @@ _NOTICE_BY_REASON = {
 }
 
 
+_TEXT_HINT_SINGLE = "(Enter submits; Ctrl-D on an empty line declines)"
+_TEXT_HINT_MULTI = "(Esc then Enter submits; Ctrl-D on an empty answer declines)"
+_TEXT_PROMPT = "> "
+_TOO_LONG_NOTICE = "The answer is longer than 65536 characters; no answer was sent."
+_UNDECODABLE_NOTICE = "The answer is not valid UTF-8 text; no answer was sent."
+_MULTI_INVALID_NOTICE = "Not a list of option numbers. Try again."
+
+
+def _escape_message(text: str) -> str:
+    """Escape controls in a question message for terminal display."""
+    out: list[str] = []
+    for char in text:
+        code = ord(char)
+        if char in ("\n", "\t"):
+            out.append(char)
+            continue
+        if code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
+            out.append(char.encode("unicode_escape").decode("ascii"))
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def _escape_inline(text: str) -> str:
+    """Escape every control character for single-line display."""
+    out: list[str] = []
+    for char in text:
+        code = ord(char)
+        if code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
+            out.append(char.encode("unicode_escape").decode("ascii"))
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def _has_lone_surrogate(text: str) -> bool:
+    return any(0xD800 <= ord(char) <= 0xDFFF for char in text)
+
+
 def discard_pending_terminal_input() -> None:
     """Drop whatever the person typed that no question has read yet."""
     if sys.platform == "win32":
@@ -63,6 +104,7 @@ def discard_pending_terminal_input() -> None:
 @dataclasses.dataclass
 class _HeldQuestion:
     request_id: int | str
+    kind: str
     message: str
     options: list[str]
     default: str | None
@@ -72,6 +114,11 @@ class _HeldQuestion:
     notice: str | None = None
     prompt_task: asyncio.Task[None] | None = None
     expiry: asyncio.TimerHandle | None = None
+    multiline: bool = False
+    initial_value: str | None = None
+    placeholder: str | None = None
+    descriptions: dict[str, str] = dataclasses.field(default_factory=dict)
+    preselected: list[str] = dataclasses.field(default_factory=list)
 
 
 class TerminalQuestions:
@@ -105,20 +152,50 @@ class TerminalQuestions:
                 lost its connection, so the WM is no longer waiting for an answer.
         """
         value = params or {}
+        kind = value.get("kind", "choice")
+        if kind not in ("choice", "text", "multiChoice"):
+            return {"outcome": "unavailable"}
         options = [str(option) for option in value.get("options") or []]
-        if not options:
+        if kind in ("choice", "multiChoice") and not options:
             # Nobody can be asked a question with no answers. Not "declined":
             # that means a person refused, which handlers are documented to
             # honour by aborting or taking the safe branch.
             return {"outcome": "unavailable"}
 
+        message = str(value.get("message", ""))
+        descriptions = {
+            str(key): str(desc)
+            for key, desc in (value.get("descriptions") or {}).items()
+            if str(key) in options
+        }
+        if kind == "choice":
+            default = value.get("default")
+            if default not in options:
+                default = None
+            held_kwargs: dict[str, object] = {"default": default}
+        elif kind == "text":
+            held_kwargs = {
+                "default": None,
+                "multiline": bool(value.get("multiline", False)),
+                "initial_value": value.get("initialValue"),
+                "placeholder": value.get("placeholder"),
+            }
+        else:
+            raw_default = value.get("default") or []
+            if not isinstance(raw_default, list):
+                raw_default = []
+            preselected = [str(e) for e in raw_default if str(e) in options]
+            held_kwargs = {"default": None, "preselected": preselected}
+
         loop = asyncio.get_running_loop()
         held = _HeldQuestion(
             request_id=request_id,
-            message=str(value.get("message", "")),
+            kind=str(kind),
+            message=message,
             options=options,
-            default=value.get("default"),
             outcome=loop.create_future(),
+            descriptions=descriptions,
+            **held_kwargs,
         )
         # Held before the first suspension: a withdrawal read right behind this
         # request finds the question and drops it before it is ever shown.
@@ -215,10 +292,34 @@ class TerminalQuestions:
             self._discard_pending_input()
             held.shown = True
             click.echo("", err=True)
-            click.echo(click.style(held.message, bold=True), err=True)
-            for index, option in enumerate(held.options, start=1):
-                marker = " (default)" if option == held.default else ""
-                click.echo(f"  {index}) {option}{marker}", err=True)
+            click.echo(click.style(_escape_message(held.message), bold=True), err=True)
+            if held.kind == "choice":
+                for index, option in enumerate(held.options, start=1):
+                    marker = " (default)" if option == held.default else ""
+                    desc = held.descriptions.get(option)
+                    suffix = (
+                        f" \u2014 {_escape_inline(desc)}" if desc is not None else ""
+                    )
+                    click.echo(
+                        f"  {index}) {_escape_inline(option)}{marker}{suffix}",
+                        err=True,
+                    )
+            elif held.kind == "text":
+                if held.placeholder is not None:
+                    click.echo(f"Example: {_escape_inline(held.placeholder)}", err=True)
+                hint = _TEXT_HINT_MULTI if held.multiline else _TEXT_HINT_SINGLE
+                click.echo(hint, err=True)
+            else:
+                for index, option in enumerate(held.options, start=1):
+                    checked = "[x]" if option in held.preselected else "[ ]"
+                    desc = held.descriptions.get(option)
+                    suffix = (
+                        f" \u2014 {_escape_inline(desc)}" if desc is not None else ""
+                    )
+                    click.echo(
+                        f"  {index}) {checked} {_escape_inline(option)}{suffix}",
+                        err=True,
+                    )
 
             held.prompt_task = asyncio.create_task(self._read_answer(held, session))
             try:
@@ -236,6 +337,16 @@ class TerminalQuestions:
             self._prompt_idle.set()
 
     async def _read_answer(
+        self, held: _HeldQuestion, session: prompt_toolkit.PromptSession
+    ) -> None:
+        if held.kind == "text":
+            await self._read_text_answer(held, session)
+        elif held.kind == "multiChoice":
+            await self._read_multi_answer(held, session)
+        else:
+            await self._read_choice_answer(held, session)
+
+    async def _read_choice_answer(
         self, held: _HeldQuestion, session: prompt_toolkit.PromptSession
     ) -> None:
         has_default = held.default in held.options
@@ -271,6 +382,88 @@ class TerminalQuestions:
                 self._settle(held, {"outcome": "answered", "value": answer})
                 return
             click.echo("Not one of the options. Try again.", err=True)
+
+    async def _read_text_answer(
+        self, held: _HeldQuestion, session: prompt_toolkit.PromptSession
+    ) -> None:
+        while True:
+            try:
+                answer = await session.prompt_async(
+                    _TEXT_PROMPT,
+                    multiline=held.multiline,
+                    default=held.initial_value or "",
+                )
+            except EOFError:
+                self._settle(held, {"outcome": "declined"})
+                return
+            except KeyboardInterrupt:
+                self._on_interrupt()
+                self._end(held, None)
+                return
+            if _has_lone_surrogate(answer):
+                click.echo(_UNDECODABLE_NOTICE, err=True)
+                self._settle(held, {"outcome": "unavailable"})
+                return
+            if len(answer) > elicitation_bridge.QUESTION_TEXT_MAX_CHARS:
+                click.echo(_TOO_LONG_NOTICE, err=True)
+                self._settle(held, {"outcome": "unavailable"})
+                return
+            self._settle(held, {"outcome": "answered", "value": answer})
+            return
+
+    async def _read_multi_answer(
+        self, held: _HeldQuestion, session: prompt_toolkit.PromptSession
+    ) -> None:
+        numbers = [
+            str(index + 1)
+            for index, opt in enumerate(held.options)
+            if opt in held.preselected
+        ]
+        keeps = f" [Enter keeps {' '.join(numbers)}]" if numbers else ""
+        prompt = (
+            f"Choose any of 1-{len(held.options)}"
+            " (spaces or commas; - for none)"
+            f"{keeps}: "
+        )
+        while True:
+            try:
+                raw = await session.prompt_async(prompt)
+            except EOFError:
+                self._settle(held, {"outcome": "declined"})
+                return
+            except KeyboardInterrupt:
+                self._on_interrupt()
+                self._end(held, None)
+                return
+            stripped = raw.strip()
+            if stripped == "":
+                if held.preselected:
+                    ordered = [
+                        opt for opt in held.options if opt in set(held.preselected)
+                    ]
+                    self._settle(held, {"outcome": "answered", "values": ordered})
+                else:
+                    self._settle(held, {"outcome": "answered", "values": []})
+                return
+            if stripped == "-":
+                self._settle(held, {"outcome": "answered", "values": []})
+                return
+            parts = [p for p in re.split(r"[\s,]+", stripped) if p]
+            chosen: set[int] = set()
+            valid = bool(parts)
+            for part in parts:
+                if not part.isdigit() or not 1 <= int(part) <= len(held.options):
+                    valid = False
+                    break
+                chosen.add(int(part))
+            if not valid:
+                click.echo(_MULTI_INVALID_NOTICE, err=True)
+                continue
+            ordered = [
+                opt for idx, opt in enumerate(held.options, start=1) if idx in chosen
+            ]
+            self._settle(held, {"outcome": "answered", "values": ordered})
+            return
 
     def _settle(self, held: _HeldQuestion, result: dict[str, typing.Any]) -> None:
         if not held.outcome.done():

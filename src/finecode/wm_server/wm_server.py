@@ -309,6 +309,49 @@ class ElicitWithdrawnParams(typing.TypedDict):
     reason: elicitation_bridge.WithdrawalReason
 
 
+class ClientElicitParams(typing.TypedDict, total=False):
+    """Params of the ``client/elicit`` request, per question shape."""
+
+    message: str
+    options: list[str]
+    default: str | list[str] | None
+    timeoutSec: float
+    kind: elicitation_bridge.QuestionKind
+    multiline: bool
+    initialValue: str | None
+    placeholder: str | None
+    descriptions: dict[str, str]
+
+
+def _declared_shapes(capability: object) -> elicitation_bridge.ShapeAvailability:
+    """Which shapes *capability* (the raw ``elicitation`` value) declares."""
+    choice = bool(capability)
+    text = isinstance(capability, dict) and capability.get("text") is True
+    multi_choice = (
+        isinstance(capability, dict) and capability.get("multiChoice") is True
+    )
+    return elicitation_bridge.ShapeAvailability(
+        choice=choice, text=text, multi_choice=multi_choice
+    )
+
+
+def _shapes_for_writer(
+    writer: asyncio.StreamWriter | None,
+) -> elicitation_bridge.ShapeAvailability:
+    """Shapes declared by the connection behind *writer*, or all false."""
+    if writer is None or writer not in _connected_clients:
+        return elicitation_bridge.ShapeAvailability(
+            choice=False, text=False, multi_choice=False
+        )
+    return _declared_shapes(_client_capabilities.get(writer, {}).get("elicitation"))
+
+
+def _short_client_value(value: object) -> str:
+    """At most 200 characters of *value* plus its length, for bounded logs."""
+    text = value if isinstance(value, str) else repr(value)
+    return f"{text[:200]!r} (len {len(text)})"
+
+
 @dataclasses.dataclass
 class _PendingQuestion:
     """A ``client/elicit`` the WM has put to a client and not yet finished with."""
@@ -739,11 +782,13 @@ class _WmElicitationBridge:
         The same three pre-send facts ``elicit`` checks before sending, so the
         two agree on every case; sends nothing.
         """
-        if run_writer_key is None:
-            return False
-        if run_writer_key not in _connected_clients:
-            return False
-        return bool(_client_capabilities.get(run_writer_key, {}).get("elicitation"))
+        return self.shape_availability(run_writer_key=run_writer_key).choice
+
+    def shape_availability(
+        self, *, run_writer_key: asyncio.StreamWriter | None
+    ) -> elicitation_bridge.ShapeAvailability:
+        """Which shapes the run's originating client declared. Sends nothing."""
+        return _shapes_for_writer(run_writer_key)
 
     async def elicit(
         self,
@@ -754,7 +799,13 @@ class _WmElicitationBridge:
         timeout_sec: float,
         run_writer_key: asyncio.StreamWriter | None,
         run_id: str | None,
-    ) -> dict:
+        kind: str = "choice",
+        multiline: bool = False,
+        initial_value: str | None = None,
+        placeholder: str | None = None,
+        descriptions: collections.abc.Mapping[str, str] | None = None,
+        preselected: list[str] | None = None,
+    ) -> elicitation_bridge.ElicitAnswer:
         writer = run_writer_key
         if writer is None:
             # A run with no identifiable originating connection: dispatched
@@ -764,16 +815,73 @@ class _WmElicitationBridge:
         if writer not in _connected_clients:
             logger.debug("Elicitation: the originating client is no longer connected")
             return {"outcome": "unavailable"}
-        if not _client_capabilities.get(writer, {}).get("elicitation"):
-            # Rule 2: known before the question is sent, so the common
-            # non-interactive case costs a fast answer instead of a deadline.
+        shapes = _shapes_for_writer(writer)
+        if kind not in ("choice", "text", "multiChoice"):
+            logger.warning(f"Elicitation: unknown question kind {kind!r}")
+            return {"outcome": "unavailable"}
+        if kind == "choice" and not shapes.choice:
             logger.debug(
                 f"Elicitation: client '{_client_labels.get(writer)}' did not declare "
                 f"that it can answer questions"
             )
             return {"outcome": "unavailable"}
+        if kind == "text" and not shapes.text:
+            logger.debug(
+                f"Elicitation: client '{_client_labels.get(writer)}' did not declare "
+                f"text questions"
+            )
+            return {"outcome": "unavailable"}
+        if kind == "multiChoice" and not shapes.multi_choice:
+            logger.debug(
+                f"Elicitation: client '{_client_labels.get(writer)}' did not declare "
+                f"multi-select questions"
+            )
+            return {"outcome": "unavailable"}
+        if kind in ("choice", "multiChoice") and not options:
+            logger.warning(f"Elicitation: {kind} question with no options")
+            return {"outcome": "unavailable"}
+        if (
+            kind == "text"
+            and initial_value is not None
+            and len(initial_value) > elicitation_bridge.QUESTION_TEXT_MAX_CHARS
+        ):
+            logger.warning(
+                f"Elicitation: prefill over the bound {_short_client_value(initial_value)}"
+            )
+            return {"outcome": "unavailable"}
 
         bounded = min(max(timeout_sec, 1.0), QUESTION_MAX_DEADLINE_SEC)
+        params: ClientElicitParams = {
+            "message": message,
+            "timeoutSec": bounded,
+        }
+        if kind == "choice":
+            params["options"] = list(options)
+            params["default"] = default
+            if descriptions:
+                params["descriptions"] = {
+                    key: value for key, value in descriptions.items() if key in options
+                }
+        elif kind == "text":
+            params["kind"] = "text"
+            if multiline:
+                params["multiline"] = True
+            if initial_value is not None:
+                params["initialValue"] = initial_value
+            if placeholder is not None:
+                params["placeholder"] = placeholder
+        else:
+            params["kind"] = "multiChoice"
+            params["options"] = list(options)
+            offered = [entry for entry in (preselected or []) if entry in options]
+            if offered:
+                params["default"] = offered
+            if descriptions:
+                kept = {
+                    key: value for key, value in descriptions.items() if key in options
+                }
+                if kept:
+                    params["descriptions"] = kept
         asked: list[_PendingQuestion] = []
 
         # Registered with no suspension between the caller's origin lookup and
@@ -793,15 +901,7 @@ class _WmElicitationBridge:
             result = await _request_client(
                 writer,
                 "client/elicit",
-                {
-                    "message": message,
-                    "options": options,
-                    "default": default,
-                    # Informational: the deadline is enforced here, but a client
-                    # that holds its own pending request (the MCP server does)
-                    # needs to know when to stop holding it.
-                    "timeoutSec": bounded,
-                },
+                typing.cast(dict[str, object], params),
                 timeout_sec=bounded,
                 on_registered=_register,
             )
@@ -823,17 +923,59 @@ class _WmElicitationBridge:
                 _pending_questions.pop(question.request_id, None)
 
         outcome = result.get("outcome")
-        if outcome == "answered":
+        if outcome == "answered" and kind == "choice":
             value = result.get("value")
             if value not in options:
                 # A client that answered with something nobody offered has not
                 # answered the question that was asked.
                 logger.warning(
-                    f"Elicitation: client answered with {value!r}, which is not one "
+                    f"Elicitation: client answered with {_short_client_value(value)}, which is not one "
                     f"of the offered options; treating the question as unanswered"
                 )
                 return {"outcome": "unavailable"}
             return {"outcome": "answered", "value": value}
+        if outcome == "answered" and kind == "text":
+            value = result.get("value")
+            if not isinstance(value, str):
+                logger.warning(
+                    f"Elicitation: text answer is not a string {_short_client_value(value)}"
+                )
+                return {"outcome": "unavailable"}
+            if len(value) > elicitation_bridge.QUESTION_TEXT_MAX_CHARS:
+                logger.warning(
+                    f"Elicitation: text answer over the bound {_short_client_value(value)}"
+                )
+                return {"outcome": "unavailable"}
+            try:
+                _ = value.encode("utf-8")
+            except UnicodeEncodeError:
+                logger.warning(
+                    f"Elicitation: text answer is not UTF-8 {_short_client_value(value)}"
+                )
+                return {"outcome": "unavailable"}
+            return {"outcome": "answered", "value": value}
+        if outcome == "answered" and kind == "multiChoice":
+            raw_values = result.get("values")
+            if not isinstance(raw_values, list):
+                logger.warning(
+                    f"Elicitation: multi-select answer has no values list {_short_client_value(raw_values)}"
+                )
+                return {"outcome": "unavailable"}
+            if any(not isinstance(entry, str) for entry in raw_values):
+                logger.warning(
+                    f"Elicitation: multi-select answer has a non-string entry"
+                )
+                return {"outcome": "unavailable"}
+            if len(set(raw_values)) != len(raw_values):
+                logger.warning("Elicitation: multi-select answer repeats an option")
+                return {"outcome": "unavailable"}
+            if any(entry not in options for entry in raw_values):
+                logger.warning(
+                    "Elicitation: multi-select answer names an unoffered option"
+                )
+                return {"outcome": "unavailable"}
+            ordered = [entry for entry in options if entry in set(raw_values)]
+            return {"outcome": "answered", "values": ordered}
         if outcome == "declined":
             return {"outcome": "declined"}
         logger.warning(f"Elicitation: client returned unknown outcome {outcome!r}")

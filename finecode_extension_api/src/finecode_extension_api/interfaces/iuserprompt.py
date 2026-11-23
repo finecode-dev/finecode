@@ -50,11 +50,19 @@ class ElicitationResult:
 
     outcome: ElicitationOutcome
     value: str | None = None
-    """The chosen option. Set only when ``outcome`` is ``ANSWERED``.
+    """The chosen option, or the exact text that was submitted.
+
+    Set only when ``outcome`` is ``ANSWERED``.
 
     Never filled in from the ask's ``default`` on any other outcome: a default
     the handler supplied is the handler's own fallback, and returning it as if a
     person had picked it would erase the distinction the outcomes exist for.
+    """
+    values: tuple[str, ...] | None = None
+    """The chosen options, in the order they were offered.
+
+    Set only for a multi-select ask whose ``outcome`` is ``ANSWERED``; ``()``
+    is the empty selection. ``None`` on every other outcome and shape.
     """
 
 
@@ -71,6 +79,10 @@ class PromptAvailability:
     """Whether a question could be put to a person in the current run right now."""
 
     can_ask: bool
+    can_ask_text: bool = False
+    """Whether a free-text question could be put to a person right now."""
+    can_ask_multi_choice: bool = False
+    """Whether a multi-select question could be put to a person right now."""
 
 
 class IUserPrompt(service.Service, typing.Protocol):
@@ -86,7 +98,8 @@ class IUserPrompt(service.Service, typing.Protocol):
     it might block.
 
     **Not every stop point fits here.** A question with a small, enumerable set
-    of answers does. A decision that needs a person to *review* something
+    of answers does, and so does a short piece of free text — a name, a reason,
+    a few lines at most. A decision that needs a person to *review* something
     substantial — a large diff, a set of proposed edits — is not improved by
     being squeezed into a prompt, and is better handed back between runs.
 
@@ -103,6 +116,7 @@ class IUserPrompt(service.Service, typing.Protocol):
         options: list[str],
         *,
         default: str | None = None,
+        descriptions: typing.Mapping[str, str] | None = None,
         timeout_sec: float = 300.0,
     ) -> ElicitationResult:
         """Put *message* to the person who started this run and let them pick.
@@ -112,9 +126,12 @@ class IUserPrompt(service.Service, typing.Protocol):
                 verbatim, so it should say what happens for each option.
             options: The answers accepted, in the order they should be offered.
                 Closed set: an implementation treats anything else as no answer.
-            default: What the handler would choose on its own. A hint to the
-                surface for pre-selection; it is never returned as the answer
-                unless a person actually picks it.
+            default: What the handler would choose on its own. A display field
+                for pre-selection; it is never returned as the answer unless a
+                person actually picks it.
+            descriptions: Extra detail per option, keyed by option text. A
+                display field a surface may show beside the option; entries
+                naming an unoffered option are ignored.
             timeout_sec: How long the handler is prepared to wait. The deadline
                 is enforced by whoever holds the question — not here — and it
                 may be capped; an answer arriving late is discarded rather than
@@ -122,9 +139,84 @@ class IUserPrompt(service.Service, typing.Protocol):
 
         Returns:
             An :class:`ElicitationResult`. Its ``outcome`` distinguishes an
-            answer from a refusal from having nobody to ask.
+            answer from a refusal from having nobody to ask. On ``ANSWERED``,
+            ``value`` holds the chosen option and ``values`` is ``None``.
         """
         ...
+
+    async def ask_text(
+        self,
+        message: str,
+        *,
+        multiline: bool = False,
+        initial_value: str | None = None,
+        placeholder: str | None = None,
+        timeout_sec: float = 300.0,
+    ) -> ElicitationResult:
+        """Ask the person who started this run for a short piece of free text.
+
+        Args:
+            message: The question, as a person should read it.
+            multiline: When true the surface offers several lines; otherwise one.
+                A display field a surface may drop without the handler knowing.
+            initial_value: An editable prefill placed in the answer field. When
+                the person submits it unchanged, that text is the answer. A
+                display field a surface may drop without the handler knowing.
+                Longer than 65,536 characters it fails explicitly and is never
+                truncated.
+            placeholder: A hint shown beside the empty field, for example what
+                a good answer looks like. A hint only: it is never returned as
+                the answer. A surface may drop it without the handler knowing.
+            timeout_sec: How long the handler is prepared to wait. The deadline
+                is enforced by whoever holds the question — not here — and it
+                may be capped; an answer arriving late is discarded rather than
+                applied.
+
+        Returns:
+            An :class:`ElicitationResult`. On ``ANSWERED``, ``value`` holds the
+            exact submitted text — ``""``, leading and trailing whitespace
+            and line breaks included — and ``values`` is ``None``. An answer
+            longer than 65,536 characters fails explicitly and is never
+            truncated.
+        """
+        del message, multiline, initial_value, placeholder, timeout_sec
+        return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+
+    async def ask_multi_choice(
+        self,
+        message: str,
+        options: list[str],
+        *,
+        default: list[str] | None = None,
+        descriptions: typing.Mapping[str, str] | None = None,
+        timeout_sec: float = 300.0,
+    ) -> ElicitationResult:
+        """Put *message* to the person who started this run and let them pick any.
+
+        Args:
+            message: The question, as a person should read it.
+            options: The answers accepted, in the order they should be offered.
+                Closed set: an implementation treats anything else as no answer.
+                Empty or with a repeated option, the ask returns
+                ``UNAVAILABLE`` without sending anything.
+            default: A pre-selection, as option texts. A display field a surface
+                may drop without the handler knowing; entries naming an
+                unoffered option are ignored.
+            descriptions: Extra detail per option, keyed by option text. A
+                display field a surface may show beside the option; entries
+                naming an unoffered option are ignored.
+            timeout_sec: How long the handler is prepared to wait. The deadline
+                is enforced by whoever holds the question — not here — and it
+                may be capped; an answer arriving late is discarded rather than
+                applied.
+
+        Returns:
+            An :class:`ElicitationResult`. On ``ANSWERED``, ``values`` holds the
+            chosen options in the order they were offered — ``()`` for the
+            empty selection — and ``value`` is ``None``.
+        """
+        del message, options, default, descriptions, timeout_sec
+        return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
 
     async def check_availability(self) -> PromptAvailability:
         """Say whether a question could be put to a person right now."""

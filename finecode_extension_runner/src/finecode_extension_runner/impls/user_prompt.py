@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections.abc
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -60,6 +61,7 @@ class UserPrompt(IUserPrompt):
         options: list[str],
         *,
         default: str | None = None,
+        descriptions: collections.abc.Mapping[str, str] | None = None,
         timeout_sec: float = 300.0,
     ) -> ElicitationResult:
         if not options:
@@ -72,21 +74,23 @@ class UserPrompt(IUserPrompt):
             # to ask is exactly what that is.
             return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
 
+        params: dict[str, Any] = {
+            "message": message,
+            "options": list(options),
+            "default": default,
+            "timeoutSec": timeout_sec,
+            # Which run is asking. The WM resolves the person to put the
+            # question to from this and nothing else: the project this
+            # runner serves cannot identify a run, since two clients may
+            # be running the same project at the same moment.
+            "runId": run_context.current_run_id(),
+        }
+        if descriptions:
+            kept = {k: v for k, v in descriptions.items() if k in options}
+            if kept:
+                params["descriptions"] = kept
         try:
-            raw = await self._send(
-                _ELICIT,
-                {
-                    "message": message,
-                    "options": list(options),
-                    "default": default,
-                    "timeoutSec": timeout_sec,
-                    # Which run is asking. The WM resolves the person to put the
-                    # question to from this and nothing else: the project this
-                    # runner serves cannot identify a run, since two clients may
-                    # be running the same project at the same moment.
-                    "runId": run_context.current_run_id(),
-                },
-            )
+            raw = await self._send(_ELICIT, params)
         except er_errors.WmCommunicationCancelled as exception:
             # Not a failure to get an answer: the run itself is being cancelled,
             # and a handler that heard "nobody could be asked" would keep going.
@@ -100,6 +104,113 @@ class UserPrompt(IUserPrompt):
             return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
 
         return self._to_result(raw, options)
+
+    async def ask_text(
+        self,
+        message: str,
+        *,
+        multiline: bool = False,
+        initial_value: str | None = None,
+        placeholder: str | None = None,
+        timeout_sec: float = 300.0,
+    ) -> ElicitationResult:
+        if self._send is None:
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        try:
+            available = await self._send(
+                _ELICIT_AVAILABILITY,
+                {"runId": run_context.current_run_id()},
+            )
+        except er_errors.WmCommunicationCancelled as exception:
+            raise ActionRunCancelled(exception.message) from exception
+        except WorkSlotScopeError:
+            logger.warning("ask_text inside a work slot; nobody can be asked")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        except Exception as exception:
+            logger.warning(f"Could not check question availability: {exception}")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        if (
+            not isinstance(available, dict)
+            or available.get("canAnswerText") is not True
+        ):
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        params: dict[str, Any] = {
+            "message": message,
+            "kind": "text",
+            "timeoutSec": timeout_sec,
+            "runId": run_context.current_run_id(),
+        }
+        if multiline:
+            params["multiline"] = True
+        if initial_value is not None:
+            params["initialValue"] = initial_value
+        if placeholder is not None:
+            params["placeholder"] = placeholder
+        try:
+            raw = await self._send(_ELICIT, params)
+        except er_errors.WmCommunicationCancelled as exception:
+            raise ActionRunCancelled(exception.message) from exception
+        except Exception as exception:
+            logger.warning(f"Could not ask the user: {exception}")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        return self._to_text_result(raw)
+
+    async def ask_multi_choice(
+        self,
+        message: str,
+        options: list[str],
+        *,
+        default: list[str] | None = None,
+        descriptions: collections.abc.Mapping[str, str] | None = None,
+        timeout_sec: float = 300.0,
+    ) -> ElicitationResult:
+        if not options or len(set(options)) != len(options):
+            logger.warning(
+                "ask_multi_choice needs distinct options; nobody can answer that"
+            )
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        if self._send is None:
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        try:
+            available = await self._send(
+                _ELICIT_AVAILABILITY,
+                {"runId": run_context.current_run_id()},
+            )
+        except er_errors.WmCommunicationCancelled as exception:
+            raise ActionRunCancelled(exception.message) from exception
+        except WorkSlotScopeError:
+            logger.warning("ask_multi_choice inside a work slot; nobody can be asked")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        except Exception as exception:
+            logger.warning(f"Could not check question availability: {exception}")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        if (
+            not isinstance(available, dict)
+            or available.get("canAnswerMultiChoice") is not True
+        ):
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        offered = [entry for entry in (default or []) if entry in options]
+        params: dict[str, Any] = {
+            "message": message,
+            "kind": "multiChoice",
+            "options": list(options),
+            "timeoutSec": timeout_sec,
+            "runId": run_context.current_run_id(),
+        }
+        if offered:
+            params["default"] = offered
+        if descriptions:
+            kept = {k: v for k, v in descriptions.items() if k in options}
+            if kept:
+                params["descriptions"] = kept
+        try:
+            raw = await self._send(_ELICIT, params)
+        except er_errors.WmCommunicationCancelled as exception:
+            raise ActionRunCancelled(exception.message) from exception
+        except Exception as exception:
+            logger.warning(f"Could not ask the user: {exception}")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        return self._to_multi_result(raw, options)
 
     async def check_availability(self) -> PromptAvailability:
         """Say whether a question could be put to a person right now."""
@@ -119,7 +230,11 @@ class UserPrompt(IUserPrompt):
             return PromptAvailability(can_ask=False)
         if not isinstance(raw, dict) or raw.get("canAnswer") is not True:
             return PromptAvailability(can_ask=False)
-        return PromptAvailability(can_ask=True)
+        return PromptAvailability(
+            can_ask=True,
+            can_ask_text=raw.get("canAnswerText") is True,
+            can_ask_multi_choice=raw.get("canAnswerMultiChoice") is True,
+        )
 
     @staticmethod
     def _to_result(raw: Any, options: list[str]) -> ElicitationResult:
@@ -143,6 +258,61 @@ class UserPrompt(IUserPrompt):
             logger.warning(
                 f"Elicitation answered with {value!r}, which was not offered; "
                 f"treating it as unanswered"
+            )
+        elif outcome != ElicitationOutcome.UNAVAILABLE.value:
+            logger.warning(f"Unknown elicitation outcome {outcome!r}")
+        return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+
+    @staticmethod
+    def _short(raw: Any) -> str:
+        text = raw if isinstance(raw, str) else repr(raw)
+        return f"{text[:200]!r}"
+
+    @staticmethod
+    def _to_text_result(raw: Any) -> ElicitationResult:
+        """Structure a text answer, treating anything unexpected as no answer."""
+        if not isinstance(raw, dict):
+            logger.warning(f"Unexpected elicitation response: {raw!r}")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        outcome = raw.get("outcome")
+        if outcome == ElicitationOutcome.DECLINED.value:
+            return ElicitationResult(outcome=ElicitationOutcome.DECLINED)
+        if outcome == ElicitationOutcome.ANSWERED.value:
+            value = raw.get("value")
+            if isinstance(value, str):
+                return ElicitationResult(
+                    outcome=ElicitationOutcome.ANSWERED, value=value
+                )
+            logger.warning(
+                f"Elicitation answered a text question with {UserPrompt._short(value)}"
+            )
+        elif outcome != ElicitationOutcome.UNAVAILABLE.value:
+            logger.warning(f"Unknown elicitation outcome {outcome!r}")
+        return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+
+    @staticmethod
+    def _to_multi_result(raw: Any, options: list[str]) -> ElicitationResult:
+        """Structure a multi-select answer in offered order."""
+        if not isinstance(raw, dict):
+            logger.warning(f"Unexpected elicitation response: {raw!r}")
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+        outcome = raw.get("outcome")
+        if outcome == ElicitationOutcome.DECLINED.value:
+            return ElicitationResult(outcome=ElicitationOutcome.DECLINED)
+        if outcome == ElicitationOutcome.ANSWERED.value:
+            values = raw.get("values")
+            if (
+                isinstance(values, list)
+                and all(isinstance(entry, str) for entry in values)
+                and len(set(values)) == len(values)
+                and all(entry in options for entry in values)
+            ):
+                ordered = tuple(entry for entry in options if entry in set(values))
+                return ElicitationResult(
+                    outcome=ElicitationOutcome.ANSWERED, values=ordered
+                )
+            logger.warning(
+                f"Elicitation answered multi-select with {UserPrompt._short(values)}"
             )
         elif outcome != ElicitationOutcome.UNAVAILABLE.value:
             logger.warning(f"Unknown elicitation outcome {outcome!r}")

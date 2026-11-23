@@ -331,3 +331,252 @@ async def test_elicit_reaches_the_wm_without_a_transport_timeout() -> None:
 
     assert seen["method"] == "finecode/elicit"
     assert "timeout" not in typing.cast(dict, seen["kwargs"])
+
+
+# ---------------------------------------------------------------------------
+# Text and multi-select shapes (issue 983: A3-A11)
+# ---------------------------------------------------------------------------
+
+
+def _scripted_sender(
+    availability: object | BaseException, answer: object | BaseException
+) -> tuple[UserPrompt, list[tuple[str, dict]]]:
+    sent: list[tuple[str, dict]] = []
+
+    async def _send(method: str, params: dict) -> object:
+        sent.append((method, params))
+        if method == "finecode/elicitAvailability":
+            if isinstance(availability, BaseException):
+                raise availability
+            return availability
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    return UserPrompt(_send), sent
+
+
+def _text_available() -> dict:
+    return {"canAnswer": True, "canAnswerText": True}
+
+
+def _multi_available() -> dict:
+    return {"canAnswer": True, "canAnswerMultiChoice": True}
+
+
+@pytest.mark.parametrize("text", ["", "a\nb", "  x  ", "draft"])
+async def test_text_exact_value_comes_back(text: str) -> None:
+    prompt, _ = _scripted_sender(
+        _text_available(), {"outcome": "answered", "value": text}
+    )
+    result = await prompt.ask_text("Name?", initial_value="draft")
+    assert result.outcome is ElicitationOutcome.ANSWERED
+    assert result.value == text
+    assert result.values is None
+
+
+async def test_multi_empty_and_reordered() -> None:
+    prompt, _ = _scripted_sender(
+        _multi_available(), {"outcome": "answered", "values": []}
+    )
+    result = await prompt.ask_multi_choice("Pick?", ["a", "b", "c"])
+    assert result.values == ()
+
+    prompt2, _ = _scripted_sender(
+        _multi_available(), {"outcome": "answered", "values": ["c", "a"]}
+    )
+    result2 = await prompt2.ask_multi_choice("Pick?", ["a", "b", "c"])
+    assert result2.values == ("a", "c")
+    assert result2.value is None
+
+
+async def test_multi_preselection_unchanged_comes_back_ordered() -> None:
+    prompt, sent = _scripted_sender(
+        _multi_available(), {"outcome": "answered", "values": ["c", "a"]}
+    )
+    result = await prompt.ask_multi_choice("Pick?", ["a", "b", "c"], default=["c", "a"])
+    assert result.values == ("a", "c")
+    assert sent[1][1]["default"] == ["c", "a"]
+
+
+@pytest.mark.parametrize("outcome", ["declined", "unavailable"])
+async def test_declined_and_unavailable_carry_no_values(outcome: str) -> None:
+    prompt, _ = _scripted_sender(_text_available(), {"outcome": outcome})
+    result = await prompt.ask_text("Name?", initial_value="draft")
+    assert result.value is None
+    assert result.values is None
+    prompt2, _ = _scripted_sender(_multi_available(), {"outcome": outcome})
+    result2 = await prompt2.ask_multi_choice("Pick?", ["a"], default=["a"])
+    assert result2.value is None
+    assert result2.values is None
+
+
+async def test_cancelled_run_raises_for_new_shapes() -> None:
+    prompt, _ = _scripted_sender(
+        _text_available(), er_errors.WmCommunicationCancelled("gone")
+    )
+    with pytest.raises(ActionRunCancelled):
+        await prompt.ask_text("Name?")
+    prompt2, _ = _scripted_sender(
+        _multi_available(), er_errors.WmCommunicationCancelled("gone")
+    )
+    with pytest.raises(ActionRunCancelled):
+        await prompt2.ask_multi_choice("Pick?", ["a"])
+
+
+@pytest.mark.parametrize(
+    "availability",
+    [
+        er_errors.WmCommunicationError("method not found"),
+        {"canAnswer": True},
+        {"canAnswer": True, "canAnswerText": False},
+    ],
+)
+async def test_text_probe_refusal_sends_no_elicit(availability: object) -> None:
+    prompt, sent = _scripted_sender(availability, {"outcome": "answered", "value": "x"})
+    result = await prompt.ask_text("Name?")
+    assert result.outcome is ElicitationOutcome.UNAVAILABLE
+    assert [m for m, _ in sent] == ["finecode/elicitAvailability"]
+
+
+@pytest.mark.parametrize(
+    "availability",
+    [
+        er_errors.WmCommunicationError("method not found"),
+        {"canAnswer": True},
+        {"canAnswer": True, "canAnswerMultiChoice": False},
+    ],
+)
+async def test_multi_probe_refusal_sends_no_elicit(availability: object) -> None:
+    prompt, sent = _scripted_sender(
+        availability, {"outcome": "answered", "values": ["a"]}
+    )
+    result = await prompt.ask_multi_choice("Pick?", ["a"])
+    assert result.outcome is ElicitationOutcome.UNAVAILABLE
+    assert [m for m, _ in sent] == ["finecode/elicitAvailability"]
+
+
+async def test_cancelling_during_probe_raises() -> None:
+    prompt, _ = _scripted_sender(
+        er_errors.WmCommunicationCancelled("gone"), {"outcome": "answered"}
+    )
+    with pytest.raises(ActionRunCancelled):
+        await prompt.ask_text("Name?")
+    prompt2, _ = _scripted_sender(
+        er_errors.WmCommunicationCancelled("gone"), {"outcome": "answered"}
+    )
+    with pytest.raises(ActionRunCancelled):
+        await prompt2.ask_multi_choice("Pick?", ["a"])
+
+
+async def test_asks_inside_a_work_slot_send_nothing() -> None:
+    gate = ProcessSlots(target=8)
+    scopes = WorkSlots(gate)
+
+    class _NeverReached:
+        async def send_request_to_wm(self, method: str, params: dict) -> typing.Any:
+            raise AssertionError("must not send inside a work slot")
+
+    sender = er_server.make_wm_request_sender(_NeverReached())  # type: ignore[arg-type]
+    prompt = UserPrompt(sender)
+    async with scopes.acquire():
+        assert (
+            await prompt.ask_choice("q?", ["a"])
+        ).outcome is ElicitationOutcome.UNAVAILABLE
+        assert (await prompt.ask_text("q?")).outcome is ElicitationOutcome.UNAVAILABLE
+        assert (
+            await prompt.ask_multi_choice("q?", ["a"])
+        ).outcome is ElicitationOutcome.UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"outcome": "answered"},
+        {"outcome": "answered", "value": 3},
+        {"outcome": "answered", "value": None},
+    ],
+)
+async def test_text_without_string_value_is_unavailable(reply: object) -> None:
+    prompt, _ = _scripted_sender(_text_available(), reply)
+    assert (await prompt.ask_text("Name?")).outcome is ElicitationOutcome.UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"outcome": "answered"},
+        {"outcome": "answered", "values": ["zzz"]},
+        {"outcome": "answered", "values": ["a", "a"]},
+        {"outcome": "answered", "values": ["a", 1]},
+        {"outcome": "answered", "values": "a"},
+        {"outcome": "answered", "value": "a"},
+    ],
+)
+async def test_multi_without_valid_values_is_unavailable(reply: object) -> None:
+    prompt, _ = _scripted_sender(_multi_available(), reply)
+    result = await prompt.ask_multi_choice("Pick?", ["a", "b"])
+    assert result.outcome is ElicitationOutcome.UNAVAILABLE
+    assert result.values is None
+
+
+async def test_multi_empty_or_repeated_options_send_nothing() -> None:
+    prompt, sent = _scripted_sender(_multi_available(), {"outcome": "answered"})
+    assert (
+        await prompt.ask_multi_choice("q?", [])
+    ).outcome is ElicitationOutcome.UNAVAILABLE
+    assert (
+        await prompt.ask_multi_choice("q?", ["a", "a"])
+    ).outcome is ElicitationOutcome.UNAVAILABLE
+    assert sent == []
+
+
+async def test_multi_unoffered_default_and_descriptions_left_out() -> None:
+    prompt, sent = _scripted_sender(
+        _multi_available(), {"outcome": "answered", "values": ["a"]}
+    )
+    await prompt.ask_multi_choice(
+        "Pick?", ["a", "b"], default=["a", "zzz"], descriptions={"a": "A", "zzz": "Z"}
+    )
+    params = sent[1][1]
+    assert params.get("default") == ["a"]
+    assert params.get("descriptions") == {"a": "A"}
+
+
+async def test_choice_without_descriptions_sends_todays_params() -> None:
+    prompt, sent = _scripted_sender({"canAnswer": True}, {"outcome": "declined"})
+    await prompt.ask_choice("keep it?", ["keep"], default="keep", timeout_sec=12.5)
+    assert sent == [
+        (
+            "finecode/elicit",
+            {
+                "message": "keep it?",
+                "options": ["keep"],
+                "default": "keep",
+                "timeoutSec": 12.5,
+                "runId": None,
+            },
+        )
+    ]
+
+
+async def test_choice_with_descriptions_adds_only_them() -> None:
+    prompt, sent = _scripted_sender(
+        {"canAnswer": True}, {"outcome": "answered", "value": "a"}
+    )
+    await prompt.ask_choice(
+        "Pick?", ["a", "b"], descriptions={"a": "First", "zzz": "Z"}
+    )
+    params = sent[0][1]
+    assert params["descriptions"] == {"a": "First"}
+    assert "kind" not in params
+
+
+async def test_choice_answer_survives_a_wm_that_drops_descriptions() -> None:
+    async def _send(method: str, params: dict) -> object:
+        params.pop("descriptions", None)
+        return {"outcome": "answered", "value": "a"}
+
+    result = await UserPrompt(_send).ask_choice("Pick?", ["a"], descriptions={"a": "A"})
+    assert result.outcome is ElicitationOutcome.ANSWERED
+    assert result.value == "a"

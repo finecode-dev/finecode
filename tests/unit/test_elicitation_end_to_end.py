@@ -211,3 +211,83 @@ async def test_losing_the_client_mid_question_does_not_wait_it_out(
         result = await asyncio.wait_for(asking, timeout=2.0)
 
     assert result.outcome is ElicitationOutcome.UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# Routed shapes through the real manager (issue 983, A32)
+# ---------------------------------------------------------------------------
+
+
+def _er_side_routed_prompt() -> UserPrompt:
+    """An ``IUserPrompt`` whose back-channel routes by method through the real WM."""
+
+    import typing as _typing_guard
+
+    from finecode.wm_server.runner import _internal_client_types, runner_manager
+    from finecode_jsonrpc._converter import converter
+
+    async def _send_request_to_wm(method: str, params: dict) -> dict:
+        from finecode.wm_server.runner import _internal_client_types as _t_types
+        from finecode.wm_server.runner import runner_manager as _rm
+        from finecode_jsonrpc._converter import converter as _conv
+
+        installed = elicitation_bridge.handlers()
+        assert installed is not None
+        origin = elicitation_bridge.originating_client_for_run(params.get("runId"))
+        if method == "finecode/elicitAvailability":
+            shapes = installed.shape_availability(run_writer_key=origin)
+            return {
+                "canAnswer": shapes.choice,
+                "canAnswerText": shapes.text,
+                "canAnswerMultiChoice": shapes.multi_choice,
+            }
+        elicit_params = _conv.structure(params, _t_types.ElicitParams)
+        result = await _rm.handle_elicit(elicit_params)
+        import typing as _t
+
+        return _t.cast(dict, _conv.unstructure(result))
+
+    return UserPrompt(_send_request_to_wm)
+
+
+async def test_text_reaches_a_client_that_declared_it(wm_port: int) -> None:
+    import typing as _typing
+
+    client = wm_client.ApiClient()
+    asked: list[dict] = []
+
+    async def _handler(params: dict | None) -> dict:
+        asked.append(params or {})
+        return {"outcome": "answered", "value": "l1\nl2"}
+
+    client.on_request("client/elicit", _handler)
+    await client.connect(
+        "127.0.0.1",
+        wm_port,
+        capabilities={"elicitation": {"choice": True, "text": True}},
+    )
+    try:
+        await asyncio.sleep(0.05)
+        with _a_run_from(_writer_of()), run_context.run(_RUN_ID):
+            result = await _er_side_routed_prompt().ask_text("Name?", multiline=True)
+    finally:
+        await client.close()
+    assert result.outcome is ElicitationOutcome.ANSWERED
+    assert result.value == "l1\nl2"
+    assert asked[0]["kind"] == "text"
+
+
+async def test_multi_to_choice_only_client_sends_nothing(wm_port: int) -> None:
+    client, asked = await _connected_client(
+        wm_port, {"outcome": "answered", "values": ["a"]}, capable=True
+    )
+    try:
+        await asyncio.sleep(0.05)
+        with _a_run_from(_writer_of()), run_context.run(_RUN_ID):
+            result = await _er_side_routed_prompt().ask_multi_choice(
+                "Pick?", ["a", "b"]
+            )
+    finally:
+        await client.close()
+    assert result.outcome is ElicitationOutcome.UNAVAILABLE
+    assert asked == []

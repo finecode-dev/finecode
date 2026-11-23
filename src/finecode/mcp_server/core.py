@@ -25,6 +25,7 @@ from finecode.mcp_server.contracts import (
     ProgressValue,
     Question,
     QuestionOutcome,
+    QuestionResult,
     RawConfigPayload,
     RestartPayload,
     ToolData,
@@ -35,7 +36,12 @@ from finecode.mcp_server.contracts import (
     ToolInputSchema,
     ToolOutcome,
 )
-from finecode.wm_client import ApiClient, ReconnectPolicy, question_capability_allowed
+from finecode.wm_client import (
+    ApiClient,
+    ReconnectPolicy,
+    RequestEndedWithoutAnswer,
+    question_capability_allowed,
+)
 from finecode.wm_server import wm_lifecycle
 
 __all__ = ["ToolService", "prepare_wm"]
@@ -75,6 +81,8 @@ class ToolService:
         self._tool_name_to_source: dict[str, str] = {}
         self._partial_result_queues: dict[str, asyncio.Queue[JsonValue]] = {}
         self._progress_queues: dict[str, asyncio.Queue[ProgressValue]] = {}
+        self._held_questions: dict[int | str, asyncio.Task[QuestionResult]] = {}
+        self._ending_questions: list[asyncio.Task[QuestionResult]] = []
 
     @property
     def is_connected(self) -> bool:
@@ -97,6 +105,7 @@ class ToolService:
         self._client.configure_reconnect(
             ReconnectPolicy(may_start_server=True, workdir=self._workdir),
             on_reattach=self.attach_session,
+            on_session_lost=lambda _recoverable: self._end_all_held_questions(),
         )
         try:
             await self._client.connect(
@@ -106,10 +115,17 @@ class ToolService:
                 # Declared only when the AI client on the other side of this
                 # server can actually be asked; this server has no user of its
                 # own.
-                capabilities={"elicitation": {"choice": True}}
-                if config.can_answer_choices
-                and question_capability_allowed(client_label=config.client_id)
-                else None,
+                capabilities=(
+                    {
+                        "elicitation": {
+                            "choice": True,
+                            **({"text": True} if config.can_answer_text else {}),
+                        }
+                    }
+                    if config.can_answer_choices
+                    and question_capability_allowed(client_label=config.client_id)
+                    else None
+                ),
             )
         except BaseException:
             # The socket and reader task outlive a `connect` that failed in
@@ -423,6 +439,25 @@ class ToolService:
 
         self._client.on_notification("actions/progress", _on_progress)
 
+    def _end_all_held_questions(self) -> None:
+        """End every held question because the WM session is gone (sync)."""
+        for request_id in list(self._held_questions):
+            self._end_held_question(request_id)
+
+    def _end_held_question(self, request_id: int | str) -> None:
+        task = self._held_questions.pop(request_id, None)
+        if task is None or task.done():
+            return
+        self._ending_questions.append(task)
+        task.add_done_callback(
+            lambda done: (
+                self._ending_questions.remove(done)
+                if done in self._ending_questions
+                else None
+            )
+        )
+        task.cancel()
+
     def _setup_elicitation_forwarding(self) -> None:
         """Answer the WM's ``client/elicit`` through the injected question effect.
 
@@ -431,33 +466,87 @@ class ToolService:
         """
 
         async def _on_elicit(
+            request_id: int | str,
             params: dict[str, typing.Any] | None,
         ) -> dict[str, typing.Any]:
+            # Order: a question read after a withdrawal must not reach the
+            # front until every question ended before it has finished ending,
+            # so its cancellation notice is written first. Still-pending
+            # questions are not waited for.
+            ending = [task for task in self._ending_questions if not task.done()]
+            if ending:
+                await asyncio.gather(*ending, return_exceptions=True)
             value = params or {}
-            options = [str(option) for option in value.get("options") or []]
-            if not options:
+            kind = value.get("kind", "choice")
+            if kind not in ("choice", "text", "multiChoice"):
+                return {"outcome": "unavailable"}
+            if kind == "multiChoice":
+                return {"outcome": "unavailable"}
+            config = self._dependencies.connection_config()
+            if kind == "text" and not config.can_answer_text:
                 return {"outcome": "unavailable"}
             raw_timeout = value.get("timeoutSec")
-            question = Question(
-                message=str(value.get("message", "")),
-                options=tuple(options),
-                timeout_seconds=float(raw_timeout)
-                if isinstance(raw_timeout, (int, float))
-                else None,
+            timeout_seconds = (
+                float(raw_timeout) if isinstance(raw_timeout, (int, float)) else None
             )
+            if kind == "text":
+                question = Question(
+                    message=str(value.get("message", "")),
+                    options=(),
+                    timeout_seconds=timeout_seconds,
+                    kind="text",
+                    multiline=bool(value.get("multiline", False)),
+                    initial_value=value.get("initialValue")
+                    if isinstance(value.get("initialValue"), str)
+                    else None,
+                    placeholder=value.get("placeholder")
+                    if isinstance(value.get("placeholder"), str)
+                    else None,
+                )
+            else:
+                options = [str(option) for option in value.get("options") or []]
+                if not options:
+                    return {"outcome": "unavailable"}
+                question = Question(
+                    message=str(value.get("message", "")),
+                    options=tuple(options),
+                    timeout_seconds=timeout_seconds,
+                )
+            effects = self._effects
+
+            async def _ask_front() -> QuestionResult:
+                return await effects.question(question)
+
+            ask_task: asyncio.Task[QuestionResult] = asyncio.create_task(_ask_front())
+            self._held_questions[request_id] = ask_task
             try:
-                answer = await self._effects.question(question)
+                answer = await ask_task
+            except asyncio.CancelledError:
+                raise RequestEndedWithoutAnswer()
             # The front may answer with an error, time out, or be gone; each
             # is the same thing to the run that asked, and none of them may
             # propagate into the WM client's reader loop.
             except Exception as exception:  # noqa: BLE001
                 logger.warning(f"MCP: elicitation failed: {exception}")
                 return {"outcome": "unavailable"}
+            finally:
+                self._held_questions.pop(request_id, None)
             if answer.outcome is not QuestionOutcome.ANSWERED:
                 return {"outcome": answer.outcome.value}
             return {"outcome": "answered", "value": answer.value}
 
-        self._client.on_request("client/elicit", _on_elicit)
+        async def _on_withdrawn(
+            params: dict[str, typing.Any] | None,
+        ) -> None:
+            if not params:
+                return
+            request_id = params.get("id")
+            if request_id is None:
+                return
+            self._end_held_question(request_id)
+
+        self._client.on_request("client/elicit", _on_elicit, pass_request_id=True)
+        self._client.on_notification("client/elicitWithdrawn", _on_withdrawn)
 
     async def _run_with_progress(
         self,

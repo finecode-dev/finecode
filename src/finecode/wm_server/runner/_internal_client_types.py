@@ -1791,8 +1791,13 @@ class ElicitParams:
     """
 
     message: str
-    options: list[str]
-    default: str | None = None
+    options: list[str] = dataclasses.field(default_factory=list)
+    default: typing.Any = None
+    kind: str = "choice"
+    multiline: bool = False
+    initial_value: str | None = None
+    placeholder: str | None = None
+    descriptions: dict[str, str] | None = None
     timeout_sec: float = 300.0
     run_id: str | None = None
     """The run asking, as the WM handed it to the ER at dispatch.
@@ -1823,6 +1828,7 @@ class ElicitResult(BaseResult):
 
     outcome: str
     value: str | None = None
+    values: list[str] | None = None
 
 
 @dataclasses.dataclass
@@ -1854,10 +1860,11 @@ class ElicitAvailabilityRequest(BaseRequest):
 
 @dataclasses.dataclass
 class ElicitAvailabilityResult(BaseResult):
-    """Whether a question could be put to a person right now.
-    """
+    """Whether a question could be put to a person right now."""
 
     can_answer: bool
+    can_answer_text: bool = False
+    can_answer_multi_choice: bool = False
 
 
 @dataclasses.dataclass
@@ -2522,3 +2529,24 @@ METHOD_TO_TYPES: dict[
         KnowledgeRecordsResult,
     ),
 }
+
+
+def _unstructure_elicit_result(result: ElicitResult) -> dict[str, object]:
+    """Unstructure ``ElicitResult`` leaving out ``None`` fields."""
+    payload: dict[str, object] = {"outcome": result.outcome}
+    if result.value is not None:
+        payload["value"] = result.value
+    if result.values is not None:
+        payload["values"] = result.values
+    return payload
+
+
+def _register_elicit_hooks() -> None:
+    from finecode_jsonrpc import _converter as _conv_module
+
+    _conv_module.converter.register_unstructure_hook(
+        ElicitResult, _unstructure_elicit_result
+    )
+
+
+_register_elicit_hooks()

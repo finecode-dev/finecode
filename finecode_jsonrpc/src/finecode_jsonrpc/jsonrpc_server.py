@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import contextlib
+import dataclasses
 import uuid
 from typing import Any
 
@@ -49,6 +50,17 @@ from finecode_jsonrpc.tracing import (
 # callers across the codebase compare against `REQUEST_CANCELLED` by this name.
 _METHOD_NOT_FOUND = error_codes.METHOD_NOT_FOUND
 _INTERNAL_ERROR = error_codes.INTERNAL_ERROR
+
+
+@dataclasses.dataclass(frozen=True)
+class CancelNotice:
+    """A notification to write when nobody waits for a request's answer anymore."""
+
+    method: str
+    params: collections.abc.Callable[[int], dict[str, Any]]
+    on_timeout: bool = False
+
+
 REQUEST_CANCELLED = error_codes.DEFAULT_REQUEST_CANCELLED
 
 
@@ -206,13 +218,20 @@ class JsonRpcServerSession:
         timeout: float | None = None,
         *,
         cancel_on_abandon: bool = False,
+        cancel_notice: CancelNotice | None = None,
     ) -> Any:
         """Send a request to the client and return the result.
 
         With *cancel_on_abandon*, cancelling the awaiting task writes a
         ``$/cancelRequest`` frame for this request before the ``CancelledError``
         leaves this method. A timeout is not an abandonment and sends none.
+
+        With *cancel_notice*, cancelling the awaiting task writes the
+        configured notification instead, and a timeout writes it only when
+        ``on_timeout`` is set. Passing both options raises ``ValueError``.
         """
+        if cancel_on_abandon and cancel_notice is not None:
+            raise ValueError("cancel_on_abandon and cancel_notice are exclusive")
         msg_id = self._next_id
         self._next_id += 1
 
@@ -243,7 +262,19 @@ class JsonRpcServerSession:
         try:
             result = await asyncio.wait_for(future, timeout)
         except TimeoutError:
-            self._request_futures.pop(msg_id, None)
+            if cancel_notice is not None and cancel_notice.on_timeout:
+                self._request_futures.pop(msg_id, None)
+                self._caller_hops.pop(msg_id, None)
+                self._cancelled_request_ids.add(msg_id)
+                self._transport.send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": cancel_notice.method,
+                        "params": cancel_notice.params(msg_id),
+                    }
+                )
+            else:
+                self._request_futures.pop(msg_id, None)
             self._finish_caller(hop, "timeout")
             raise
         except asyncio.CancelledError:
@@ -256,6 +287,17 @@ class JsonRpcServerSession:
                         "jsonrpc": "2.0",
                         "method": "$/cancelRequest",
                         "params": {"id": msg_id},
+                    }
+                )
+            elif cancel_notice is not None:
+                self._request_futures.pop(msg_id, None)
+                self._caller_hops.pop(msg_id, None)
+                self._cancelled_request_ids.add(msg_id)
+                self._transport.send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": cancel_notice.method,
+                        "params": cancel_notice.params(msg_id),
                     }
                 )
             self._finish_caller(hop, "cancelled")

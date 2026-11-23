@@ -30,7 +30,8 @@ from finecode.mcp_server.contracts import (
     WmConnectionConfig,
 )
 from finecode.mcp_server.core import ToolService
-from finecode_jsonrpc import JsonRpcServerSession
+from finecode.wm_server.runner import elicitation_bridge
+from finecode_jsonrpc import CancelNotice, JsonRpcServerSession
 
 __all__ = [
     "LegacyClientInfo",
@@ -132,6 +133,7 @@ class LegacyFront:
         return WmConnectionConfig(
             client_id=f"mcp-{self._client_name}" if self._client_name else "mcp",
             can_answer_choices=self._client_can_elicit,
+            can_answer_text=self._client_can_elicit,
         )
 
     def current_client_label(self) -> str:
@@ -268,9 +270,23 @@ class LegacyFront:
             {"level": "info", "data": log_data, "logger": "finecode.progress"},
         )
 
+    def _cancel_notice(self) -> CancelNotice:
+        return CancelNotice(
+            method="notifications/cancelled",
+            params=lambda request_id: {
+                "requestId": request_id,
+                "reason": "FineCode no longer needs an answer to this question.",
+            },
+            on_timeout=True,
+        )
+
     async def ask_question(self, question: Question) -> QuestionResult:
         """Ask the AI client, reading live session and capability on each call."""
-        if self._session is None or not self._client_can_elicit or not question.options:
+        if self._session is None or not self._client_can_elicit:
+            return QuestionResult(QuestionOutcome.UNAVAILABLE, None)
+        if question.kind == "text":
+            return await self._ask_text_question(question)
+        if not question.options:
             return QuestionResult(QuestionOutcome.UNAVAILABLE, None)
         try:
             answer = await self._session.send_request(
@@ -293,6 +309,7 @@ class LegacyFront:
                     },
                 },
                 timeout=question.timeout_seconds,
+                cancel_notice=self._cancel_notice(),
             )
         # The client may answer with an error, time out, or be gone; each is
         # the same thing to the run that asked.
@@ -309,6 +326,45 @@ class LegacyFront:
             logger.warning(f"MCP: client accepted with unoffered choice {choice!r}")
             return QuestionResult(QuestionOutcome.UNAVAILABLE, None)
         return QuestionResult(QuestionOutcome.ANSWERED, choice)
+
+    async def _ask_text_question(self, question: Question) -> QuestionResult:
+        """Render a text question with the one-string-property schema (D9)."""
+        assert self._session is not None
+        answer_property: dict[str, JsonValue] = {
+            "type": "string",
+            "title": "Answer",
+            "maxLength": elicitation_bridge.QUESTION_TEXT_MAX_CHARS,
+        }
+        if question.placeholder is not None:
+            answer_property["description"] = question.placeholder
+        try:
+            answer = await self._session.send_request(
+                "elicitation/create",
+                {
+                    "message": question.message,
+                    "requestedSchema": {
+                        "type": "object",
+                        "properties": {"answer": answer_property},
+                        "required": ["answer"],
+                    },
+                },
+                timeout=question.timeout_seconds,
+                cancel_notice=self._cancel_notice(),
+            )
+        except Exception as exception:
+            logger.warning(f"MCP: elicitation failed: {exception}")
+            return QuestionResult(QuestionOutcome.UNAVAILABLE, None)
+        if not isinstance(answer, dict):
+            return QuestionResult(QuestionOutcome.UNAVAILABLE, None)
+        response = typing.cast(LegacyElicitationResponse, answer)
+        if response.get("action") != "accept":
+            return QuestionResult(QuestionOutcome.DECLINED, None)
+        content = response.get("content") or {}
+        text = content.get("answer")
+        if not isinstance(text, str):
+            logger.warning(f"MCP: client accepted text with non-string answer {text!r}")
+            return QuestionResult(QuestionOutcome.UNAVAILABLE, None)
+        return QuestionResult(QuestionOutcome.ANSWERED, text)
 
     async def catalog_changed(self) -> None:
         if self._session is None:
