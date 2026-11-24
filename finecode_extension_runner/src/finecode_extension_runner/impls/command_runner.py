@@ -573,13 +573,18 @@ class CommandRunner(icommandrunner.ICommandRunner):
         # almost instantly and fail to bound how many subprocesses are alive
         # at once, which is what actually causes resource contention.
         lease_id = await self._process_slots.acquire()
-        if self._local_cap is not None:
-            await self._local_cap.acquire()
         owns_process_group = new_process_group and _POSIX
+        holds_local_permit = False
+        # The local-cap wait is inside the `try`: a cancellation while waiting
+        # for the permit must return the lease already granted above.
         try:
+            if self._local_cap is not None:
+                await self._local_cap.acquire()
+                holds_local_permit = True
             process = await self._spawn(argv, cwd, env, owns_process_group)
         except BaseException:
-            if self._local_cap is not None:
+            if holds_local_permit:
+                assert self._local_cap is not None
                 self._local_cap.release()
             await self._process_slots.release(lease_id)
             raise

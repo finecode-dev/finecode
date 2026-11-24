@@ -144,3 +144,100 @@ def test_resolve_clamps_non_positive_value_to_one() -> None:
 
 def test_resolve_returns_none_when_unset() -> None:
     assert resolve_command_runner_concurrency(None) is None
+
+
+class _BudgetBackend:
+    """Fake WM budget: hands out lease ids and tracks which are still held.
+
+    While ``hold`` is set and not yet signalled, a lease request stays pending.
+    """
+
+    def __init__(self) -> None:
+        self.hold: asyncio.Event | None = None
+        self._issued = 0
+        self.outstanding: set[str] = set()
+
+    async def lease(self) -> str:
+        if self.hold is not None:
+            await self.hold.wait()
+        self._issued += 1
+        lease_id = f"L{self._issued}"
+        self.outstanding.add(lease_id)
+        return lease_id
+
+    async def release(self, lease_id: str) -> None:
+        self.outstanding.remove(lease_id)
+
+
+def _runner_with_budget(
+    target: int, local_cap: int
+) -> tuple[CommandRunner, ProcessSlots, _BudgetBackend]:
+    slots = ProcessSlots(target=target)
+    backend = _BudgetBackend()
+    slots.attach_budget(backend.lease, backend.release)
+    runner = CommandRunner(
+        logger=_NoopLogger(),
+        config=CommandRunnerConfig(max_concurrent_processes=local_cap),
+        process_slots=slots,
+    )
+    return runner, slots, backend
+
+
+async def _cancel_and_settle(task: asyncio.Task) -> None:
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # Let cleanup tasks scheduled by the cancellation run.
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+async def test_run_cancelled_while_waiting_for_lease_holds_nothing() -> None:
+    runner, slots, backend = _runner_with_budget(target=2, local_cap=1)
+    backend.hold = asyncio.Event()
+    assert runner._local_cap is not None
+    permits_before = runner._local_cap._value
+
+    task = asyncio.create_task(runner.run([sys.executable, "-c", "pass"]))
+    await asyncio.sleep(0.05)
+    assert slots.in_flight == 1
+
+    await _cancel_and_settle(task)
+
+    assert slots.in_flight == 0
+    assert runner._local_cap._value == permits_before
+    # The pending lease request is released once the WM grants it.
+    backend.hold.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert backend._issued == 1
+    assert backend.outstanding == set()
+
+
+async def test_run_cancelled_while_waiting_for_local_cap_releases_its_lease() -> None:
+    runner, slots, backend = _runner_with_budget(target=2, local_cap=1)
+    assert runner._local_cap is not None
+
+    # The first process holds the only local-cap permit.
+    proc1 = await runner.run([sys.executable, "-c", "import time; time.sleep(5)"])
+    in_flight_before = slots.in_flight
+    permits_before = runner._local_cap._value
+    leases_before = set(backend.outstanding)
+
+    task = asyncio.create_task(runner.run([sys.executable, "-c", "pass"]))
+    await asyncio.sleep(0.05)
+    # Lease granted, now blocked on the local-cap permit.
+    assert slots.in_flight == in_flight_before + 1
+    assert len(backend.outstanding) == len(leases_before) + 1
+
+    await _cancel_and_settle(task)
+
+    try:
+        assert slots.in_flight == in_flight_before
+        assert runner._local_cap._value == permits_before
+        assert backend.outstanding == leases_before
+    finally:
+        proc1.async_subprocess.kill()
+        await proc1.async_subprocess.wait()
