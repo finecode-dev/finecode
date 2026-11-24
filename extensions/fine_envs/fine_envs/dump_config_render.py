@@ -5,7 +5,7 @@ The dump target is a ``pyproject.toml``, so this is the one place in the
 save handlers only pass the rendered text on.
 """
 
-import tomlkit
+import tomli_w
 from packaging.utils import canonicalize_name
 
 from fine_envs.dependency_config_utils import get_dependency_name
@@ -46,7 +46,7 @@ def render_config_dump(
     raw_config_dump: dict, active_selection: dict[str, list[str]]
 ) -> str:
     """Render the dump as TOML, prefixed by the attribution comment when present."""
-    content = tomlkit.dumps(raw_config_dump)
+    content = tomli_w.dumps(raw_config_dump)
     attribution = attribution_comment(active_selection, raw_config_dump)
     if attribution:
         content = attribution + content

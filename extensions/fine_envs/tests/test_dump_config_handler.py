@@ -1,5 +1,11 @@
+import copy
+import json
+import tomllib
 import types
 import typing
+from pathlib import Path
+
+import pytest
 
 from fine_envs.dump_config_handler import DumpConfigHandler
 from fine_envs.dump_config_render import attribution_comment, render_config_dump
@@ -72,3 +78,19 @@ def test_attribution_comment_no_matching_spec_is_empty() -> None:
     raw_config = {"dependency-groups": {"runtime": ["other~=1.0"]}}
 
     assert attribution_comment(selection, raw_config) == ""
+
+
+async def test_render_error_propagates_from_handler() -> None:
+    """An unserializable value fails env creation instead of a silent dump."""
+    handler = DumpConfigHandler(
+        project_info_provider=typing.cast(typing.Any, _FakeProjectInfoProvider({}))
+    )
+    run_context = typing.cast(
+        typing.Any,
+        types.SimpleNamespace(raw_config_dump={"k": None}, config_dump_content=None),
+    )
+
+    with pytest.raises(TypeError):
+        await handler.run(typing.cast(typing.Any, None), run_context)
+
+    assert run_context.config_dump_content is None
