@@ -203,7 +203,8 @@ def _format_output(stdout: str, stderr: str) -> str:
 
 def _map_test(test: dict, project_dir: Path) -> TestCaseResult:
     nodeid: str = test["nodeid"]
-    outcome = _map_outcome(test.get("outcome", "error"))
+    raw_outcome: str = test.get("outcome", "error")
+    outcome = _map_outcome(raw_outcome)
 
     test_id = _parse_nodeid(nodeid, project_dir)
     file_uri = test_id.file_path
@@ -221,6 +222,13 @@ def _map_test(test: dict, project_dir: Path) -> TestCaseResult:
             longrepr = test.get(phase, {}).get("longrepr")
             if longrepr:
                 message = str(longrepr)
+                break
+    elif raw_outcome.lower() == "xfailed":
+        message = "expected failure (xfail)"
+        for phase in ("call", "setup"):
+            crash = test.get(phase, {}).get("crash")
+            if crash and crash.get("message"):
+                message += f": {crash['message']}"
                 break
 
     # pytest-json-report exposes item.location[1], which is 0-based — matches
@@ -275,6 +283,9 @@ def _map_outcome(outcome_str: str) -> TestOutcome:
         "failed": TestOutcome.FAILED,
         "skipped": TestOutcome.SKIPPED,
         "error": TestOutcome.ERROR,
+        # pytest counts both as non-failing. A strict xpass is reported as "failed".
+        "xfailed": TestOutcome.SKIPPED,
+        "xpassed": TestOutcome.PASSED,
     }.get(outcome_str.lower(), TestOutcome.ERROR)
 
 

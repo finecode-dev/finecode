@@ -167,3 +167,80 @@ async def test_exit_2_without_failed_collector_still_fails(
 
     assert _STDOUT in str(exc_info.value)
     assert _STDERR in str(exc_info.value)
+
+
+def _test_entry(nodeid: str, outcome: str, **stages: dict) -> dict:
+    return {"nodeid": nodeid, "lineno": 3, "outcome": outcome, **stages}
+
+
+_EXPECTED_FAILURE_REPORT = {
+    "exitcode": 0,
+    "summary": {"total": 3, "collected": 3},
+    "collectors": [{"nodeid": "", "outcome": "passed"}],
+    "tests": [
+        _test_entry(
+            "tests/test_x.py::test_known_bug",
+            "xfailed",
+            call={
+                "outcome": "skipped",
+                "crash": {"path": "x", "lineno": 4, "message": "AssertionError: boom"},
+                "longrepr": "def test_known_bug():\n>   assert False",
+            },
+        ),
+        _test_entry("tests/test_x.py::test_fixed_bug", "xpassed"),
+        _test_entry(
+            "tests/test_x.py::test_strict_xpass",
+            "failed",
+            call={"outcome": "failed", "longrepr": "[XPASS(strict)] known bug"},
+        ),
+    ],
+}
+
+
+async def test_expected_failures_do_not_fail_the_run(tmp_path: pathlib.Path) -> None:
+    """pytest treats xfail and a non-strict xpass as non-failing (exit 0); the
+    results must too, while a strict xpass, reported by pytest as failed, still
+    fails (issue #1004)."""
+    (tmp_path / "tests").mkdir()
+    handler = _handler(tmp_path, _Process(1, "", ""), _EXPECTED_FAILURE_REPORT)
+
+    result = await handler.run(RunTestsRunPayload(), _context(RunTestsRunPayload()))
+
+    by_name = {r.test_id.test_name: r for r in result.test_results}
+    assert by_name["test_known_bug"].outcome == TestOutcome.SKIPPED
+    assert by_name["test_known_bug"].message == (
+        "expected failure (xfail): AssertionError: boom"
+    )
+    assert by_name["test_fixed_bug"].outcome == TestOutcome.PASSED
+    assert by_name["test_strict_xpass"].outcome == TestOutcome.FAILED
+    assert result.errors == 0
+
+
+async def test_only_expected_failures_give_a_passing_run(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "tests").mkdir()
+    report = dict(_EXPECTED_FAILURE_REPORT)
+    report["tests"] = _EXPECTED_FAILURE_REPORT["tests"][:2]
+    handler = _handler(tmp_path, _Process(0, "", ""), report)
+
+    result = await handler.run(RunTestsRunPayload(), _context(RunTestsRunPayload()))
+
+    assert result.return_code == code_action.RunReturnCode.SUCCESS
+
+
+async def test_summary_shows_why_a_test_was_skipped(tmp_path: pathlib.Path) -> None:
+    """An expected failure is listed under SKIPPED with its message, so the
+    summary does not hide that it is a known failure."""
+    (tmp_path / "tests").mkdir()
+    handler = _handler(tmp_path, _Process(0, "", ""), _EXPECTED_FAILURE_REPORT)
+
+    result = await handler.run(RunTestsRunPayload(), _context(RunTestsRunPayload()))
+    text = result.to_text()
+    plain = "".join(
+        part if isinstance(part, str) else str(part["text"])
+        for part in (text.text_parts if not isinstance(text, str) else [text])
+    )
+
+    assert "SKIPPED " in plain
+    assert "expected failure (xfail): AssertionError: boom" in plain
