@@ -43,9 +43,20 @@ class ClaudeEvent(enum.StrEnum):
     ASSISTANT = "assistant"
     USER = "user"
     RESULT = "result"
+    CONTROL_REQUEST = "control_request"
+    CONTROL_RESPONSE = "control_response"
+    CONTROL_CANCEL_REQUEST = "control_cancel_request"
 
 
 _SUCCESS_SUBTYPE = "success"
+
+
+@dataclasses.dataclass(frozen=True)
+class Denial:
+    """One entry of the result frame's ``permission_denials`` list."""
+
+    tool_name: str
+    tool_use_id: str | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -61,13 +72,14 @@ class RunResult:
     usage: AgentRunUsage | None
     error: str | None
     """Why the run did not settle, or `None` when it did."""
-    denied_tools: tuple[str, ...]
-    """Tools the CLI refused to run because nothing could approve them.
+    denials: tuple[Denial, ...]
+    """Entries of the result frame's ``permission_denials`` list.
 
     Empty on a run that needed no approval *and* on one whose permission mode
     granted it up front -- the two are indistinguishable here, and both are
     fine. A non-empty list on a failed run is the closest thing the CLI reports
     to "this needed a human"."""
+
     structured_output: Any = None
     """The data of the run's last structured-output call, or `None`.
 
@@ -119,11 +131,12 @@ def assistant_text(frame: dict[str, Any]) -> str:
     Thinking and tool-call blocks ride the same message and are not output, so
     they must not be appended to the answer.
     """
-    return "".join(
-        block.get("text", "")
-        for block in _content_blocks(frame)
-        if block.get("type") == "text" and isinstance(block.get("text"), str)
-    )
+    texts: list[str] = []
+    for block in _content_blocks(frame):
+        text = block.get("text")
+        if block.get("type") == "text" and isinstance(text, str):
+            texts.append(text)
+    return "".join(texts)
 
 
 def assistant_tool_names(frame: dict[str, Any]) -> list[str]:
@@ -282,15 +295,44 @@ def result_provenance(frame: dict[str, Any]) -> UsageProvenance:
     )
 
 
-def _denied_tools(frame: dict[str, Any]) -> tuple[str, ...]:
+def _denials(frame: dict[str, Any]) -> tuple[Denial, ...]:
     denials = frame.get("permission_denials")
     if not isinstance(denials, list):
         return ()
-    return tuple(
-        str(denial.get("tool_name") or denial.get("tool") or "unknown")
-        for denial in denials
-        if isinstance(denial, dict)
-    )
+    parsed: list[Denial] = []
+    for denial in denials:
+        if not isinstance(denial, dict):
+            continue
+        tool_use_id = denial.get("tool_use_id")
+        parsed.append(
+            Denial(
+                tool_name=str(
+                    denial.get("tool_name") or denial.get("tool") or "unknown"
+                ),
+                tool_use_id=tool_use_id if isinstance(tool_use_id, str) else None,
+            )
+        )
+    return tuple(parsed)
+
+
+def tool_use_ids(frame: dict[str, Any]) -> list[str]:
+    """IDs of ``tool_use`` blocks in an ``assistant`` frame."""
+    ids: list[str] = []
+    for block in _content_blocks(frame):
+        block_id = block.get("id")
+        if block.get("type") == "tool_use" and isinstance(block_id, str):
+            ids.append(block_id)
+    return ids
+
+
+def tool_result_ids(frame: dict[str, Any]) -> list[str]:
+    """IDs of ``tool_result`` blocks in a ``user`` frame."""
+    ids: list[str] = []
+    for block in _content_blocks(frame):
+        result_id = block.get("tool_use_id")
+        if block.get("type") == "tool_result" and isinstance(result_id, str):
+            ids.append(result_id)
+    return ids
 
 
 def _failure_reason(frame: dict[str, Any]) -> str:
@@ -322,7 +364,7 @@ def parse_result(frame: dict[str, Any], model: str | None) -> RunResult:
         turns=_int_or_none(frame.get("num_turns")),
         usage=result_usage(frame, model),
         error=None if settled else _failure_reason(frame),
-        denied_tools=_denied_tools(frame),
+        denials=_denials(frame),
         # Only a settled run's answer is read: on a failed subtype the field is
         # absent, and returning one would contradict the failure.
         structured_output=frame.get("structured_output") if settled else None,

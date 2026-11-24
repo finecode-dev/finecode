@@ -24,6 +24,7 @@ import typing
 from typing import Any
 
 import pytest
+from fine_agent import AGENT_QUESTION_OPT_IN_KEY
 from fine_agent.history_types import (
     AgentBackend,
     HistoryDiscoveryStatus,
@@ -41,6 +42,12 @@ from fine_agent.run_agent_task_action import (
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner
+from finecode_extension_api.interfaces.iuserprompt import (
+    ElicitationOutcome,
+    ElicitationResult,
+    IUserPrompt,
+    PromptAvailability,
+)
 from finecode_extension_api.resource_uri import (
     ResourceUri,
     path_to_resource_uri,
@@ -49,9 +56,14 @@ from finecode_extension_api.resource_uri import (
 from finecode_extension_runner import partial_result_sender
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session, run_handler
+from finecode_extension_runner.testing._stubs import FakeUserPrompt
 
 from fine_agent_claude_code import claude_code_agent_handler
-from fine_agent_claude_code.claude_code_agent_handler import ClaudeCodeAgentHandler
+from fine_agent_claude_code.claude_code_agent_handler import (
+    ClaudeCodeAgentHandler,
+    ClaudeCodeAgentHandlerConfig,
+    ClaudeCodeAgentProfile,
+)
 from fine_agent_claude_code.run_claude_code_agent_task_action import (
     RunClaudeCodeAgentTaskAction,
 )
@@ -95,6 +107,7 @@ async def _run(
     service_overrides: dict[Any, Any] | None = None,
     capture_history: bool = False,
     continue_session: AgentSessionRef | None = None,
+    start_without_questions: bool = False,
     project_dir: pathlib.Path | None = None,
     action_cls: Any = RunAgentTaskAction,
 ) -> RunAgentTaskRunResult:
@@ -109,6 +122,7 @@ async def _run(
                 output_schema=output_schema,
                 capture_history=capture_history,
                 continue_session=continue_session,
+                start_without_questions=start_without_questions,
             ),
             action_cls=action_cls,
             handler_config=handler_config,
@@ -1934,3 +1948,1299 @@ async def test_continuation_observation_failure_keeps_reference_and_status(
     assert result.session == first.session
     assert result.observation is not None
     assert result.observation.history_status is HistoryDiscoveryStatus.FAILED
+
+
+def _capable_prompt() -> Any:
+
+    return FakeUserPrompt(
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+        )
+    )
+
+
+def test_opt_in_key_matches_shared_key() -> None:
+    """The handler config field is the shared opt-in key (D6.declare)."""
+    assert AGENT_QUESTION_OPT_IN_KEY == "may_ask_questions"
+    assert "may_ask_questions" in ClaudeCodeAgentHandlerConfig.__dataclass_fields__
+
+
+def test_profile_inherits_and_overrides_opt_in() -> None:
+    """A profile inherits the top-level opt-in when unset, like the timeout."""
+    handler = _handler_with(
+        settle_timeout_sec=900.0,
+        may_ask_questions=False,
+        profiles={"q": ClaudeCodeAgentProfile()},
+    )
+    top = handler._resolve(None)
+    assert isinstance(top, claude_code_agent_handler._ClaudeRunSettings)
+    assert top.may_ask_questions is False
+    handler2 = _handler_with(
+        settle_timeout_sec=900.0,
+        may_ask_questions=True,
+        profiles={"q": ClaudeCodeAgentProfile()},
+    )
+    inherited = handler2._resolve("q")
+    assert isinstance(inherited, claude_code_agent_handler._ClaudeRunSettings)
+    assert inherited.may_ask_questions is True
+    handler3 = _handler_with(
+        settle_timeout_sec=900.0,
+        may_ask_questions=True,
+        profiles={"q": ClaudeCodeAgentProfile(may_ask_questions=False)},
+    )
+    overridden = handler3._resolve("q")
+    assert isinstance(overridden, claude_code_agent_handler._ClaudeRunSettings)
+    assert overridden.may_ask_questions is False
+
+
+async def test_not_opted_in_runs_todays_argv_with_no_checks(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A run that did not opt in never probes and asks nothing."""
+
+    record = tmp_path / "record.jsonl"
+    prompt = _capable_prompt()
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_prompt"},
+                {"do": "init"},
+                {"do": "emit", "frame": _result(text="done")},
+            ],
+        },
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert prompt.availability_checks == 0
+    assert prompt.asks == []
+    records = _records(record)
+    argv = next(entry["argv"] for entry in records if "argv" in entry)
+    assert "--permission-prompt-tool" not in argv
+    assert "--input-format" not in argv
+    assert (
+        next(entry["prompt"] for entry in records if "prompt" in entry)
+        == "do the thing"
+    )
+
+
+async def test_opted_in_with_override_runs_todays_path_with_one_check(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An overridden run probes exactly once and then runs without questions."""
+
+    record = tmp_path / "record.jsonl"
+    prompt = FakeUserPrompt(
+        availability=PromptAvailability(can_ask=False),
+    )
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_prompt"},
+                {"do": "init"},
+                {"do": "emit", "frame": _result(text="done")},
+            ],
+        },
+        handler_config={"may_ask_questions": True},
+        start_without_questions=True,
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert prompt.availability_checks == 1
+    assert prompt.asks == []
+    records = _records(record)
+    argv = next(entry["argv"] for entry in records if "argv" in entry)
+    assert "--permission-prompt-tool" not in argv
+
+
+async def test_opted_in_refused_when_nobody_can_answer(tmp_path: pathlib.Path) -> None:
+    """A refused run never spawns claude and names the override."""
+
+    record = tmp_path / "record.jsonl"
+    prompt = FakeUserPrompt(availability=PromptAvailability(can_ask=False))
+    result = await _run(
+        {"record_path": str(record), "steps": [{"do": "read_prompt"}]},
+        handler_config={"may_ask_questions": True},
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error is not None
+    assert "start_without_questions" in result.error
+    assert "CI" not in result.error
+    assert not record.exists()
+    assert prompt.availability_checks == 1
+
+
+async def test_opted_in_refused_when_shapes_missing() -> None:
+    """A refusal names the missing shapes, not the CI fallback."""
+
+    prompt = FakeUserPrompt(
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=False, can_ask_multi_choice=True
+        )
+    )
+    result = await _run(
+        {"steps": [{"do": "read_prompt"}]},
+        handler_config={"may_ask_questions": True},
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error is not None
+    assert "text" in result.error
+    assert "start_without_questions" in result.error
+    assert "did not declare" not in result.error
+
+
+async def test_opted_in_refused_with_older_runner_stub() -> None:
+    """A minimal prompt that only answers choices still refuses cleanly."""
+
+    class _OldPrompt:
+        async def check_availability(self) -> Any:
+            return {"not": "a PromptAvailability"}
+
+        async def ask_choice(self, *args: Any, **kwargs: Any) -> Any:
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+
+    result = await _run(
+        {"steps": [{"do": "read_prompt"}]},
+        handler_config={"may_ask_questions": True},
+        service_overrides={IUserPrompt: _OldPrompt()},
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+
+
+async def test_refusal_with_capture_carries_observation_and_no_probe() -> None:
+    """A refused capture names the start check and never probes a version."""
+
+    prompt = FakeUserPrompt(availability=PromptAvailability(can_ask=False))
+    result = await _run(
+        {"steps": [{"do": "read_prompt"}]},
+        handler_config={"may_ask_questions": True},
+        service_overrides={IUserPrompt: prompt},
+        capture_history=True,
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.observation is not None
+    assert result.observation.gaps == [
+        "refused at the question start check; claude was not started"
+    ]
+    assert result.observation.backend_version is None
+
+
+def _wire_steps(*steps: dict[str, Any]) -> dict[str, Any]:
+    return {"steps": list(steps)}
+
+
+def _wire_ask_input() -> dict[str, Any]:
+    return {
+        "questions": [
+            {
+                "question": "Which codename should I use?",
+                "header": "Codename",
+                "multiSelect": False,
+                "options": [
+                    {"label": "Quokka-7", "description": "Use the codename Quokka-7."},
+                    {
+                        "label": "Narwhal-3",
+                        "description": "Use the codename Narwhal-3.",
+                    },
+                ],
+            }
+        ]
+    }
+
+
+def _wire_scenario(
+    record: pathlib.Path,
+    request_id: str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    result_text: str = "Quokka-7",
+    *,
+    tool_use_id: str | None = "toolu_1",
+    extra_steps: list[dict[str, Any]] | None = None,
+    denials: list[dict[str, Any]] | None = None,
+    result_subtype: str = "success",
+    result_is_error: bool = False,
+) -> dict[str, Any]:
+    return {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "read_initialize"},
+            {"do": "init"},
+            {"do": "read_user"},
+            {
+                "do": "request",
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "input": tool_input,
+                **({"tool_use_id": tool_use_id} if tool_use_id is not None else {}),
+            },
+            *(extra_steps or []),
+            {"do": "await_response", "request_id": request_id, "within": 20},
+            {
+                "do": "emit",
+                "frame": _result(
+                    text=result_text,
+                    denials=denials or [],
+                    subtype=result_subtype,
+                    is_error=result_is_error,
+                ),
+            },
+            {"do": "await_stdin_eof"},
+        ],
+    }
+
+
+async def _wire_run(
+    scenario: dict[str, Any],
+    answers: list[Any],
+    handler_config: dict[str, Any] | None = None,
+    start_without_questions: bool = False,
+) -> tuple[RunAgentTaskRunResult, Any]:
+
+    prompt = FakeUserPrompt(
+        answers=answers,
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+        ),
+    )
+    config = {"may_ask_questions": True}
+    config.update(handler_config or {})
+    result = await _run(
+        scenario,
+        handler_config=config,
+        start_without_questions=start_without_questions,
+        service_overrides={IUserPrompt: prompt},
+    )
+    return result, prompt
+
+
+async def test_question_mode_handshake_order_and_argv(tmp_path: pathlib.Path) -> None:
+    """The wire starts with initialize, then the user frame; stdin closes after result."""
+
+    record = tmp_path / "record.jsonl"
+    result, _ = await _wire_run(
+        _wire_scenario(record, "r1", "AskUserQuestion", _wire_ask_input()),
+        [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Quokka-7")],
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    records = _records(record)
+    kinds = [next(iter(entry)) for entry in records]
+    assert kinds[0] == "argv"
+    argv = records[0]["argv"]
+    verbose_at = argv.index("--verbose")
+    assert argv[verbose_at + 1 : verbose_at + 5] == [
+        "--input-format",
+        "stream-json",
+        "--permission-prompt-tool",
+        "stdio",
+    ]
+    assert kinds[1] == "initialize"
+    assert records[1]["initialize"]["request"] == {
+        "subtype": "initialize",
+        "hooks": None,
+    }
+    assert kinds[2] == "user"
+    assert records[2]["user"]["message"] == {
+        "role": "user",
+        "content": "do the thing",
+    }
+    assert records[3] == {
+        "request": {
+            "type": "control_request",
+            "request_id": "r1",
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": "AskUserQuestion",
+                "input": _wire_ask_input(),
+                "tool_use_id": "toolu_1",
+            },
+        }
+    }
+    assert kinds[-1] == "stdin_eof"
+    response = next(entry["response"] for entry in records if "response" in entry)
+    assert response["response"]["request_id"] == "r1"
+
+
+async def test_single_question_round_trip(tmp_path: pathlib.Path) -> None:
+    """AC-1: one ask, labels plus Other, recorded allow with the answers."""
+
+    record = tmp_path / "record.jsonl"
+    result, prompt = await _wire_run(
+        _wire_scenario(record, "r1", "AskUserQuestion", _wire_ask_input()),
+        [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Quokka-7")],
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.output == "Quokka-7"
+    assert len(prompt.asks) == 1
+    ask = prompt.asks[0]
+    assert ask.message == "Codename: Which codename should I use?"
+    assert list(ask.options) == ["Quokka-7", "Narwhal-3", "Other (type an answer)"]
+    assert ask.descriptions is not None
+    assert ask.descriptions.get("Quokka-7") == "Use the codename Quokka-7."
+    assert ask.timeout_sec == 900.0
+    records = _records(record)
+    response = next(entry["response"] for entry in records if "response" in entry)
+    reply = response["response"]["response"]
+    assert reply["behavior"] == "allow"
+    assert reply["updatedInput"]["questions"] == _wire_ask_input()["questions"]
+    assert reply["updatedInput"]["answers"] == {
+        "Which codename should I use?": "Quokka-7"
+    }
+
+
+async def test_group_multi_and_other_end_to_end(tmp_path: pathlib.Path) -> None:
+    """AC-2/3 shape: group of entries with multiSelect and Other reaches the fake."""
+
+    record = tmp_path / "record.jsonl"
+    tool_input: dict[str, Any] = {
+        "questions": [
+            {
+                "question": "Pick one?",
+                "options": [{"label": "A"}, {"label": "B"}],
+                "multiSelect": False,
+            },
+            {
+                "question": "Pick any?",
+                "options": [{"label": "X"}, {"label": "Y"}],
+                "multiSelect": True,
+            },
+        ]
+    }
+    result, prompt = await _wire_run(
+        _wire_scenario(record, "r1", "AskUserQuestion", tool_input),
+        [
+            ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="B"),
+            ElicitationResult(
+                outcome=ElicitationOutcome.ANSWERED,
+                values=("X", "Other (type an answer)"),
+            ),
+            ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="mine, yours"),
+        ],
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert len(prompt.asks) == 3
+    records = _records(record)
+    response = next(entry["response"] for entry in records if "response" in entry)
+    reply = response["response"]["response"]
+    assert reply["behavior"] == "allow"
+    assert reply["updatedInput"]["answers"] == {
+        "Pick one?": "B",
+        "Pick any?": "X, mine, yours",
+    }
+
+
+async def test_not_supported_question_is_denied_and_excluded(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A repeated label is not asked; the run settles, and a later failure is just FAILED."""
+
+    record = tmp_path / "record.jsonl"
+    bad: dict[str, Any] = {
+        "questions": [{"question": "Q?", "options": [{"label": "A"}, {"label": "A"}]}]
+    }
+    result, prompt = await _wire_run(
+        _wire_scenario(
+            record,
+            "r1",
+            "AskUserQuestion",
+            bad,
+            result_text="done anyway",
+        ),
+        [],
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert prompt.asks == []
+    records = _records(record)
+    response = next(entry["response"] for entry in records if "response" in entry)
+    reply = response["response"]["response"]
+    assert reply["behavior"] == "deny"
+    assert "not an answer" in reply["message"]
+
+    record2 = tmp_path / "record2.jsonl"
+    result2, _ = await _wire_run(
+        _wire_scenario(
+            record2,
+            "r1",
+            "AskUserQuestion",
+            bad,
+            denials=[{"tool_name": "AskUserQuestion", "tool_use_id": "toolu_1"}],
+            result_subtype="error_during_execution",
+            result_is_error=True,
+        ),
+        [],
+    )
+    assert result2.status is AgentRunStatus.FAILED
+    assert result2.error is not None
+    assert "error_during_execution" in result2.error
+
+
+async def test_permission_allow_passes_original_input(tmp_path: pathlib.Path) -> None:
+    """An allowed call carries the original input and no permission widening."""
+
+    record = tmp_path / "record.jsonl"
+    tool_input: dict[str, Any] = {"file_path": "probe.txt", "content": "hello"}
+    result, prompt = await _wire_run(
+        _wire_scenario(record, "r1", "Write", tool_input),
+        [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Allow once")],
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert len(prompt.asks) == 1
+    records = _records(record)
+    response = next(entry["response"] for entry in records if "response" in entry)
+    reply = response["response"]["response"]
+    assert reply == {"behavior": "allow", "updatedInput": tool_input}
+    assert "updatedPermissions" not in json.dumps(response)
+
+
+async def test_permission_deny_then_crash_is_failed(tmp_path: pathlib.Path) -> None:
+    """A person-denied call that later fails is FAILED, not a refusal."""
+
+    record = tmp_path / "record.jsonl"
+    result, _ = await _wire_run(
+        _wire_scenario(
+            record,
+            "r1",
+            "Write",
+            {"file_path": "x"},
+            denials=[{"tool_name": "Write", "tool_use_id": "toolu_1"}],
+            result_subtype="error_during_execution",
+            result_is_error=True,
+        ),
+        [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Deny")],
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+
+
+async def test_permission_decline_then_settle_is_settled(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A declined ask on a run that settles anyway stays settled (D1.G2)."""
+
+    record = tmp_path / "record.jsonl"
+    result, _ = await _wire_run(
+        _wire_scenario(record, "r1", "Write", {"file_path": "x"}),
+        [ElicitationResult(outcome=ElicitationOutcome.DECLINED)],
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+
+
+async def test_unrouted_denial_still_refuses(tmp_path: pathlib.Path) -> None:
+    """A decided denial plus an undecided one is still a refusal."""
+
+    record = tmp_path / "record.jsonl"
+    scenario = _wire_scenario(
+        record,
+        "r1",
+        "Write",
+        {"file_path": "x"},
+        denials=[
+            {"tool_name": "Write", "tool_use_id": "toolu_1"},
+            {"tool_name": "Bash", "tool_use_id": "toolu_9"},
+        ],
+        result_subtype="error_during_execution",
+        result_is_error=True,
+    )
+    result, _ = await _wire_run(
+        scenario,
+        [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Deny")],
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+
+
+async def test_disallowed_tools_denied_without_asks(tmp_path: pathlib.Path) -> None:
+    """Disallowed patterns never reach the person, parenthesised or not."""
+    record = tmp_path / "record.jsonl"
+    result, prompt = await _wire_run(
+        _wire_scenario(record, "r1", "Bash", {"command": "rm *"}),
+        [],
+        handler_config={"disallowed_tools": ["Write", "Bash(rm *)"]},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert prompt.asks == []
+    assert prompt.availability_checks == 1
+    records = _records(record)
+    response = next(entry["response"] for entry in records if "response" in entry)
+    assert response["response"]["response"]["behavior"] == "deny"
+
+
+async def test_unknown_control_subtype_gets_error_reply(tmp_path: pathlib.Path) -> None:
+    """An unknown subtype is answered with an error and the run continues."""
+    record = tmp_path / "record.jsonl"
+    scenario = {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "read_initialize"},
+            {"do": "init"},
+            {"do": "read_user"},
+            {
+                "do": "emit",
+                "frame": {
+                    "type": "control_request",
+                    "request_id": "rx",
+                    "request": {"subtype": "something_else"},
+                },
+            },
+            {"do": "await_response", "request_id": "rx", "within": 20},
+            {"do": "emit", "frame": _result(text="done")},
+            {"do": "await_stdin_eof"},
+        ],
+    }
+    result, prompt = await _wire_run(scenario, [])
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert prompt.asks == []
+    records = _records(record)
+    response = next(entry["response"] for entry in records if "response" in entry)
+    assert response["response"]["subtype"] == "error"
+
+
+async def test_malformed_request_denied_without_asks(tmp_path: pathlib.Path) -> None:
+    """A can_use_tool without an input object is denied, not asked."""
+    record = tmp_path / "record.jsonl"
+    scenario = {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "read_initialize"},
+            {"do": "init"},
+            {"do": "read_user"},
+            {
+                "do": "emit",
+                "frame": {
+                    "type": "control_request",
+                    "request_id": "r1",
+                    "request": {"subtype": "can_use_tool", "tool_name": "Write"},
+                },
+            },
+            {"do": "await_response", "request_id": "r1", "within": 20},
+            {"do": "emit", "frame": _result(text="done")},
+            {"do": "await_stdin_eof"},
+        ],
+    }
+    result, prompt = await _wire_run(scenario, [])
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert prompt.asks == []
+    records = _records(record)
+    response = next(entry["response"] for entry in records if "response" in entry)
+    assert response["response"]["response"]["behavior"] == "deny"
+
+
+class _GatedPrompt(FakeUserPrompt):
+    """An ask that hangs until cancelled, recording the cancellation."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.cancelled: list[str] = []
+
+    async def _hang(self, message: str) -> Any:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            self.cancelled.append(message)
+            raise
+        raise AssertionError("the hanging ask should never be answered")
+
+    async def ask_choice(self, message: str, options: list[str], **kwargs: Any) -> Any:
+        _ = await super().ask_choice(message, options, **kwargs)
+        return await self._hang(message)
+
+    async def ask_text(self, message: str, **kwargs: Any) -> Any:
+        _ = await super().ask_text(message, **kwargs)
+        return await self._hang(message)
+
+    async def ask_multi_choice(
+        self, message: str, options: list[str], **kwargs: Any
+    ) -> Any:
+        _ = await super().ask_multi_choice(message, options, **kwargs)
+        return await self._hang(message)
+
+
+def _capable_gated() -> _GatedPrompt:
+    return _GatedPrompt(
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+        )
+    )
+
+
+async def test_unavailable_at_once_refuses_with_session(tmp_path: pathlib.Path) -> None:
+    """Nobody-to-ask ends the run as refused, naming the question (D1.unavailable)."""
+    record = tmp_path / "record.jsonl"
+    result, prompt = await _wire_run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init"},
+                {"do": "read_user"},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "AskUserQuestion",
+                    "input": _wire_ask_input(),
+                    "tool_use_id": "toolu_1",
+                },
+                {"do": "await_response", "request_id": "r1", "within": 20},
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        [ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)],
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error is not None
+    assert "Which codename should I use?" in result.error
+    assert result.session is not None
+    assert result.session.session_id == "11111111-2222-3333-4444-555555555555"
+    assert prompt.availability_checks == 1
+    records = _records(record)
+    assert {"no_response": "r1"} in records
+    assert not [entry for entry in records if "response" in entry]
+
+
+async def test_task_cancellation_aborts_without_result(tmp_path: pathlib.Path) -> None:
+    """Withdrawing the run aborts claude and cancels the pending ask (D1.cancel)."""
+    record = tmp_path / "record.jsonl"
+    prompt = _capable_gated()
+    scenario = {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "read_initialize"},
+            {"do": "init"},
+            {"do": "read_user"},
+            {"do": "spawn_child"},
+            {
+                "do": "request",
+                "request_id": "r1",
+                "tool_name": "AskUserQuestion",
+                "input": _wire_ask_input(),
+                "tool_use_id": "toolu_1",
+            },
+            {"do": "await_stdin_eof"},
+        ],
+    }
+    config = {"may_ask_questions": True}
+    task = asyncio.get_running_loop().create_task(
+        _run(
+            scenario,
+            handler_config=config,
+            service_overrides={IUserPrompt: prompt},
+        )
+    )
+    deadline = time.monotonic() + 10
+    while not prompt.asks and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    assert prompt.asks, "the ask never reached the person"
+    _ = task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert prompt.cancelled == ["Codename: Which codename should I use?"]
+    pids = next(entry["pids"] for entry in _records(record) if "pids" in entry)
+    assert await _wait_gone(pids["agent"])
+    assert await _wait_gone(pids["child"])
+
+
+async def test_action_run_cancelled_from_ask_aborts_without_result(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An ask that reports the run torn down aborts claude and re-raises."""
+    from finecode_extension_api.interfaces.iprojectactionrunner import (
+        ActionRunCancelled,
+    )
+
+    record = tmp_path / "record.jsonl"
+
+    class _CancellingPrompt(FakeUserPrompt):
+        async def ask_choice(self, *args: Any, **kwargs: Any) -> Any:
+            raise ActionRunCancelled("torn down")
+
+    prompt = _CancellingPrompt(
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+        )
+    )
+    with pytest.raises(ActionRunCancelled):
+        await _run(
+            {
+                "record_path": str(record),
+                "record_driver": True,
+                "steps": [
+                    {"do": "read_initialize"},
+                    {"do": "init"},
+                    {"do": "read_user"},
+                    {"do": "spawn_child"},
+                    {
+                        "do": "request",
+                        "request_id": "r1",
+                        "tool_name": "AskUserQuestion",
+                        "input": _wire_ask_input(),
+                        "tool_use_id": "toolu_1",
+                    },
+                    {"do": "await_stdin_eof"},
+                ],
+            },
+            handler_config={"may_ask_questions": True},
+            service_overrides={IUserPrompt: prompt},
+        )
+    pids = next(entry["pids"] for entry in _records(record) if "pids" in entry)
+    assert await _wait_gone(pids["agent"])
+    assert await _wait_gone(pids["child"])
+
+
+async def test_exit_while_pending_is_failed_and_bounded(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A claude that dies mid-question fails without waiting out the deadline."""
+    record = tmp_path / "record.jsonl"
+    prompt = _capable_gated()
+    result = await asyncio.wait_for(
+        _run(
+            {
+                "record_path": str(record),
+                "record_driver": True,
+                "steps": [
+                    {"do": "read_initialize"},
+                    {"do": "init"},
+                    {"do": "read_user"},
+                    {
+                        "do": "request",
+                        "request_id": "r1",
+                        "tool_name": "AskUserQuestion",
+                        "input": _wire_ask_input(),
+                        "tool_use_id": "toolu_1",
+                    },
+                    {"do": "exit", "code": 0},
+                ],
+            },
+            handler_config={"may_ask_questions": True},
+            service_overrides={IUserPrompt: prompt},
+        ),
+        timeout=10,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "claude stopped without reporting a result"
+    assert prompt.cancelled == ["Codename: Which codename should I use?"]
+
+
+async def test_result_while_pending_settles_and_cancels_ask(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A result that arrives first wins; the pending ask is withdrawn (D1.end)."""
+    record = tmp_path / "record.jsonl"
+    marker = tmp_path / "asked"
+    prompt = _capable_gated()
+    original_hang = _GatedPrompt._hang
+
+    async def _touch_and_hang(self: _GatedPrompt, message: str) -> Any:
+        _ = marker.write_text("asked", encoding="utf-8")
+        return await original_hang(self, message)
+
+    prompt._hang = _touch_and_hang.__get__(prompt, _GatedPrompt)
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init"},
+                {"do": "read_user"},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "AskUserQuestion",
+                    "input": _wire_ask_input(),
+                    "tool_use_id": "toolu_1",
+                },
+                {"do": "wait_for", "path": str(marker), "timeout": 20},
+                {"do": "emit", "frame": _result(text="late answer")},
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        handler_config={"may_ask_questions": True},
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.output == "late answer"
+    assert prompt.cancelled == ["Codename: Which codename should I use?"]
+    records = _records(record)
+    assert not [entry for entry in records if "response" in entry]
+
+
+async def test_cancel_request_withdraws_the_group_entry(tmp_path: pathlib.Path) -> None:
+    """RT1: a withdrawn group entry is never asked and never answered."""
+    record = tmp_path / "record.jsonl"
+    marker = tmp_path / "entry2"
+    tool_input: dict[str, Any] = {
+        "questions": [
+            {"question": "Q1?", "options": [{"label": "A"}]},
+            {"question": "Q2?", "options": [{"label": "B"}]},
+            {"question": "Q3?", "options": [{"label": "C"}]},
+        ]
+    }
+    scripted = _GatedPrompt(
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+        )
+    )
+    answers: list[Any] = [
+        ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="A"),
+    ]
+    calls: list[str] = []
+    cancelled: list[str] = []
+    real_choice = FakeUserPrompt.ask_choice
+
+    async def _scripted_choice(
+        self: Any, message: str, options: Any, **kwargs: Any
+    ) -> Any:
+        calls.append(message)
+        if len(calls) == 2:
+            _ = marker.write_text("asked", encoding="utf-8")
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled.append(message)
+                raise
+            raise AssertionError("entry 2 must not be answered")
+        return await real_choice(self, message, options, **kwargs)
+
+    async def _never_text(self: Any, _message: str, **kwargs: Any) -> Any:
+        raise AssertionError("entry 3 must never be asked")
+
+    scripted.ask_choice = _scripted_choice.__get__(scripted, _GatedPrompt)
+    scripted.ask_text = _never_text.__get__(scripted, _GatedPrompt)
+    scripted.answers.extend(answers)
+    scripted.answers.append(
+        ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Allow once")
+    )
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init"},
+                {"do": "read_user"},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "AskUserQuestion",
+                    "input": tool_input,
+                    "tool_use_id": "toolu_1",
+                },
+                {"do": "wait_for", "path": str(marker), "timeout": 20},
+                {"do": "cancel_request", "request_id": "r1"},
+                {
+                    "do": "request",
+                    "request_id": "r2",
+                    "tool_name": "Write",
+                    "input": {"file_path": "x"},
+                    "tool_use_id": "toolu_2",
+                },
+                {"do": "await_response", "request_id": "r2", "within": 20},
+                {"do": "emit", "frame": _result(text="done")},
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        handler_config={"may_ask_questions": True},
+        service_overrides={IUserPrompt: scripted},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert calls[:2] == ["Question 1 of 3. Q1?", "Question 2 of 3. Q2?"]
+    assert cancelled == ["Question 2 of 3. Q2?"]
+    assert len(calls) == 3
+    assert calls[2].startswith("Claude Code asks to use Write.")
+    records = _records(record)
+    responses = [entry["response"] for entry in records if "response" in entry]
+    assert [response["response"]["request_id"] for response in responses] == ["r2"]
+    assert responses[0]["response"]["response"]["behavior"] == "allow"
+
+
+async def test_concurrent_requests_are_serialised(tmp_path: pathlib.Path) -> None:
+    """Two requests at once: the first UNAVAILABLE ends the run, the second unasked."""
+    record = tmp_path / "record.jsonl"
+    result, prompt = await _wire_run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init"},
+                {"do": "read_user"},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "AskUserQuestion",
+                    "input": _wire_ask_input(),
+                    "tool_use_id": "toolu_1",
+                },
+                {
+                    "do": "request",
+                    "request_id": "r2",
+                    "tool_name": "Write",
+                    "input": {"file_path": "y"},
+                    "tool_use_id": "toolu_2",
+                },
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        [ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)],
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error is not None
+    assert "Which codename should I use?" in result.error
+    assert len(prompt.asks) == 1
+    records = _records(record)
+    assert not [entry for entry in records if "response" in entry]
+
+
+async def test_exit_and_unavailable_together_is_an_exit(
+    tmp_path: pathlib.Path,
+) -> None:
+    """When claude is already gone, the exit status wins over UNAVAILABLE (D1.exit)."""
+    record = tmp_path / "record.jsonl"
+    marker = tmp_path / "touch"
+
+    class _SlowUnavailable(FakeUserPrompt):
+        async def ask_choice(self, *args: Any, **kwargs: Any) -> Any:
+            deadline = time.monotonic() + 20
+            while not marker.exists() and time.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+            await asyncio.sleep(1.0)
+            return ElicitationResult(outcome=ElicitationOutcome.UNAVAILABLE)
+
+    prompt = _SlowUnavailable(
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+        )
+    )
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init"},
+                {"do": "read_user"},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "AskUserQuestion",
+                    "input": _wire_ask_input(),
+                    "tool_use_id": "toolu_1",
+                },
+                {"do": "touch", "path": str(marker)},
+                {"do": "exit", "code": 0},
+            ],
+        },
+        handler_config={"may_ask_questions": True},
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "claude stopped without reporting a result"
+
+
+async def test_exit_after_decided_and_unrouted_denials_is_failed(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Without a result frame there is nothing to amend: exits fail."""
+    from finecode_extension_api.interfaces.iuserprompt import PromptAvailability
+
+    cases: list[tuple[str, dict[str, Any], list[Any]]] = [
+        (
+            "decided",
+            {"may_ask_questions": True},
+            [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Deny")],
+        ),
+        (
+            "unrouted",
+            {"may_ask_questions": True, "disallowed_tools": ["Write"]},
+            [],
+        ),
+    ]
+    for name, config, answers in cases:
+        record = tmp_path / f"{name}.jsonl"
+        prompt = FakeUserPrompt(
+            answers=list(answers),
+            availability=PromptAvailability(
+                can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+            ),
+        )
+        result = await asyncio.wait_for(
+            _run(
+                {
+                    "record_path": str(record),
+                    "record_driver": True,
+                    "steps": [
+                        {"do": "read_initialize"},
+                        {"do": "init"},
+                        {"do": "read_user"},
+                        {
+                            "do": "request",
+                            "request_id": "r1",
+                            "tool_name": "Write",
+                            "input": {"file_path": "x"},
+                            "tool_use_id": "toolu_1",
+                        },
+                        {"do": "exit", "code": 0},
+                    ],
+                },
+                handler_config=config,
+                service_overrides={IUserPrompt: prompt},
+            ),
+            timeout=10,
+        )
+
+        assert result.status is AgentRunStatus.FAILED
+        assert result.error == "claude stopped without reporting a result"
+
+
+async def test_continuation_in_question_mode_settles(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A D1.unavailable session can be continued by a question-mode run (D1.session)."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    session_id = "33333333-3333-4333-8333-333333333333"
+
+    async def _question_run(
+        scenario: dict[str, Any],
+        answers: list[Any],
+        prompt_text: str = "work",
+        continue_session: Any = None,
+    ) -> Any:
+        prompt = FakeUserPrompt(
+            answers=answers,
+            availability=PromptAvailability(
+                can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+            ),
+        )
+        return await _run(
+            scenario,
+            prompt=prompt_text,
+            project_dir=project_dir,
+            handler_config=dict(_CONTINUE_CONFIG, may_ask_questions=True),
+            continue_session=continue_session,
+            service_overrides={IUserPrompt: prompt},
+        ), prompt
+
+    first_record = tmp_path / "first.jsonl"
+    first, _ = await _question_run(
+        {
+            "session_id": session_id,
+            "config_dir": str(tmp_path),
+            "write_native": True,
+            "record_path": str(first_record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init", "session_id": session_id},
+                {"do": "read_user"},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "AskUserQuestion",
+                    "input": _wire_ask_input(),
+                    "tool_use_id": "toolu_1",
+                },
+                {"do": "await_response", "request_id": "r1", "within": 20},
+                {
+                    "do": "emit",
+                    "frame": _result(text="first", session_id=session_id),
+                },
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Quokka-7")],
+        prompt_text="first",
+    )
+    assert first.status is AgentRunStatus.SETTLED
+    assert first.session is not None
+    assert first.session.session_id == session_id
+
+    second_record = tmp_path / "second.jsonl"
+    second, prompt2 = await _question_run(
+        {
+            "config_dir": str(tmp_path),
+            "record_path": str(second_record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init", "session_id": session_id},
+                {"do": "read_user"},
+                {
+                    "do": "request",
+                    "request_id": "r2",
+                    "tool_name": "Write",
+                    "input": {"file_path": "z"},
+                    "tool_use_id": "toolu_2",
+                },
+                {"do": "await_response", "request_id": "r2", "within": 20},
+                {
+                    "do": "emit",
+                    "frame": _result(text="second", session_id=session_id),
+                },
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        [ElicitationResult(outcome=ElicitationOutcome.ANSWERED, value="Allow once")],
+        prompt_text="second",
+        continue_session=first.session,
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    assert second.session == first.session
+    assert len(prompt2.asks) == 1
+    records = _records(second_record)
+    argv = next(entry["argv"] for entry in records if "argv" in entry)
+    assert "--resume" in argv
+    assert "--permission-prompt-tool" in argv
+
+
+def _assistant_tool_use(tool_use_id: str, name: str = "Write") -> dict[str, Any]:
+    return {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": tool_use_id, "name": name, "input": {}}
+            ],
+        },
+    }
+
+
+async def test_settle_budget_pauses_while_blocked(tmp_path: pathlib.Path) -> None:
+    """A 1 s budget survives a 2 s answer while claude waits on the host (D2.G1)."""
+    record = tmp_path / "record.jsonl"
+
+    async def _slow_allow(
+        self: Any, _message: str, _options: Any, **kwargs: Any
+    ) -> Any:
+        await asyncio.sleep(2.0)
+        return ElicitationResult(
+            outcome=ElicitationOutcome.ANSWERED, value="Allow once"
+        )
+
+    prompt = FakeUserPrompt(
+        availability=PromptAvailability(
+            can_ask=True, can_ask_text=True, can_ask_multi_choice=True
+        )
+    )
+    prompt.ask_choice = _slow_allow.__get__(prompt, FakeUserPrompt)
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init"},
+                {"do": "read_user"},
+                {"do": "emit", "frame": _assistant_tool_use("toolu_9")},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "Write",
+                    "input": {"file_path": "x"},
+                    "tool_use_id": "toolu_9",
+                },
+                {"do": "await_response", "request_id": "r1", "within": 20},
+                {"do": "emit", "frame": _result(text="done")},
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        handler_config={"may_ask_questions": True, "settle_timeout_sec": 1.0},
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.output == "done"
+
+
+async def test_sibling_tool_use_keeps_budget_ticking(tmp_path: pathlib.Path) -> None:
+    """An unanswered sibling call means claude is not blocked on the host (D1.G6)."""
+    record = tmp_path / "record.jsonl"
+    prompt = _capable_gated()
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "read_initialize"},
+                {"do": "init"},
+                {"do": "read_user"},
+                {"do": "emit", "frame": _assistant_tool_use("toolu_1")},
+                {"do": "emit", "frame": _assistant_tool_use("toolu_sib", "Bash")},
+                {
+                    "do": "request",
+                    "request_id": "r1",
+                    "tool_name": "AskUserQuestion",
+                    "input": _wire_ask_input(),
+                    "tool_use_id": "toolu_1",
+                },
+                {"do": "await_stdin_eof"},
+            ],
+        },
+        handler_config={"may_ask_questions": True, "settle_timeout_sec": 1.0},
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error is not None
+    assert "settle budget" in result.error
+    assert "Which codename should I use?" in result.error
+    assert result.session is not None
+    assert prompt.cancelled == ["Codename: Which codename should I use?"]
+    records = _records(record)
+    assert not [entry for entry in records if "response" in entry]
+
+
+async def test_request_without_tool_use_id_counts_for_budget(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A routed request without an id never pauses, but still ends the budget."""
+    record = tmp_path / "record.jsonl"
+    prompt = _capable_gated()
+    result = await _run(
+        _wire_scenario(
+            record,
+            "r1",
+            "Write",
+            {"file_path": "x"},
+            tool_use_id=None,
+        ),
+        handler_config={"may_ask_questions": True, "settle_timeout_sec": 1.0},
+        service_overrides={IUserPrompt: prompt},
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error is not None
+    assert "settle budget" in result.error

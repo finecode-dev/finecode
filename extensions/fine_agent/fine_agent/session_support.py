@@ -97,6 +97,7 @@ def with_session(
     project_dir: pathlib.Path,
     reported_id: str | None,
     expected: AgentSessionRef | None = None,
+    report_unsettled_session: bool = False,
 ) -> RunAgentTaskRunResult:
     """Attach the reported native session, enforcing the settled-ID rule.
 
@@ -108,7 +109,15 @@ def with_session(
     handed out as the requested session: a settled mismatch fails.
     """
     if result.status is not AgentRunStatus.SETTLED:
-        return result
+        if not report_unsettled_session:
+            return result
+        if reported_id is None or session_id_error(reported_id) is not None:
+            return result
+        if expected is not None and not _uuid_equals(
+            reported_id, expected.session_id
+        ):
+            return result
+        return _attach_session(result, backend, project_dir, reported_id)
     if reported_id is None or session_id_error(reported_id) is not None:
         return _replace(
             result, AgentRunStatus.FAILED, _missing_id_reason(backend, reported_id)

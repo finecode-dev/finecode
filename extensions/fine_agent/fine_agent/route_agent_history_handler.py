@@ -67,8 +67,7 @@ class RouteAgentHistoryHandler(
         RouteAgentHistoryHandlerConfig,
     ]
 ):
-    """Dispatch a history lookup to the leaf action of the payload's backend.
-    """
+    """Dispatch a history lookup to the leaf action of the payload's backend."""
 
     def __init__(
         self,

@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri
-from finecode_extension_runner._converter import converter
 from finecode_extension_runner import partial_result_sender
+from finecode_extension_runner._converter import converter
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session
 
@@ -310,9 +310,7 @@ async def test_running_only_run_ends_with_error_without_a_terminal_partial(
             wait_time_ms=300,
         ),
     )
-    action_source = (
-        f"{RunAgentTaskAction.__module__}.{RunAgentTaskAction.__qualname__}"
-    )
+    action_source = f"{RunAgentTaskAction.__module__}.{RunAgentTaskAction.__qualname__}"
     handler_source = (
         f"{_running_only_handler.__module__}.{_running_only_handler.__qualname__}"
     )

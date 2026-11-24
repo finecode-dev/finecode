@@ -172,6 +172,70 @@ def test_unexpected_resumed_identity_fails_a_settled_run() -> None:
     assert result.session is None
 
 
+def _unsettled(status: AgentRunStatus) -> RunAgentTaskRunResult:
+    return RunAgentTaskRunResult(status=status, error="kept", output="out")
+
+
+def test_unsettled_session_reported_with_flag() -> None:
+    """An unsettled run can still hand out the reported session."""
+    result = with_session(
+        _unsettled(AgentRunStatus.REFUSED_INTERACTION),
+        backend=AgentBackend.PI,
+        project_dir=_PROJECT_DIR,
+        reported_id=_SESSION_ID,
+        report_unsettled_session=True,
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error == "kept"
+    assert result.session == _ref()
+
+
+def test_unsettled_session_unusable_id_stays_empty() -> None:
+    """An unusable ID on an unsettled run leaves the session empty."""
+    result = with_session(
+        _unsettled(AgentRunStatus.FAILED),
+        backend=AgentBackend.PI,
+        project_dir=_PROJECT_DIR,
+        reported_id="thread-1",
+        report_unsettled_session=True,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "kept"
+    assert result.session is None
+
+
+def test_unsettled_session_mismatch_stays_empty() -> None:
+    """A mismatched ID on an unsettled run is never handed out."""
+    result = with_session(
+        _unsettled(AgentRunStatus.FAILED),
+        backend=AgentBackend.PI,
+        project_dir=_PROJECT_DIR,
+        reported_id="22222222-2222-4222-8222-222222222222",
+        expected=_ref(),
+        report_unsettled_session=True,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "kept"
+    assert result.session is None
+
+
+def test_settled_path_ignores_the_flag() -> None:
+    """The settled rule is unchanged when the flag is set."""
+    result = with_session(
+        _settled(),
+        backend=AgentBackend.PI,
+        project_dir=_PROJECT_DIR,
+        reported_id=_SESSION_ID,
+        report_unsettled_session=True,
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.session == _ref()
+
+
 def test_matching_expected_identity_is_attached() -> None:
     result = with_session(
         _settled(),

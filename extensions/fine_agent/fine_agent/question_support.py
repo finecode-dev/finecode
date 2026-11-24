@@ -8,6 +8,7 @@ and the same texts, and waits the same deadline (`question_deadline_sec`).
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 import typing
 
@@ -57,23 +58,6 @@ async def resolve_question_mode(
     return AgentQuestionMode.REFUSED
 
 
-def refused_at_start_result() -> RunAgentTaskRunResult:
-    """The result of a run refused at the start check.
-
-    Reports no duration: a refused-at-start run never reached a backend.
-    """
-    return RunAgentTaskRunResult(
-        status=AgentRunStatus.REFUSED_INTERACTION,
-        output="",
-        turns=None,
-        usage=None,
-        duration_sec=None,
-        error=START_REFUSAL_ERROR,
-        observation=None,
-        session=None,
-    )
-
-
 QUESTION_DECLINED_REPLY: typing.Final[str] = (
     "The person declined to answer this question. "
     "This is not an answer: continue without it, or choose another approach."
@@ -86,6 +70,96 @@ START_REFUSAL_ERROR: typing.Final[str] = (
     "The backend was not started. "
     "Pass start_without_questions=true to run it without questions."
 )
+
+QUESTION_NOT_SUPPORTED_REPLY: typing.Final[str] = (
+    "This question was not asked: FineCode cannot present it in this form yet. "
+    "This is not an answer: continue without it, or ask it in a simpler form."
+)
+
+
+class QuestionShape(enum.StrEnum):
+    TEXT = "text"
+    MULTI_CHOICE = "multi-select"
+
+
+@dataclasses.dataclass(frozen=True)
+class QuestionStart:
+    mode: AgentQuestionMode
+    refusal_error: str | None
+
+
+def missing_shapes_refusal_error(missing: tuple[QuestionShape, ...]) -> str:
+    shapes = " and ".join(shape.value for shape in missing)
+    return (
+        "This task may ask questions (its profile sets may_ask_questions), "
+        "but the client that started this run cannot answer "
+        f"{shapes} questions, which this backend may ask. "
+        "The backend was not started. "
+        "Pass start_without_questions=true to run it without questions."
+    )
+
+
+async def resolve_question_start(
+    user_prompt: IUserPrompt,
+    *,
+    opted_in: bool,
+    start_without_questions: bool,
+    required_shapes: frozenset[QuestionShape] = frozenset(),
+) -> QuestionStart:
+    """Decide how an agent run starts, including which shapes it needs."""
+    if not opted_in:
+        return QuestionStart(
+            mode=AgentQuestionMode.WITHOUT_QUESTIONS, refusal_error=None
+        )
+    availability = await user_prompt.check_availability()
+    if isinstance(availability, PromptAvailability) and availability.can_ask is True:
+        missing = tuple(
+            shape
+            for shape in QuestionShape
+            if shape in required_shapes and not _shape_available(availability, shape)
+        )
+        if not missing:
+            return QuestionStart(
+                mode=AgentQuestionMode.WITH_QUESTIONS, refusal_error=None
+            )
+        if start_without_questions:
+            return QuestionStart(
+                mode=AgentQuestionMode.WITHOUT_QUESTIONS, refusal_error=None
+            )
+        return QuestionStart(
+            mode=AgentQuestionMode.REFUSED,
+            refusal_error=missing_shapes_refusal_error(missing),
+        )
+    if start_without_questions:
+        return QuestionStart(
+            mode=AgentQuestionMode.WITHOUT_QUESTIONS, refusal_error=None
+        )
+    return QuestionStart(
+        mode=AgentQuestionMode.REFUSED, refusal_error=START_REFUSAL_ERROR
+    )
+
+
+def _shape_available(availability: PromptAvailability, shape: QuestionShape) -> bool:
+    if shape is QuestionShape.TEXT:
+        return availability.can_ask_text is True
+    return availability.can_ask_multi_choice is True
+
+
+def refused_at_start_result(error: str = START_REFUSAL_ERROR) -> RunAgentTaskRunResult:
+    """The result of a run refused at the start check.
+
+    Reports no duration: a refused-at-start run never reached a backend.
+    """
+    return RunAgentTaskRunResult(
+        status=AgentRunStatus.REFUSED_INTERACTION,
+        output="",
+        turns=None,
+        usage=None,
+        duration_sec=None,
+        error=error,
+        observation=None,
+        session=None,
+    )
 
 
 def unanswered_question_error(question: str) -> str:
@@ -149,12 +223,17 @@ __all__ = [
     "QUESTION_GRACE_SEC",
     "QUESTION_MAX_DEADLINE_SEC",
     "QUESTION_MIN_DEADLINE_SEC",
+    "QUESTION_NOT_SUPPORTED_REPLY",
     "START_REFUSAL_ERROR",
     "AgentQuestionMode",
+    "QuestionShape",
+    "QuestionStart",
+    "missing_shapes_refusal_error",
     "question_deadline_sec",
     "question_not_asked_error",
     "refused_at_start_result",
     "resolve_question_mode",
+    "resolve_question_start",
     "settle_budget_question_error",
     "unanswered_question_error",
 ]

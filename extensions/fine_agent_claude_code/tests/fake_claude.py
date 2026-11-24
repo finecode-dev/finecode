@@ -156,6 +156,130 @@ def main() -> int:
                 except OSError:
                     pass
 
+        elif action == "read_initialize":
+            line = sys.stdin.readline()
+            try:
+                frame = json.loads(line) if line else None
+            except ValueError:
+                frame = None
+            _record(scenario, {"initialize": frame})
+            request_id = None
+            if isinstance(frame, dict):
+                request_id = frame.get("request_id")
+            if not isinstance(request_id, str):
+                request_id = "req_1_unknown"
+            _emit(
+                {
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": request_id,
+                        "response": {},
+                    },
+                }
+            )
+
+        elif action == "read_user":
+            line = sys.stdin.readline()
+            try:
+                frame = json.loads(line) if line else None
+            except ValueError:
+                frame = None
+            _record(scenario, {"user": frame})
+            if resume_store is not None and isinstance(frame, dict):
+                try:
+                    message = frame.get("message")
+                    content = (
+                        message.get("content") if isinstance(message, dict) else ""
+                    )
+                    with open(resume_store, "a", encoding="utf-8") as handle:
+                        _ = handle.write(
+                            json.dumps(
+                                {
+                                    "type": "user",
+                                    "sessionId": resume_id,
+                                    "message": {"content": content},
+                                }
+                            )
+                            + "\n"
+                        )
+                except OSError:
+                    pass
+
+        elif action == "request":
+            request: dict[str, object] = {"subtype": "can_use_tool"}
+            for key in (
+                "tool_name",
+                "display_name",
+                "input",
+                "tool_use_id",
+                "description",
+                "permission_suggestions",
+                "requires_user_interaction",
+            ):
+                if key in step:
+                    request[key] = step[key]
+            if "subtype" in step:
+                request["subtype"] = step["subtype"]
+            frame = {
+                "type": "control_request",
+                "request_id": step["request_id"],
+                "request": request,
+            }
+            _record(scenario, {"request": frame})
+            _emit(frame)
+
+        elif action == "await_response":
+            request_id = step["request_id"]
+            within = step.get("within")
+            deadline = None if within is None else time.time() + float(within)
+            while True:
+                if deadline is not None and time.time() > deadline:
+                    _record(scenario, {"no_response": request_id})
+                    break
+                line = sys.stdin.readline()
+                if not line:
+                    _record(scenario, {"no_response": request_id})
+                    break
+                try:
+                    frame = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(frame, dict):
+                    continue
+                if frame.get("type") != "control_response":
+                    continue
+                response = frame.get("response")
+                if not isinstance(response, dict):
+                    continue
+                if response.get("request_id") != request_id:
+                    continue
+                _record(scenario, {"response": frame})
+                break
+
+        elif action == "cancel_request":
+            _emit({"type": "control_cancel_request", "request_id": step["request_id"]})
+
+        elif action == "await_stdin_eof":
+            sys.stdin.read()
+            _record(scenario, {"stdin_eof": True})
+
+        elif action == "touch":
+            path = step["path"]
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("touched")
+            _record(scenario, {"touched": path})
+
+        elif action == "wait_for":
+            path = step["path"]
+            timeout = float(step.get("timeout", 20))
+            deadline = time.time() + timeout
+            while not os.path.exists(path):
+                if time.time() > deadline:
+                    break
+                time.sleep(0.05)
+            _record(scenario, {"waited": path})
+
         elif action == "emit":
             _emit(step["frame"])
 

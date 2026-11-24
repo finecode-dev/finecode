@@ -98,10 +98,11 @@ that used two models has no single model to attribute a cost to.
 
 ## 3. Permissions: the closest thing to pi's UI requests
 
-pi asks the client questions (`extension_ui_request`) and waits. Claude Code
-does not ask in print mode: a tool call that needs approval it cannot get is
-denied, the agent is told, and it continues — the denial is recorded in
-`result.permission_denials`.
+pi asks the client questions (`extension_ui_request`) and waits. A
+non-opted-in Claude Code run does not ask in print mode: a tool call that
+needs approval it cannot get is denied, the agent is told, and it continues —
+the denial is recorded in `result.permission_denials`. An opted-in run (section
+5) routes every permission request to the run's person instead.
 
 That makes denials weaker evidence than a pi UI request, and the handler treats
 them accordingly:
@@ -132,6 +133,62 @@ Two ceilings, because they bound different things:
 This CLI version exposes no `--max-turns`; `result.subtype` still carries
 `error_max_turns`, so the failure is handled generically by subtype rather than
 by a limit this handler sets.
+
+## 5. Questions over the control wire
+
+An opted-in run (`may_ask_questions = true` on the handler or profile, with a
+client that can answer choice, text and multi-select questions) attaches
+FineCode as the CLI's permission host: `--input-format stream-json
+--permission-prompt-tool stdio` after `--verbose`. The shapes below were
+recorded against the listed versions; `--permission-prompt-tool stdio` is not
+in the CLI reference, so a CLI update may change them.
+
+The handler writes an `initialize` control request first and the `user` frame
+only after its success response, keeps stdin open until the `result` frame,
+then closes it. Each `can_use_tool` request is answered with one complete
+`control_response` line:
+
+- `AskUserQuestion` → one `ask_choice` per entry (question prefixed
+  `"Question k of n. "` for groups, an extra `"Other (type an answer)"`
+  option with a free-text follow-up), `ask_multi_choice` for `multiSelect`
+  entries. Answers are encoded as the smoke recorded: single-select the label
+  or the typed text; multi-select the chosen labels in offered order plus any
+  typed text, joined with `", "`. A decline denies with the answers so far
+  named; an unrepresentable shape is denied with the shared
+  "not supported yet" text and the run continues.
+- any other tool → one `"Allow once"`/`"Deny"` choice. Allow replies with
+  the original input (never `updatedPermissions`); deny carries the reply
+  text. A `disallowed_tools` entry denies without asking — a parenthesised
+  pattern denies every call of that tool.
+- malformed requests and unknown control subtypes are denied (respectively
+  error-replied) without asking; a request without an id is logged and
+  ignored.
+
+Only one ask is put to the person at a time (FIFO); a queued request counts
+as pending for the clock but is not asked until its turn. A run that is not
+opted in, or is overridden with `start_without_questions`, is byte-for-byte
+today's run: the same argv without the wire flags, the prompt on stdin, EOF.
+
+The settle budget pauses while claude is blocked on the host (R7): at least
+one routed request pending, and every `tool_use` id without a `tool_result`
+belongs to a pending routed request. A routed request without a `tool_use_id`
+never pauses, but still counts when the budget expires. Budget expiry with a
+request pending is `refused_interaction` naming the question, with the session
+reported; expiry with nothing pending keeps today's `failed` result.
+
+Supported versions: 2.1.329 (M1/M2: wire shapes, denial entries), 2.1.330 (M3:
+cutoff, plus the live smoke). Live smoke record (devcontainer, authenticated
+`claude`, `--model haiku --max-budget-usd 0.25` per run): L1 codename question
+round trip, L2 multiSelect with Other, L3 Write allow/deny, L4 delayed answer,
+L5 question delivery under `default`/`acceptEdits`, L6 `disallowed_tools`, L7
+continuation in question mode; L8 holds a question for 7,300 s to check claude
+never resolves a pending request on its own. Results live under
+`issues/921-claude-code-agent-interactive-questions/probes/`.
+
+Known gaps: the M3 evidence gap (no claude-side resolution seen, checked to
+7,300 s by L8 — if a CLI ever answers its own pending request, return to
+`fine-design-amend`); modes that never call the host (`bypassPermissions`,
+`dontAsk`) bypass it by design and were recorded, not routed.
 
 ## Open questions
 
