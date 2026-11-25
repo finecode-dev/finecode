@@ -43,8 +43,7 @@ class GitGetGitStatusHandler(
     async def _run_git(
         self, cmd: list[str], cwd: pathlib.Path | None
     ) -> tuple[int | None, str, str]:
-        process = await self.command_runner.run(cmd, cwd=cwd)
-        await process.wait_for_end()
+        process = await self.command_runner.run_to_completion(cmd, cwd=cwd)
         exit_code = process.get_exit_code()
         stdout = process.get_output()
         stderr = process.get_error_output()

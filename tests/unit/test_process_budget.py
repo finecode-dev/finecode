@@ -448,3 +448,39 @@ async def test_snapshot_observes_leases_queued_for_lock() -> None:
 
     await budget.release(first_lease.lease_id)
     await budget.release(second_lease.lease_id)
+
+
+async def test_unexpected_exit_reclaims_granted_leases(tmp_path) -> None:
+    """An ER that dies without releasing still frees its budget on exit.
+
+    The client's process-stop handler invokes the exit callback production
+    wires to the budget reclaim, so a crashed runner's slots return even
+    though it never released them itself.
+    """
+    from finecode.wm_server import testing as wm_testing
+    from finecode_jsonrpc import client as jc
+
+    project = wm_testing.make_single_action_project(
+        dir_path=tmp_path, action_name="a", handler_env="test-env"
+    )
+    runner = wm_testing.make_running_runner(
+        working_dir_path=tmp_path, env_name="test-env"
+    )
+    ws_context = wm_testing.make_workspace_context(
+        project=project, runner=runner, env_name="test-env"
+    )
+    lease = await ws_context.process_budget.lease(runner.readable_id, 2)
+    assert lease.granted == 2
+
+    client = jc.JsonRpcClient(
+        message_types={}, readable_id=runner.readable_id
+    )
+
+    async def on_exit() -> None:
+        await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
+
+    client.server_exit_callback = on_exit
+    client.server_process_stopped.set()
+    await client._server_process_stop_handler()
+
+    assert ws_context.process_budget.snapshot().granted == 0

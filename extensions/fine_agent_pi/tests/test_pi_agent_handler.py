@@ -980,6 +980,17 @@ class _RecordingCommandRunner:
         self.run_calls += 1
         raise AssertionError("agent processes must start through start_long_running")
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+
     async def start_long_running(
         self,
         cmd: icommandrunner.Argv,
@@ -1008,6 +1019,17 @@ class _RaisingCommandRunner:
         self.run_calls += 1
         raise AssertionError("agent processes must start through start_long_running")
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+
     async def start_long_running(
         self,
         cmd: icommandrunner.Argv,
@@ -1031,8 +1053,12 @@ class _RaisingCommandRunner:
 @pytest.mark.parametrize(
     "error",
     [
-        FileNotFoundError(2, "No such file or directory"),
-        PermissionError(13, "Permission denied"),
+        icommandrunner.ProgramStartError(
+            "pi", None, FileNotFoundError(2, "No such file or directory")
+        ),
+        icommandrunner.ProgramStartError(
+            "pi", None, PermissionError(13, "Permission denied")
+        ),
         icommandrunner.UnsafeBatchArgumentError(
             "argument 1 cannot be passed safely to batch file pi.cmd"
         ),
@@ -1060,7 +1086,11 @@ async def test_a_run_that_cannot_spawn_pi_is_a_structured_failure(
 
 async def test_agent_spawns_through_start_long_running_not_run() -> None:
     """The agent run is long-lived, so it must not hold a bounded-job slot."""
-    runner = _RaisingCommandRunner(FileNotFoundError(2, "No such file or directory"))
+    runner = _RaisingCommandRunner(
+        icommandrunner.ProgramStartError(
+            "pi", None, FileNotFoundError(2, "No such file or directory")
+        )
+    )
     result = await _run(
         {"steps": []},
         service_overrides={icommandrunner.ICommandRunner: runner},

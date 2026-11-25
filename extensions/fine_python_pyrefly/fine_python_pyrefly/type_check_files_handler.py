@@ -264,9 +264,7 @@ class PyreflyTypeCheckFilesHandler(
             cmd.append(f"--site-package-path={path!s}")
         cmd.append(str(file_path))
 
-        pyrefly_process = await self.command_runner.run(cmd)
-
-        await pyrefly_process.wait_for_end()
+        pyrefly_process = await self.command_runner.run_to_completion(cmd)
 
         output = pyrefly_process.get_output()
         try:

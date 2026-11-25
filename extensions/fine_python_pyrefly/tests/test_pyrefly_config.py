@@ -68,6 +68,17 @@ class _FakeCommandRunner:
         self.commands.append(list(cmd))
         return self._processes_by_subcommand.get(cmd[1], _FakePyreflyProcess())
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> _FakePyreflyProcess:
+        return await self.run(cmd, _cwd=cwd, _env=env)
+
 
 class _FakeExtensionRunnerInfoProvider:
     def __init__(

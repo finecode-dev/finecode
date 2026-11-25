@@ -69,8 +69,7 @@ class MkdocsBuildDocsHandler(
 
         self.logger.debug(f"Running mkdocs build: {cmd_parts!r}")
 
-        process = await self.command_runner.run(cmd_parts, cwd=project_dir)
-        await process.wait_for_end()
+        process = await self.command_runner.run_to_completion(cmd_parts, cwd=project_dir)
 
         exit_code = process.get_exit_code()
         stdout = process.get_output()

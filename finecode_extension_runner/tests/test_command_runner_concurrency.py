@@ -1,10 +1,8 @@
 """`CommandRunner` draws from the ER's shared process-slot gate (ADR-0090).
 
-The slot is acquired before spawning and released only when the process
-actually exits (via a background task watching `proc.wait()`), not when
-`run()` returns — `run()` only spawns and returns immediately, so a bound
-scoped to `run()`'s body alone would release almost instantly and fail to
-bound concurrent-alive-subprocess count.
+The slot is acquired at scope entry and released when the scope exits after
+the process (or its group) is gone, so the gate bounds how many subprocesses
+are alive at once, which is what actually causes resource contention.
 
 ``CommandRunnerConfig.max_concurrent_processes`` survives as an *optional*
 local ceiling on top of the shared gate, for a project that wants to pin a
@@ -35,7 +33,8 @@ class _NoopLogger:
     def enable(self, package: str) -> None: ...
 
 
-async def test_second_run_does_not_spawn_until_first_process_exits() -> None:
+async def test_second_scope_waits_until_first_scope_exits() -> None:
+    """The gate is held for the scope's life, not just until spawn returns."""
     runner = CommandRunner(
         logger=_NoopLogger(),
         config=CommandRunnerConfig(),
@@ -43,31 +42,26 @@ async def test_second_run_does_not_spawn_until_first_process_exits() -> None:
     )
     loop = asyncio.get_running_loop()
 
-    task1 = asyncio.create_task(
-        runner.run([sys.executable, "-c", "import time; time.sleep(0.3)"])
-    )
-    # Give task1 a head start so it acquires the slot first.
-    await asyncio.sleep(0.05)
-    task2 = asyncio.create_task(
-        runner.run([sys.executable, "-c", "import time; time.sleep(0.01)"])
-    )
+    async def enter_second() -> None:
+        async with runner.run([sys.executable, "-c", "import time; time.sleep(0.01)"]) as proc2:
+            await proc2.wait_for_end()
 
     start1 = loop.time()
-    proc1 = await task1
-    elapsed1 = loop.time() - start1
-
-    start2 = loop.time()
-    proc2 = await task2
-    elapsed2 = loop.time() - start2
-
-    # task1's run() returns quickly — it acquired the slot immediately.
-    assert elapsed1 < 0.2
-    # task2's run() had to wait for task1's *process* (not just task1's run()
-    # call) to actually exit before it could acquire the slot and spawn.
-    assert elapsed2 > 0.15
-
-    await proc1.wait_for_end()
-    await proc2.wait_for_end()
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(0.3)"]
+    ) as proc1:
+        elapsed1 = loop.time() - start1
+        # The first scope entered quickly — it acquired the slot immediately.
+        assert elapsed1 < 0.2
+        start2 = loop.time()
+        task2 = asyncio.create_task(enter_second())
+        # Give task2 a chance to block on the held slot.
+        await asyncio.sleep(0.05)
+        assert not task2.done()
+        await proc1.wait_for_end()
+    # Leaving the first scope released the slot; the second scope ran after.
+    await asyncio.wait_for(task2, timeout=5.0)
+    assert loop.time() - start2 > 0.2
 
 
 async def test_two_processes_run_concurrently_when_budget_allows_it() -> None:
@@ -79,15 +73,18 @@ async def test_two_processes_run_concurrently_when_budget_allows_it() -> None:
     loop = asyncio.get_running_loop()
 
     start = loop.time()
-    proc1 = await runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"])
-    proc2 = await runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"])
-    elapsed = loop.time() - start
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(0.2)"]
+    ) as proc1:
+        async with runner.run(
+            [sys.executable, "-c", "import time; time.sleep(0.2)"]
+        ) as proc2:
+            elapsed = loop.time() - start
 
-    # Both spawn without waiting on each other.
-    assert elapsed < 0.15
-
-    await proc1.wait_for_end()
-    await proc2.wait_for_end()
+            # Both spawn without waiting on each other.
+            assert elapsed < 0.15
+            await proc2.wait_for_end()
+        await proc1.wait_for_end()
 
 
 async def test_config_without_explicit_limit_has_no_local_cap() -> None:
@@ -111,23 +108,23 @@ async def test_configured_limit_still_caps_below_the_gate() -> None:
     )
     loop = asyncio.get_running_loop()
 
-    task1 = asyncio.create_task(
-        runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"])
-    )
-    await asyncio.sleep(0.05)
-    task2 = asyncio.create_task(
-        runner.run([sys.executable, "-c", "import time; time.sleep(0.01)"])
-    )
+    async def enter_second() -> None:
+        async with runner.run(
+            [sys.executable, "-c", "import time; time.sleep(0.01)"]
+        ) as proc2:
+            await proc2.wait_for_end()
 
-    start2 = loop.time()
-    proc2 = await task2
-    elapsed2 = loop.time() - start2
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(0.2)"]
+    ) as proc1:
+        start2 = loop.time()
+        task2 = asyncio.create_task(enter_second())
+        await asyncio.sleep(0.05)
+        assert not task2.done()
+        await proc1.wait_for_end()
 
-    assert elapsed2 > 0.1
-
-    proc1 = await task1
-    await proc1.wait_for_end()
-    await proc2.wait_for_end()
+    await asyncio.wait_for(task2, timeout=5.0)
+    assert loop.time() - start2 > 0.1
 
 
 def test_resolve_prefers_configured_value() -> None:
@@ -154,6 +151,7 @@ class _BudgetBackend:
 
     def __init__(self) -> None:
         self.hold: asyncio.Event | None = None
+        self.release_hold: asyncio.Event | None = None
         self._issued = 0
         self.outstanding: set[str] = set()
 
@@ -166,6 +164,8 @@ class _BudgetBackend:
         return lease_id
 
     async def release(self, lease_id: str) -> None:
+        if self.release_hold is not None:
+            await self.release_hold.wait()
         self.outstanding.remove(lease_id)
 
 
@@ -200,7 +200,11 @@ async def test_run_cancelled_while_waiting_for_lease_holds_nothing() -> None:
     assert runner._local_cap is not None
     permits_before = runner._local_cap._value
 
-    task = asyncio.create_task(runner.run([sys.executable, "-c", "pass"]))
+    async def enter() -> None:
+        async with runner.run([sys.executable, "-c", "pass"]):
+            pass  # pragma: no cover
+
+    task = asyncio.create_task(enter())
     await asyncio.sleep(0.05)
     assert slots.in_flight == 1
 
@@ -221,23 +225,69 @@ async def test_run_cancelled_while_waiting_for_local_cap_releases_its_lease() ->
     assert runner._local_cap is not None
 
     # The first process holds the only local-cap permit.
-    proc1 = await runner.run([sys.executable, "-c", "import time; time.sleep(5)"])
-    in_flight_before = slots.in_flight
-    permits_before = runner._local_cap._value
-    leases_before = set(backend.outstanding)
+    async with runner.run([sys.executable, "-c", "import time; time.sleep(5)"]) as proc1:
+        in_flight_before = slots.in_flight
+        permits_before = runner._local_cap._value
+        leases_before = set(backend.outstanding)
 
-    task = asyncio.create_task(runner.run([sys.executable, "-c", "pass"]))
-    await asyncio.sleep(0.05)
-    # Lease granted, now blocked on the local-cap permit.
-    assert slots.in_flight == in_flight_before + 1
-    assert len(backend.outstanding) == len(leases_before) + 1
+        async def enter() -> None:
+            async with runner.run([sys.executable, "-c", "pass"]):
+                pass  # pragma: no cover
 
-    await _cancel_and_settle(task)
+        task = asyncio.create_task(enter())
+        await asyncio.sleep(0.05)
+        # Lease granted, now blocked on the local-cap permit.
+        assert slots.in_flight == in_flight_before + 1
+        assert len(backend.outstanding) == len(leases_before) + 1
 
-    try:
+        await _cancel_and_settle(task)
+
         assert slots.in_flight == in_flight_before
         assert runner._local_cap._value == permits_before
         assert backend.outstanding == leases_before
-    finally:
-        proc1.async_subprocess.kill()
-        await proc1.async_subprocess.wait()
+
+
+async def test_entry_cancel_returns_slot_without_waiting_for_wm_release() -> None:
+    """A cancelled entry frees local state even when the WM never answers.
+
+    If the local slot stayed held until the WM acknowledged the release, a
+    stalled WM would wedge the runner; the lease is released in the
+    background instead."""
+    runner, slots, backend = _runner_with_budget(target=2, local_cap=1)
+    assert runner._local_cap is not None
+
+    async with runner.run([sys.executable, "-c", "import time; time.sleep(5)"]):
+        in_flight_before = slots.in_flight
+        permits_before = runner._local_cap._value
+        backend.release_hold = asyncio.Event()
+
+        async def enter() -> None:
+            async with runner.run([sys.executable, "-c", "pass"]):
+                pass  # pragma: no cover
+
+        task = asyncio.create_task(enter())
+        await asyncio.sleep(0.05)
+        assert slots.in_flight == in_flight_before + 1
+        leases_before = set(backend.outstanding)
+
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        elapsed = loop.time() - start
+        try:
+            assert elapsed < 0.5
+            assert slots.in_flight == in_flight_before
+            assert runner._local_cap._value == permits_before
+            # WM release still pending in the background.
+            assert len(backend.outstanding) == len(leases_before)
+        finally:
+            backend.release_hold.set()
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if len(backend.outstanding) == len(leases_before) - 1:
+                break
+        assert len(backend.outstanding) == len(leases_before) - 1

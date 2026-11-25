@@ -16,7 +16,7 @@ dependencies = [
   "fine_python_uv~=0.2.0",
   "fine_semantic_tokens~=0.1.0",
   "finecode_common~=0.1.0",
-  "finecode_extension_api~=0.5.0",
+  "finecode_extension_api~=0.6.0",
   # SCM-versioned via setuptools-scm: keep a0 so pre-releases between tags satisfy the range (see developing-finecode.md). Do not stabilize until the stable tag exists.
   "finecode_extension_runner~=0.4.0a0",
   "finecode_jsonrpc~=0.1.1",

@@ -47,8 +47,7 @@ class GitPushGitRefsHandler(
             args += payload.refs
 
             cmd = args
-            process = await self.command_runner.run(cmd, cwd=cwd)
-            await process.wait_for_end()
+            process = await self.command_runner.run_to_completion(cmd, cwd=cwd)
 
             exit_code = process.get_exit_code()
             stdout = process.get_output()

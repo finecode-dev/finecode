@@ -51,6 +51,7 @@ from finecode_extension_runner import (
     er_wal,
     global_state,
     logs,
+    owned_commands,
     process_slots,
     run_context,
     schemas,
@@ -339,6 +340,7 @@ class ErServer:
     ) -> None:
         """Start the server on stdin/stdout."""
         logger.info("Starting ER server on stdio")
+        owned_commands.get_owned_commands().bind_loop(asyncio.get_running_loop())
         transport = finecode_jsonrpc_module.ServerStdioTransport(
             readable_id="er_server"
         )
@@ -352,6 +354,7 @@ class ErServer:
             await transport._stop_event.wait()
         finally:
             await _release_lag_monitor(self)
+            await owned_commands.get_owned_commands().close_all()
         await self._finecode_exit_stack.aclose()
         logger.debug("ER server stdio loop finished")
 
@@ -385,6 +388,7 @@ class ErServer:
             if self._tcp_server is not None:
                 self._tcp_server.close()
 
+        owned_commands.get_owned_commands().bind_loop(asyncio.get_running_loop())
         self._tcp_server = await asyncio.start_server(_handle_connection, host, port)
         addrs = ", ".join(str(sock.getsockname()) for sock in self._tcp_server.sockets)
         logger.info(f"Serving on {addrs}")
@@ -396,6 +400,7 @@ class ErServer:
             logger.debug("TCP server closed")
         finally:
             await _release_lag_monitor(self)
+            await owned_commands.get_owned_commands().close_all()
             logger.debug("Close exit stack")
             await self._finecode_exit_stack.aclose()
             logger.debug("ER TCP server stopped")

@@ -8,6 +8,7 @@ run, unstartable npm -- must land in exactly the right result list.
 from __future__ import annotations
 
 import pathlib
+import typing
 
 import pytest
 from fine_system_setup.setup_system_action import (
@@ -68,6 +69,17 @@ class _FakeCommandRunner:
         exit_code, stdout, stderr = self._responses.pop(0)
         return _FakeProcess(exit_code, stdout, stderr)
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> typing.Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+
     def run_sync(
         self,
         cmd: icommandrunner.Argv,
@@ -94,6 +106,17 @@ class _RaisingCommandRunner:
         icommandrunner.check_argv(cmd)
         self.calls.append(list(cmd))
         raise self._error
+
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> typing.Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
 
     def run_sync(
         self,
@@ -245,7 +268,11 @@ async def test_unstartable_npm_reports_which_program_could_not_start(
     escape as an unhandled exception instead of a collected setup failure.
     """
     _patch_which(monkeypatch, codex=None, npm="/fake/bin/npm")
-    runner = _RaisingCommandRunner(FileNotFoundError(2, "No such file or directory"))
+    runner = _RaisingCommandRunner(
+        icommandrunner.ProgramStartError(
+            "npm", None, FileNotFoundError(2, "No such file or directory")
+        )
+    )
 
     result = await run_handler(
         InstallCodexHandler,

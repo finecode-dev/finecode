@@ -74,11 +74,10 @@ class BuildArtifactPyHandler(
         else:
             dist_dir = project_dir / "dist"
 
-        process = await self.command_runner.run(
+        process = await self.command_runner.run_to_completion(
             cmd=cmd,
             cwd=project_dir,
         )
-        await process.wait_for_end()
 
         exit_code = process.get_exit_code()
         if exit_code != 0:

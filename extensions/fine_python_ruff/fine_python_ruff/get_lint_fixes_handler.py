@@ -216,10 +216,9 @@ class RuffGetLintFixesHandler(
         if self.config.preview:
             cmd.append("--preview")
 
-        ruff_process = await self.command_runner.run(cmd)
-        ruff_process.write_to_stdin(file_content)
-        ruff_process.close_stdin()
-        await ruff_process.wait_for_end()
+        ruff_process = await self.command_runner.run_to_completion(
+            cmd, input=file_content
+        )
 
         output = ruff_process.get_output()
         try:

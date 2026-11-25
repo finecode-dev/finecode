@@ -261,8 +261,8 @@ class InstallPiPackagesHandler(
 
         list_cmd = ["pi", "list", "--approve"]
         try:
-            list_process = await self.command_runner.run(list_cmd, cwd=cwd, env=env)
-        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            list_process = await self.command_runner.run_to_completion(list_cmd, cwd=cwd, env=env)
+        except icommandrunner.CommandStartError as error:
             for src in supported:
                 failed.append(
                     f"pi package {src}: "
@@ -270,7 +270,6 @@ class InstallPiPackagesHandler(
                 )
             self.logger.error(backend_support.spawn_error(list_cmd[0], error))
             return SetupSystemRunResult(failed=failed)
-        await list_process.wait_for_end()
         if list_process.get_exit_code() != 0:
             full, short = _error_text(list_process)
             for src in supported:
@@ -325,10 +324,10 @@ class InstallPiPackagesHandler(
                     await progress.report(f"pi install {src}")
                     install_cmd = ["pi", "install", src, "-l", "--approve"]
                     try:
-                        process = await self.command_runner.run(
+                        process = await self.command_runner.run_to_completion(
                             install_cmd, cwd=cwd, env=env
                         )
-                    except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+                    except icommandrunner.CommandStartError as error:
                         failed.append(
                             f"pi package {src}: "
                             f"{backend_support.spawn_error(install_cmd[0], error)}"
@@ -337,7 +336,6 @@ class InstallPiPackagesHandler(
                             backend_support.spawn_error(install_cmd[0], error)
                         )
                         continue
-                    await process.wait_for_end()
                     await progress.advance(1)
                     if process.get_exit_code() == 0:
                         self.logger.info(f"pi package {src} installed")
@@ -350,13 +348,12 @@ class InstallPiPackagesHandler(
         if installed_sources:
             check_cmd = ["pi", "list", "--approve"]
             try:
-                check_process = await self.command_runner.run(
+                check_process = await self.command_runner.run_to_completion(
                     check_cmd, cwd=cwd, env=env
                 )
-            except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            except icommandrunner.CommandStartError as error:
                 self.logger.warning(backend_support.spawn_error(check_cmd[0], error))
                 return SetupSystemRunResult(failed=failed)
-            await check_process.wait_for_end()
             if check_process.get_exit_code() != 0:
                 _full, short = _error_text(check_process)
                 self.logger.warning(short)

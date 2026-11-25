@@ -191,6 +191,17 @@ class _RecordingCommandRunner:
         self.run_seen.append((list(cmd), cwd, env, new_process_group))
         raise AssertionError("agent processes must start through start_long_running")
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+
     async def start_long_running(
         self,
         cmd: icommandrunner.Argv,
@@ -420,6 +431,17 @@ class _SpawnMethodRunner:
         self.run_seen.append((list(cmd), cwd, env, new_process_group))
         raise AssertionError("agent processes must start through start_long_running")
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+
     async def start_long_running(
         self,
         cmd: icommandrunner.Argv,
@@ -432,7 +454,9 @@ class _SpawnMethodRunner:
         self.run_seen.append((list(cmd), cwd, env, new_process_group))
         if self._error is not None:
             raise self._error
-        raise FileNotFoundError(2, "No such file or directory")
+        raise icommandrunner.ProgramStartError(
+            "codex", None, FileNotFoundError(2, "No such file or directory")
+        )
 
     def run_sync(
         self,
@@ -525,8 +549,12 @@ async def test_agent_spawns_through_start_long_running_in_a_new_group() -> None:
 @pytest.mark.parametrize(
     "error",
     [
-        FileNotFoundError(2, "No such file or directory"),
-        PermissionError(13, "Permission denied"),
+        icommandrunner.ProgramStartError(
+            "codex", None, FileNotFoundError(2, "No such file or directory")
+        ),
+        icommandrunner.ProgramStartError(
+            "codex", None, PermissionError(13, "Permission denied")
+        ),
         icommandrunner.UnsafeBatchArgumentError(
             "argument 1 cannot be passed safely to batch file codex.cmd"
         ),
@@ -1154,7 +1182,11 @@ async def test_used_paths_are_gone_after_success_and_after_spawn_failure(
         created.append(tmp.name)
         return tmp
 
-    runner = _SpawnMethodRunner(FileNotFoundError(2, "No such file"))
+    runner = _SpawnMethodRunner(
+        icommandrunner.ProgramStartError(
+            "codex", None, FileNotFoundError(2, "No such file")
+        )
+    )
     with unittest.mock.patch.object(
         codex_agent_handler.tempfile, "TemporaryDirectory", _tracking_tmpdir
     ):
@@ -1255,6 +1287,17 @@ class _StubRunner:
     ) -> Any:
         self.seen.append((list(cmd), cwd, env, new_process_group))
         raise AssertionError("agent processes must start through start_long_running")
+
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
 
     def run_sync(
         self,
@@ -1954,7 +1997,20 @@ class _NoProbeRunner(_StubRunner):
         new_process_group: bool = False,
     ) -> Any:
         _ = (cmd, cwd, env, new_process_group)
-        raise FileNotFoundError(2, "No such file or directory")
+        raise icommandrunner.ProgramStartError(
+            "codex", None, FileNotFoundError(2, "No such file or directory")
+        )
+
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
 
 
 class _BrokenPipeProcess(_ScriptedProcess):

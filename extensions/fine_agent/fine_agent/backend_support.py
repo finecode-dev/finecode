@@ -12,6 +12,8 @@ import json
 import re
 import typing
 
+from finecode_extension_api.interfaces import icommandrunner
+
 __all__ = [
     "InvalidJsonBlock",
     "MissingJsonBlock",
@@ -54,13 +56,13 @@ def unknown_profile_error(name: str, configured: typing.Iterable[str]) -> str:
     return f"unknown agent profile {name!r}; configured profiles: {names}"
 
 
-def spawn_error(program: str, error: BaseException) -> str:
+def spawn_error(program: str, error: icommandrunner.CommandStartError) -> str:
     """The failure message for a backend process that could not be started.
 
-    `run()` raises instead of returning an exit code for an unstartable
-    program -- missing from PATH being only one cause (a missing `cwd` is the
-    same `FileNotFoundError`) -- so the message names the program without
-    claiming where it should have come from.
+    `ICommandRunner` raises `CommandStartError` instead of returning an exit
+    code for an unstartable program -- missing from PATH being only one cause
+    (a missing `cwd` is the same `ENOENT`) -- so the message names the
+    program without claiming where it should have come from.
     """
     detail = getattr(error, "strerror", None) or str(error)
     return f"could not start {program}: {detail}"

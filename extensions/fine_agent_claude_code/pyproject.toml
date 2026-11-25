@@ -7,7 +7,7 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
   "fine_agent~=0.1.0",
   "fine_system_setup~=0.1.0",
-  "finecode_extension_api~=0.5.1"
+  "finecode_extension_api~=0.6.0"
 ]
 
 [dependency-groups]

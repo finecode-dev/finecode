@@ -1,6 +1,7 @@
+import contextlib
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Protocol, TypeAlias
+from typing import Literal, Protocol, TypeAlias
 
 Argv: TypeAlias = list[str] | tuple[str, ...]
 """A command as an argv vector: one element per argument, no shell parsing.
@@ -42,13 +43,20 @@ def check_argv(cmd: object) -> None:
             )
 
 
-class CommandNotLaunchableError(ValueError):
+class CommandStartError(Exception):
+    """A command could not be started; no process of it is running.
+
+    The one exception a caller catches to turn an unstartable command into a
+    structured failure. Its subtypes say why.
+    """
+
+
+class CommandNotLaunchableError(CommandStartError):
     """A command vector cannot be started as given, before any process runs.
 
     The two refusal subtypes are `UnsafeBatchArgumentError` (an argument a
     Windows batch shim would reinterpret) and `UnlaunchableProgramError` (a
-    program file no OS spawner can start). Distinct from the `OSError` a
-    missing or unstartable program raises at spawn time.
+    program file no OS spawner can start).
     """
 
 
@@ -70,6 +78,42 @@ class UnlaunchableProgramError(CommandNotLaunchableError):
     `.bat`. A bare program name that resolves to anything else (a `.js` or
     `.py` script, say) cannot be started without an interpreter in argv.
     """
+
+
+class ProgramStartError(CommandStartError):
+    """The OS failed to start the program (for example, it does not exist).
+
+    `errno` and `strerror` come from the spawn's `OSError`, which is also the
+    `__cause__`. A missing program and a missing `cwd` share `ENOENT`, so the
+    message names both rather than guessing which one is absent.
+    """
+
+    def __init__(self, program: str, cwd: Path | None, error: OSError) -> None:
+        self.program: str = program
+        self.cwd: Path | None = cwd
+        self.errno: int | None = error.errno
+        self.strerror: str | None = error.strerror
+        detail = error.strerror or str(error)
+        location = f" in {cwd}" if cwd is not None else ""
+        super().__init__(f"could not start {program}{location}: {detail}")
+
+
+class OwnedProcessNotStoppedError(RuntimeError):
+    """A bounded scope exited while the owned process group was still alive."""
+
+    def __init__(self, pids: tuple[int, ...]) -> None:
+        self.pids: tuple[int, ...] = pids
+        super().__init__(
+            "Owned process group still alive: " + ", ".join(str(p) for p in pids)
+        )
+
+
+class ProcessOutputIncompleteError(RuntimeError):
+    """Buffered output is incomplete after a drain failure or abandonment."""
+
+    def __init__(self, stream: Literal["stdout", "stderr"], reason: str) -> None:
+        self.stream: Literal["stdout", "stderr"] = stream
+        super().__init__(f"Process {stream} output incomplete: {reason}")
 
 
 class IProcess(Protocol):
@@ -155,14 +199,23 @@ class IAsyncProcess(IProcess, Protocol):
 
 
 class ICommandRunner(Protocol):
-    async def run(
+    def run(
         self,
         cmd: Argv,
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
-        new_process_group: bool = False,
-    ) -> IAsyncProcess:
-        """Spawn a command from an argv vector; return without waiting for it.
+        new_process_group: bool = True,
+    ) -> contextlib.AbstractAsyncContextManager[IAsyncProcess]:
+        """Spawn a command as a scoped unit of work; the scope owns the process.
+
+        Entering the scope spawns the process; leaving it stops whatever is
+        still alive on a bounded ladder (SIGTERM, then SIGKILL after a grace
+        on the owned group, or one tree kill on Windows), waits a bounded
+        time until the process or group is gone, releases the work slot and
+        the local-cap permit, waits a bounded time for the WM release, and
+        propagates under the body's exception precedence. Accepted costs: an
+        escaped `setsid` descendant, a no-group descendant, Windows best
+        effort, an unanswered WM release, unconfirmable survivors.
 
         Each element is passed to the program as exactly one argument, on any
         OS: no shell parses the command line, so nothing has to be quoted or
@@ -175,14 +228,17 @@ class ICommandRunner(Protocol):
         `["bash", "-c", ...]` explicitly and owns its quoting.
 
         `new_process_group` puts the command in a session of its own, which
-        makes `terminate()`/`kill()` reach everything it spawned rather than
-        just the process itself. Off by default because it also detaches the
-        command from the terminal's signals: a caller that never tears a
-        process down would only lose the Ctrl-C that used to reach it. Callers
-        that own a subprocess tree for the length of a run -- an agent that
-        runs tools of its own -- want it on.
+        makes the stop reach everything it spawned rather than just the
+        process itself.
 
-        Raises:
+        After exit from the scope, `get_exit_code` and
+        the buffered outputs stay readable. The scope object is single-use:
+        entering it twice raises `RuntimeError`. Exiting never suppresses an
+        exception. Only call it on the ER's event loop. The scope, not the
+        handler run, owns the process: background work that outlives a run
+        holds the scope open in its own task, and the ER ends it at stop.
+
+        Raises (from the scope's entry, never from this call):
             TypeError: `cmd` is a `str` (a shell command line is rejected on
                 purpose), not a `list`/`tuple`, or has a non-`str` element.
             ValueError: `cmd` is empty.
@@ -190,8 +246,47 @@ class ICommandRunner(Protocol):
                 shim would be reinterpreted by cmd.exe.
             UnlaunchableProgramError: a bare program name on Windows resolves
                 to a file the OS cannot launch.
-            OSError: the program could not be started (for example, it does
-                not exist).
+            ProgramStartError: the OS could not start the program (for
+                example, it does not exist).
+            OwnedProcessNotStoppedError: the body completed normally but the
+                owned group was still alive at the bound.
+        """
+        ...
+
+    async def run_to_completion(
+        self,
+        cmd: Argv,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> IAsyncProcess:
+        """Run a command as one unit of work and return its finished process.
+
+        Writes `input` to stdin when given, always closes stdin, waits for the
+        end of the process (at most `timeout` seconds), and returns the
+        finished process carrying its exit code and outputs. There is no
+        teardown code to write: the scope owns the process while it runs.
+
+        A nonzero exit is returned, not raised. `TimeoutError` (from
+        `timeout`) and drain errors are raised after the scope exits, with the
+        process already stopped. `ProcessOutputIncompleteError` is raised
+        from output reads when a stream was truncated or abandoned.
+
+        There is no grace parameter: the scope stops what is still alive on a
+        fixed bounded ladder. Only call this on the ER's event loop.
+
+        Raises:
+            TypeError: `cmd` is a `str`, not a `list`/`tuple`, or has a
+                non-`str` element.
+            ValueError: `cmd` is empty.
+            UnsafeBatchArgumentError: an argument to a Windows `.cmd`/`.bat`
+                shim would be reinterpreted by cmd.exe.
+            UnlaunchableProgramError: a bare program name on Windows resolves
+                to a file the OS cannot launch.
+            ProgramStartError: the OS could not start the program (for
+                example, it does not exist).
         """
         ...
 
@@ -201,8 +296,8 @@ class ICommandRunner(Protocol):
         """Spawn a command from an argv vector and block on it. See `run`.
 
         Same contract as `run` — one argv element per argument, no shell, the
-        same refusals and `OSError` on an unstartable program — minus the
-        process-group option.
+        same refusals and `ProgramStartError` on an unstartable program —
+        minus the process-group option.
         """
         ...
 
@@ -213,7 +308,20 @@ class ICommandRunner(Protocol):
         env: dict[str, str] | None = None,
         new_process_group: bool = False,
     ) -> IAsyncProcess:
-        """Same contract as `run`, for a process whose lifetime is not a unit of
-        work (a server, an interactive agent). Takes no work slot and no local
-        cap. CPU-heavy requests sent to it take IWorkSlots.acquire()."""
+        """Spawn a command as a process whose lifetime is not a unit of work.
+
+        For a server, an interactive agent, or any child that outlives the
+        request that started it: spawns and returns immediately. Takes no
+        work slot and no local-cap permit, and the caller owns the lifetime
+        outright — nothing is stopped at any scope exit, and the slot and
+        permit are never taken. CPU-heavy requests sent to it take
+        IWorkSlots.acquire().
+
+        Output keeps prefix semantics: `get_output` returns whatever was
+        accumulated even after a drain failure, and never raises
+        `ProcessOutputIncompleteError`.
+
+        Raises the same argv errors and `CommandStartError` subtypes as
+        `run_to_completion`.
+        """
         ...

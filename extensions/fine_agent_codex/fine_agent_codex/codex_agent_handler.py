@@ -257,7 +257,7 @@ class CodexAgentHandler(
                     cwd=project_dir,
                     new_process_group=True,
                 )
-            except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            except icommandrunner.CommandStartError as error:
                 failed = RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
                     error=backend_support.spawn_error(command[0], error),
@@ -415,7 +415,7 @@ class CodexAgentHandler(
                     cwd=project_dir,
                     new_process_group=True,
                 )
-            except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            except icommandrunner.CommandStartError as error:
                 return self._continuation_failure(
                     payload,
                     backend_support.spawn_error(command[0], error),
@@ -824,22 +824,13 @@ class CodexAgentHandler(
 
     async def _probe_backend_version(self) -> tuple[str | None, str | None]:
         try:
-            process = await self.command_runner.run([*self._executable(), "--version"])
-        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
-            return None, f"codex version probe failed: {error}"
-        try:
-            await asyncio.wait_for(process.wait_for_end(), timeout=_VERSION_TIMEOUT_SEC)
+            process = await self.command_runner.run_to_completion(
+                [*self._executable(), "--version"], timeout=_VERSION_TIMEOUT_SEC
+            )
         except TimeoutError:
-            with contextlib.suppress(Exception):
-                process.terminate()
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(
-                    process.wait_for_end(), timeout=_SIGNAL_GRACE_SEC
-                )
-            if process.is_alive():
-                with contextlib.suppress(Exception):
-                    process.kill()
             return None, "codex version probe timed out"
+        except icommandrunner.CommandStartError as error:
+            return None, f"codex version probe failed: {error}"
         except Exception as error:  # noqa: BLE001
             return None, f"codex version probe failed: {error}"
         try:

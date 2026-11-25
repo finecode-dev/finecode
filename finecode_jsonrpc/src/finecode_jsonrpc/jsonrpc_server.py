@@ -128,6 +128,7 @@ class JsonRpcServerSession:
 
         self._connection_id: str = ""
         self._peer_id: str = "client"
+        self._transport_closed = False
 
         self._next_id: int = 0
         # Pending outbound requests (server → client)
@@ -174,6 +175,7 @@ class JsonRpcServerSession:
         Call this before starting the transport.
         """
         self._transport = transport
+        self._transport_closed = False
         self._connection_id = uuid.uuid4().hex
         self._peer_id = getattr(transport, "_readable_id", "") or "client"
         if self._hop_observer is not None:
@@ -232,6 +234,8 @@ class JsonRpcServerSession:
         """
         if cancel_on_abandon and cancel_notice is not None:
             raise ValueError("cancel_on_abandon and cancel_notice are exclusive")
+        if self._transport_closed:
+            raise RuntimeError("Transport closed before response was received")
         msg_id = self._next_id
         self._next_id += 1
 
@@ -626,6 +630,7 @@ class JsonRpcServerSession:
 
     async def _handle_exit(self) -> None:
         """Cancel pending outbound request futures when transport closes."""
+        self._transport_closed = True
         err = RuntimeError("Transport closed before response was received")
         for fut in list(self._request_futures.values()):
             if not fut.done():

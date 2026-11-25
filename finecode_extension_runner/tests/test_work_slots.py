@@ -145,7 +145,8 @@ async def test_command_runner_run_refused_inside_scope() -> None:
     runner = _runner(gate)
     async with scopes.acquire():
         with pytest.raises(WorkSlotScopeError, match="starting a bounded process"):
-            await runner.run([sys.executable, "-c", "pass"])
+            async with runner.run([sys.executable, "-c", "pass"]):
+                pass  # pragma: no cover
 
 
 async def test_process_executor_submit_refused_inside_scope() -> None:
@@ -211,7 +212,11 @@ async def test_spawned_task_inherits_the_scope() -> None:
     gate, scopes = _slots()
     runner = _runner(gate)
     async with scopes.acquire():
-        task = asyncio.create_task(runner.run([sys.executable, "-c", "pass"]))
+        async def open_scope() -> None:
+            async with runner.run([sys.executable, "-c", "pass"]):
+                pass  # pragma: no cover
+
+        task = asyncio.create_task(open_scope())
         with pytest.raises(WorkSlotScopeError, match="starting a bounded process"):
             await task
 
@@ -238,8 +243,8 @@ async def test_same_calls_succeed_outside_scope() -> None:
 
     async with scopes.acquire():
         pass
-    proc = await runner.run([sys.executable, "-c", "pass"])
-    await proc.wait_for_end()
+    async with runner.run([sys.executable, "-c", "pass"]) as proc:
+        await proc.wait_for_end()
     with executor.activate():
         assert await executor.submit(_identity, 41) == 41
     assert await sender("foo/bar", {}) == {}
@@ -272,16 +277,12 @@ async def test_start_long_running_holds_no_slot() -> None:
 
 
 async def test_run_holds_slot_until_exit() -> None:
-    """A bounded job keeps its slot for its lifetime, not just the spawn."""
+    """A bounded job keeps its slot for the scope's lifetime."""
     gate = ProcessSlots(target=8)
     runner = _runner(gate)
-    proc = await runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"])
-    assert gate.in_flight == 1
-    await proc.wait_for_end()
-    for _ in range(100):
-        if gate.in_flight == 0:
-            break
-        await asyncio.sleep(0.01)
+    async with runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"]) as proc:
+        assert gate.in_flight == 1
+        await proc.wait_for_end()
     assert gate.in_flight == 0
 
 
@@ -296,13 +297,8 @@ async def test_start_long_running_ignores_local_cap() -> None:
     long_proc = await runner.start_long_running(
         [sys.executable, "-c", "import time; time.sleep(0.3)"]
     )
-    short_proc = await asyncio.wait_for(
-        runner.run([sys.executable, "-c", "pass"]), timeout=5
-    )
-    await short_proc.wait_for_end()
+    async with runner.run([sys.executable, "-c", "pass"]) as short_proc:
+        assert gate.in_flight == 1
+        await short_proc.wait_for_end()
     await long_proc.wait_for_end()
-    for _ in range(100):
-        if gate.in_flight == 0:
-            break
-        await asyncio.sleep(0.01)
     assert gate.in_flight == 0

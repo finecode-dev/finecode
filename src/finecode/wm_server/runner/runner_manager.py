@@ -211,6 +211,7 @@ def _make_runner_client(
         readable_id=runner.readable_id,
         tracing=telemetry.JsonRpcTracingHooks(),
         hop_observer=telemetry.hop_observer(),
+        kill_descendant_groups=True,
     )
 
 

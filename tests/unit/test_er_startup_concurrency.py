@@ -15,6 +15,7 @@ ends before RUNNING leaves no process and releases the slot (AC4).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import pathlib
 import re
@@ -53,13 +54,17 @@ class _FakeJsonRpcClient:
     wait_forever: bool = False
     spawn_wait_sec: float = 0.0
 
-    def __init__(self, *, message_types, readable_id, tracing=None) -> None:
+    def __init__(
+        self, *, message_types, readable_id, tracing=None, hop_observer=None, **_kwargs
+    ) -> None:
         self.readable_id = readable_id
+        self.initialize_entered = asyncio.Event()
         self.pid = None
         self.server_exit_callback = None
         self.force_kill_called = False
         self.start_entered = asyncio.Event()
         self.feature_impls: dict[str, object] = {}
+        self.sync_feature_impls: dict[str, object] = {}
         self._kill_requested = False
         self.killed_on_spawn = False
         self.startup_timeline = finecode_jsonrpc.StartupTimeline()
@@ -80,8 +85,19 @@ class _FakeJsonRpcClient:
         self.force_kill_called = True
         self._kill_requested = True
 
-    def feature(self, name, impl) -> None:
+    def feature(self, name, impl, *, on_peer_cancel=None) -> None:
         self.feature_impls[name] = impl
+
+    def feature_sync(self, name: str, impl: object) -> None:
+        self.sync_feature_impls[name] = impl
+
+    async def send_request(self, method, params=None, timeout=None, **_kwargs):
+        if method == "initialize":
+            self.initialize_entered.set()
+            await asyncio.Event().wait()
+        raise AssertionError(f"unexpected send_request {method}")
+
+    def notify(self, method, params=None) -> None: ...
 
 
 class _MinimalWmBridge:
@@ -135,7 +151,7 @@ def _tracked_make_runner_client(runner) -> _FakeJsonRpcClient:
 
 
 async def _patch_success_init(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _ok_init(runner, project):
+    async def _ok_init(runner, project, ws_context=None):
         return None
 
     class _RunnerInfo:
@@ -622,7 +638,7 @@ async def test_init_failure_releases_the_slot_and_marks_failed(
     await _patch_start_environment(monkeypatch, cap=1, ws_context=ws_context)
     await _patch_success_init(monkeypatch)
 
-    async def _fail_init(runner, project):
+    async def _fail_init(runner, project, ws_context=None):
         raise runner_manager.RunnerFailedToStart("initialize failed")
 
     monkeypatch.setattr(runner_manager, "_init_lsp_client", _fail_init)
@@ -1005,3 +1021,48 @@ async def test_cancel_while_queued_clears_awaiting_flag(
     failed = ws_context.ws_projects_extension_runners[project.dir_path]["e1"]
     assert failed.status == domain.ExtensionRunnerStatus.FAILED
     assert not failed.awaiting_startup_slot
+
+
+async def test_cancel_during_initialize_abandons_and_releases_slot(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling a start blocked in `initialize` marks the runner FAILED and
+    releases the slot through the same abandon path as any start failure.
+
+    The caller still sees `CancelledError`: the 20 s `initialize` timeout is
+    the exchange's own deadline, and abandoning the start must not swallow
+    the cancellation that caused it.
+    """
+    ws_context, project = _make_context(tmp_path)
+    await _patch_start_environment(monkeypatch, cap=1, ws_context=ws_context)
+
+    task = asyncio.create_task(
+        runner_manager._start_runner(
+            project_def=project,
+            env_name="e1",
+            handlers_to_initialize=None,
+            ws_context=ws_context,
+        )
+    )
+    try:
+        async with asyncio.timeout(5):
+            while not _FakeJsonRpcClient.instances:
+                await asyncio.sleep(0.01)
+            await asyncio.wait_for(
+                _FakeJsonRpcClient.instances[0].initialize_entered.wait(),
+                timeout=5,
+            )
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    runner = _runner_from_context(ws_context, project, "e1")
+    _assert_slot_and_runner_state(
+        ws_context, runner, 1, domain.ExtensionRunnerStatus.FAILED
+    )
+    assert _FakeJsonRpcClient.instances[0].force_kill_called

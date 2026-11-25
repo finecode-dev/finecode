@@ -10,6 +10,7 @@ safely are rejected with a typed error before any process starts.
 
 from __future__ import annotations
 
+import errno
 import json
 import re
 import sys
@@ -75,17 +76,17 @@ argument — each must land at the program as exactly one argv element."""
 
 async def test_arguments_arrive_verbatim() -> None:
     """The point of exec: nothing reinterpreted, nothing quoted away."""
-    process = await _runner().run(
+    async with _runner().run(
         [
             sys.executable,
             "-c",
             "import json,sys; print(json.dumps(sys.argv[1:]))",
             *_ARGS,
         ]
-    )
-    await process.wait_for_end()
+    ) as process:
+        await process.wait_for_end()
 
-    assert json.loads(process.get_output()) == _ARGS
+        assert json.loads(process.get_output()) == _ARGS
 
 
 def test_run_sync_arguments_arrive_verbatim() -> None:
@@ -106,7 +107,8 @@ async def test_empty_argv_is_refused_without_taking_a_slot() -> None:
     runner, slots = _runner_with_slots()
 
     with pytest.raises(ValueError, match="must not be empty"):
-        await runner.run([])
+        async with runner.run([]):
+            pass  # pragma: no cover
 
     assert slots.in_flight == 0
 
@@ -115,7 +117,8 @@ async def test_a_shell_string_is_refused_without_taking_a_slot() -> None:
     runner, slots = _runner_with_slots()
 
     with pytest.raises(TypeError, match="shell command string"):
-        await runner.run("echo hi")
+        async with runner.run("echo hi"):  # type: ignore[arg-type]
+            pass  # pragma: no cover
     assert slots.in_flight == 0
 
     with pytest.raises(TypeError, match="shell command string"):
@@ -134,13 +137,76 @@ def test_check_argv_rejects_non_argv_shapes() -> None:
         icommandrunner.check_argv([])
 
 
+_MISSING_PROGRAM = "definitely-not-a-program-xyz"
+
+
+def _assert_missing_program(error: icommandrunner.ProgramStartError) -> None:
+    assert isinstance(error, icommandrunner.CommandStartError)
+    assert not isinstance(error, OSError)
+    assert error.program == _MISSING_PROGRAM
+    assert error.errno == errno.ENOENT
+    assert isinstance(error.__cause__, FileNotFoundError)
+    assert _MISSING_PROGRAM in str(error)
+
+
 async def test_missing_program_raises_and_releases_the_slot() -> None:
     runner, slots = _runner_with_slots()
 
-    with pytest.raises(FileNotFoundError):
-        await runner.run(["definitely-not-a-program-xyz"])
+    with pytest.raises(icommandrunner.ProgramStartError) as excinfo:
+        async with runner.run([_MISSING_PROGRAM]):
+            pass  # pragma: no cover
 
+    _assert_missing_program(excinfo.value)
     assert slots.in_flight == 0
+
+
+async def test_missing_program_raises_from_run_to_completion() -> None:
+    with pytest.raises(icommandrunner.ProgramStartError) as excinfo:
+        await _runner().run_to_completion([_MISSING_PROGRAM])
+
+    _assert_missing_program(excinfo.value)
+
+
+async def test_missing_program_raises_from_start_long_running() -> None:
+    with pytest.raises(icommandrunner.ProgramStartError) as excinfo:
+        await _runner().start_long_running([_MISSING_PROGRAM])
+
+    _assert_missing_program(excinfo.value)
+
+
+def test_missing_program_raises_from_run_sync() -> None:
+    with pytest.raises(icommandrunner.ProgramStartError) as excinfo:
+        _ = _runner().run_sync([_MISSING_PROGRAM])
+
+    _assert_missing_program(excinfo.value)
+
+
+async def test_missing_cwd_names_the_cwd(tmp_path: Path) -> None:
+    missing_cwd = tmp_path / "gone"
+
+    with pytest.raises(icommandrunner.ProgramStartError) as excinfo:
+        await _runner().run_to_completion([sys.executable, "-c", ""], cwd=missing_cwd)
+
+    assert excinfo.value.cwd == missing_cwd
+    assert str(missing_cwd) in str(excinfo.value)
+
+
+async def test_an_oserror_from_the_scope_body_is_not_a_start_error() -> None:
+    """Only spawning raises `CommandStartError`, so a caller catching it around
+    the scope does not also swallow the body's own `OSError`."""
+
+    with pytest.raises(OSError, match="body failure") as excinfo:
+        async with _runner().run([sys.executable, "-c", ""]):
+            raise OSError("body failure")
+
+    assert not isinstance(excinfo.value, icommandrunner.CommandStartError)
+
+
+def test_refusals_are_command_start_errors() -> None:
+    assert issubclass(
+        icommandrunner.CommandNotLaunchableError, icommandrunner.CommandStartError
+    )
+    assert not issubclass(icommandrunner.CommandNotLaunchableError, ValueError)
 
 
 def test_bare_name_on_windows_is_resolved_through_pathext() -> None:

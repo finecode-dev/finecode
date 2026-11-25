@@ -69,8 +69,7 @@ class UvCreateEnvHandler(
             "import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)",
         ]
         self.logger.debug(f"Checking virtualenv validity: {check_cmd!r}")
-        process = await self.command_runner.run(check_cmd)
-        await process.wait_for_end()
+        process = await self.command_runner.run_to_completion(check_cmd)
         if process.get_exit_code() != 0:
             self.logger.debug(
                 f"Virtualenv probe failed for {venv_dir_path}: "
@@ -110,8 +109,7 @@ class UvCreateEnvHandler(
                     cmd.extend(["--python", str(env_info.interpreter)])
                 cmd.append(str(venv_dir_path))
                 self.logger.debug(f"Running uv: {cmd!r}")
-                process = await self.command_runner.run(cmd, cwd=dump_dir)
-                await process.wait_for_end()
+                process = await self.command_runner.run_to_completion(cmd, cwd=dump_dir)
                 if process.get_exit_code() != 0:
                     error_output = process.get_error_output() or process.get_output()
                     return CreateEnvsRunResult(

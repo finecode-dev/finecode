@@ -68,6 +68,17 @@ class _FakeCommandRunner:
         exit_code, stdout, stderr = self._responses.pop(0)
         return _FakeProcess(exit_code, stdout, stderr)
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+
     def run_sync(
         self,
         cmd: icommandrunner.Argv,
@@ -102,6 +113,17 @@ class _InstallRefusingCommandRunner:
         assert self._responses, f"no queued response for command: {cmd}"
         exit_code, stdout, stderr = self._responses.pop(0)
         return _FakeProcess(exit_code, stdout, stderr)
+
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
 
     def run_sync(
         self,

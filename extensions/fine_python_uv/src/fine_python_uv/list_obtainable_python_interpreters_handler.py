@@ -63,8 +63,7 @@ class UvListObtainablePythonInterpretersHandler(
             "--output-format",
             "json",
         ]
-        process = await self.command_runner.run(cmd=command)
-        await process.wait_for_end()
+        process = await self.command_runner.run_to_completion(cmd=command)
 
         if process.get_exit_code() != 0:
             raise code_action.ActionFailedException(

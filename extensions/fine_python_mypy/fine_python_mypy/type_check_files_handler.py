@@ -283,13 +283,13 @@ class MypyTypeCheckFilesHandler(
             *self.DMYPY_ARGS,
             *file_paths_strs,
         ]
-        dmypy_run_process = await self.command_runner.run(
+        async with self.command_runner.run(
             cmd=cmd_parts,
             cwd=cwd,
             env=self.DMYPY_ENV_VARS,
-        )
-        self._dmypy_active_projects.add(cwd)
-        await dmypy_run_process.wait_for_end()
+        ) as dmypy_run_process:
+            self._dmypy_active_projects.add(cwd)
+            await dmypy_run_process.wait_for_end()
         self.logger.debug(f"end in {cwd}")
         self._check_dmypy_process_exit_code(dmypy_process=dmypy_run_process)
         dmypy_output = dmypy_run_process.get_output()

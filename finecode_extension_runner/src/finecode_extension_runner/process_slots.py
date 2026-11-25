@@ -93,6 +93,29 @@ class ProcessSlots:
             logger.warning(f"Process budget lease failed; continuing locally: {exc}")
             return None
 
+    def release_in_background(self, lease_id: str | None) -> None:
+        """Return the local slot at once; release the WM lease in background.
+
+        Decrements the in-flight count before returning and wakes waiters, so
+        an entry failure never waits on the WM. The WM release of a non-None
+        lease runs in a strongly referenced background task."""
+        self._in_flight -= 1
+        cleanup = asyncio.create_task(self._release_after_decrement(lease_id))
+        self._cleanup_tasks.add(cleanup)
+        cleanup.add_done_callback(self._cleanup_tasks.discard)
+
+    async def _release_after_decrement(self, lease_id: str | None) -> None:
+        async with self._condition:
+            self._condition.notify_all()
+        if lease_id is None or self._release_backend is None:
+            return
+        try:
+            await self._release_backend(lease_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(f"Process budget release failed: {exc}")
+
     async def _return_cancelled(self, lease_task: asyncio.Task[str]) -> None:
         """Return the local slot at once, then release the pending grant if any."""
         async with self._condition:

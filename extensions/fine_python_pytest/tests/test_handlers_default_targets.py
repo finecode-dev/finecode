@@ -35,6 +35,19 @@ from fine_python_pytest.run_tests_handler import (
 )
 
 
+class _FakeScope:
+    """Stands in for the owned scope: entering yields the canned process."""
+
+    def __init__(self, process: _FakeProcess) -> None:
+        self._process = process
+
+    async def __aenter__(self):
+        return self._process
+
+    async def __aexit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+        return False
+
+
 class _FakeProcess:
     def __init__(self, exit_code: int = 0, output: str = "") -> None:
         self._exit_code = exit_code
@@ -110,18 +123,30 @@ class _FakeCommandRunner:
         self.envs: list[dict[str, str] | None] = []
         self.process_groups: list[bool] = []
 
-    async def run(
+    def run(
         self,
         cmd: str,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
-        new_process_group: bool = False,
-    ) -> _FakeProcess:
+        new_process_group: bool = True,
+    ) -> _FakeScope:
         self.commands.append(cmd)
         self.cwds.append(cwd)
         self.envs.append(env)
         self.process_groups.append(new_process_group)
-        return _FakeProcess(exit_code=self.exit_code, output="")
+        return _FakeScope(_FakeProcess(exit_code=self.exit_code, output=""))
+
+    async def run_to_completion(
+        self,
+        cmd: str,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> _FakeProcess:
+        async with self.run(cmd, cwd=cwd, env=env) as process:
+            return process
 
     def run_sync(
         self,

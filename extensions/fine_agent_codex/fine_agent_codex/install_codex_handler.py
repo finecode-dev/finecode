@@ -59,15 +59,14 @@ class InstallCodexHandler(
             self.logger.info(f"Running installer: {cmd!r}")
             await progress.report("Running npm install")
             try:
-                process = await self.command_runner.run(cmd)
-            except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+                process = await self.command_runner.run_to_completion(cmd)
+            except icommandrunner.CommandStartError as error:
                 self.logger.error(f"Install failed: {error}")
                 return SetupSystemRunResult(
                     failed=[
                         f"{_TOOL_NAME}: {backend_support.spawn_error(cmd[0], error)}"
                     ]
                 )
-            await process.wait_for_end()
             await progress.advance(1)
 
         exit_code = process.get_exit_code()

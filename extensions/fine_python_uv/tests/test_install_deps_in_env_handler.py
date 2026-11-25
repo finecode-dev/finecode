@@ -75,6 +75,17 @@ class _FakeCommandRunner:
         self.cwds.append(cwd)
         return _FakeProcess(exit_code=self.exit_code, output="")
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> _FakeProcess:
+        return await self.run(cmd, cwd=cwd, env=env)
+
     def run_sync(
         self,
         cmd: icommandrunner.Argv,

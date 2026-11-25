@@ -33,6 +33,7 @@ from loguru import logger
 from finecode_extension_runner import (
     context,
     domain,
+    owned_commands,
     process_slots,
     service_config,
     work_slots,
@@ -136,6 +137,18 @@ def bootstrap(
     # process-wide singleton, registered fresh into each new registry.
     registry.register_instance(
         process_slots.ProcessSlots, process_slots.get_process_slots()
+    )
+    # Open owned-command scopes, shared like the process gate above: it must
+    # outlive every RunnerContext rebuild, so the process-wide
+    # singleton is registered fresh into each new registry. The union key
+    # matches `CommandRunner.__init__`'s annotated parameter exactly, which is
+    # what the DI resolver looks up.
+    registry.register_instance(
+        owned_commands.OwnedCommandRegistry, owned_commands.get_owned_commands()
+    )
+    registry.register_instance(
+        owned_commands.OwnedCommandRegistry | None,
+        owned_commands.get_owned_commands(),
     )
     registry.register_instance(
         iworkslots.IWorkSlots,

@@ -49,38 +49,31 @@ async def test_command_runner_and_process_executor_share_one_gate() -> None:
     )
     executor = ProcessExecutor(process_slots=gate)
 
-    proc = await runner.run([sys.executable, "-c", "import time; time.sleep(0.3)"])
+    async with runner.run([sys.executable, "-c", "import time; time.sleep(0.3)"]) as proc:
 
-    async def _submit() -> int:
-        with executor.activate():
-            return await executor.submit(_identity, 42)
+        async def _submit() -> int:
+            with executor.activate():
+                return await executor.submit(_identity, 42)
 
-    submit_task = asyncio.create_task(_submit())
-    await asyncio.sleep(0.1)
-    assert not submit_task.done()
+        submit_task = asyncio.create_task(_submit())
+        await asyncio.sleep(0.1)
+        assert not submit_task.done()
 
-    await proc.wait_for_end()
+        await proc.wait_for_end()
     assert await asyncio.wait_for(submit_task, timeout=5) == 42
 
 
 async def test_command_runner_releases_slot_when_process_exits() -> None:
-    """The gate slot is held for the process's lifetime, not just `run()`'s
-    body — releasing on return would let unbounded spawns pile up.
-    """
+    """The gate slot is held for the scope's lifetime, not just the spawn."""
     gate = ProcessSlots(target=1)
     runner = CommandRunner(
         logger=_NoopLogger(), config=CommandRunnerConfig(), process_slots=gate
     )
 
-    proc = await runner.run([sys.executable, "-c", "import time; time.sleep(0.1)"])
-    assert gate.in_flight == 1
+    async with runner.run([sys.executable, "-c", "import time; time.sleep(0.1)"]) as proc:
+        assert gate.in_flight == 1
 
-    await proc.wait_for_end()
-    # The release runs in a background task watching `proc.wait()`.
-    for _ in range(100):
-        if gate.in_flight == 0:
-            break
-        await asyncio.sleep(0.01)
+        await proc.wait_for_end()
     assert gate.in_flight == 0
 
 

@@ -20,7 +20,7 @@ from finecode.wm_server.testing import (
 
 _ACTION_SOURCE = "test.actions.TestAction"
 _ACTION_NAME = "test_action"
-_HANDLER_ENV = "testing@cpython-3.14"
+_HANDLER_ENV = "testing-cpython-3.14"
 
 
 def _fake_get_payload_schemas(schemas: dict):
@@ -159,12 +159,12 @@ def _make_matrix_ws_context(
     project = make_multi_env_action_project(
         dir_path=tmp_path,
         action_name=_ACTION_NAME,
-        handler_envs=["testing@cpython-3.13", "testing@cpython-3.14"],
+        handler_envs=["testing-cpython-3.13", "testing-cpython-3.14"],
     )
     for handler in project.actions[0].handlers:
-        if handler.env == "testing@cpython-3.13":
+        if handler.env == "testing-cpython-3.13":
             handler.interpreter = "cpython@3.13"
-        elif handler.env == "testing@cpython-3.14":
+        elif handler.env == "testing-cpython-3.14":
             handler.interpreter = "cpython@3.14"
     ws_context = make_workspace_context(
         project=project,
@@ -177,12 +177,12 @@ def _make_matrix_ws_context(
         "tool": {
             "finecode": {
                 "env": {
-                    "testing@cpython-3.13": {
+                    "testing-cpython-3.13": {
                         "interpreter": "cpython@3.13",
                         "default_interpreters": {"local": "newest"},
                         MATRIX_ENV_KEY: "testing",
                     },
-                    "testing@cpython-3.14": {
+                    "testing-cpython-3.14": {
                         "interpreter": "cpython@3.14",
                         "default_interpreters": {"local": "newest"},
                         MATRIX_ENV_KEY: "testing",
@@ -214,9 +214,9 @@ async def test_schema_fetch_passes_local_selection_to_gate(
     ) -> None:
         recorded.append(kwargs.get("selected_envs_by_project"))
         ws_context.ws_projects_extension_runners[project.dir_path][
-            "testing@cpython-3.14"
+            "testing-cpython-3.14"
         ] = make_running_runner(
-            working_dir_path=tmp_path, env_name="testing@cpython-3.14"
+            working_dir_path=tmp_path, env_name="testing-cpython-3.14"
         )
 
     monkeypatch.setattr(
@@ -234,7 +234,7 @@ async def test_schema_fetch_passes_local_selection_to_gate(
     )
 
     assert result["schemas"][_ACTION_SOURCE] is not None
-    assert recorded == [{tmp_path: {"testing@cpython-3.14"}}]
+    assert recorded == [{tmp_path: {"testing-cpython-3.14"}}]
 
 
 async def test_schema_fetch_passes_no_narrowing_for_ci(
@@ -316,7 +316,7 @@ async def test_schema_fetch_with_unknown_selector_starts_no_child(
 
     assert result["schemas"][_ACTION_SOURCE] is None
     assert gate_selections == [{tmp_path: set()}]
-    assert all(not env.startswith("testing@") for env in started)
+    assert set(started).isdisjoint({"testing-cpython-3.13", "testing-cpython-3.14"})
 
 
 async def test_schema_fetch_with_malformed_selector_skips_start(

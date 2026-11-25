@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import pathlib
 from collections.abc import AsyncIterator
 from typing import Any, cast
@@ -20,6 +22,19 @@ from finecode_extension_api.resource_uri import (
 from finecode_extension_runner.testing import NoOpLogger, run_handler
 
 from fine_python_uv.create_env_handler import UvCreateEnvHandler
+
+
+class _FakeScope:
+    """Stands in for the owned scope: entering yields the canned process."""
+
+    def __init__(self, process: _FakeProcess) -> None:
+        self._process = process
+
+    async def __aenter__(self) -> _FakeProcess:
+        return self._process
+
+    async def __aexit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+        return False
 
 
 class _FakeProcess:
@@ -63,16 +78,29 @@ class _FakeCommandRunner:
         self.commands: list[list[str]] = []
         self.cwds: list[pathlib.Path | None] = []
 
-    async def run(
+    def run(
         self,
         cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
-    ) -> _FakeProcess:
+        new_process_group: bool = True,
+    ) -> contextlib.AbstractAsyncContextManager[_FakeProcess]:
         icommandrunner.check_argv(cmd)
         self.commands.append(list(cmd))
         self.cwds.append(cwd)
-        return _FakeProcess(exit_code=self.exit_code, output="")
+        return _FakeScope(_FakeProcess(exit_code=self.exit_code, output=""))
+
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> _FakeProcess:
+        async with self.run(cmd, cwd=cwd, env=env) as process:
+            return process
 
     def run_sync(
         self,

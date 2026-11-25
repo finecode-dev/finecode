@@ -12,7 +12,7 @@ the reviewer does not notice it:
   any call with `shell=True`, anywhere.
 - **G2** — no `shlex.join`/`shlex.quote`/`shlex.split` in the packages whose
   handlers drive `ICommandRunner`: quoting is never the caller's problem there.
-- **G3** — no `.run(...)`/`.run_sync(...)` on a `command_runner` receiver whose
+- **G3** — no `.run(...)`/`.run_sync(...)`/`.run_to_completion(...)` on a `command_runner` receiver whose
   command argument is a string literal, f-string, `+` concatenation, or
   `.join(...)` result. G3 is a *syntactic* backstop: it catches inline string
   commands but not a string bound to a variable first, nor a runner under
@@ -155,7 +155,7 @@ def _g3_violations(tree: ast.AST) -> list[str]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
-        if node.func.attr not in ("run", "run_sync"):
+        if node.func.attr not in ("run", "run_sync", "run_to_completion"):
             continue
         receiver = node.func.value
         if isinstance(receiver, ast.Attribute):
@@ -238,7 +238,7 @@ def test_no_shell_command_strings_in_tracked_python() -> None:
             for path, items in sorted(violations.items())
         )
         + "\n\nCommands are executed without a shell: pass argv lists to "
-        "ICommandRunner.run/run_sync and never quote or join arguments (ADR-0099)."
+        "ICommandRunner.run/run_sync/run_to_completion and never quote or join arguments (ADR-0099)."
     )
 
 
@@ -268,6 +268,7 @@ def test_g3_flags_string_commands_in_embedded_snippets() -> None:
     for snippet in (
         "await self.command_runner.run('git status')\n",
         "await command_runner.run_sync(f'git {ref}')\n",
+        "await command_runner.run_to_completion('git status')\n",
         "await self.command_runner.run(cmd='git ' + 'status')\n",
         "await self.command_runner.run(' '.join(parts))\n",
     ):

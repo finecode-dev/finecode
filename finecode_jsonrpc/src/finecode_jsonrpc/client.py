@@ -258,6 +258,7 @@ class JsonRpcClient:
         tracing: ITracingHooks | None = None,
         request_cancelled_code: int = error_codes.DEFAULT_REQUEST_CANCELLED,
         hop_observer: IHopObserver | None = None,
+        kill_descendant_groups: bool = False,
     ) -> None:
         self.server_process_stopped: typing.Final = LoopAwareEvent()
         # One-way latch: set by the first send_request timeout or by the inbound
@@ -272,6 +273,10 @@ class JsonRpcClient:
         # Set by a force_kill() that arrives before the spawned pid is known;
         # the spawn side checks it and kills the process itself then.
         self._kill_requested: bool = False
+        # WM-side ER clients kill descendant groups too: an ER's owned
+        # commands and start_long_running children run in sessions of their
+        # own. Every other client keeps the default.
+        self._kill_descendant_groups = kill_descendant_groups
         self.startup_timeline = StartupTimeline()
         self.server_exit_callback: (
             collections.abc.Callable[[], collections.abc.Coroutine] | None
@@ -758,7 +763,9 @@ class JsonRpcClient:
         if self.pid is None:
             return
 
-        force_kill_process_group(self.pid, self.readable_id)
+        force_kill_process_group(
+            self.pid, self.readable_id, descendant_groups=self._kill_descendant_groups
+        )
 
     def _send_data(self, data: str, hop: HopToken | None = None):
         header = (

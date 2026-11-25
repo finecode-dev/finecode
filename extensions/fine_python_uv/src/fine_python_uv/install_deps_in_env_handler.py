@@ -103,8 +103,7 @@ class UvInstallDepsInEnvHandler(
         project_dir_path: pathlib.Path,
     ) -> str | None:
         self.logger.debug(f"Running uv: {cmd!r}")
-        process = await self.command_runner.run(cmd, cwd=project_dir_path)
-        await process.wait_for_end()
+        process = await self.command_runner.run_to_completion(cmd, cwd=project_dir_path)
         process_stdout = process.get_output()
         process_stderr = process.get_error_output()
         if process_stdout:

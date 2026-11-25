@@ -10,7 +10,7 @@ dependencies = [
   "fine_lint~=0.1.0",
   "fine_semantic_tokens~=0.1.0",
   "fine_src_artifacts~=0.1.0",
-  "finecode_extension_api~=0.5.0"
+  "finecode_extension_api~=0.6.0"
 ]
 
 [dependency-groups]

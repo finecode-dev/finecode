@@ -104,10 +104,9 @@ class PyreflyConfig(service.Service):
             or config_path.read_text(encoding="utf-8") != content
         ):
             config_path.write_text(content, encoding="utf-8")
-        dump_config_process = await self._command_runner.run(
+        dump_config_process = await self._command_runner.run_to_completion(
             dump_config_args(self._pyrefly_bin_path, config_path)
         )
-        await dump_config_process.wait_for_end()
         if dump_config_process.get_exit_code() != 0:
             raise code_action.ActionFailedException(
                 f"Generated pyrefly config {config_path} is invalid: "

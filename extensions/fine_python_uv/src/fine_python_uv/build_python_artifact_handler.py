@@ -67,8 +67,7 @@ class UvBuildPythonArtifactHandler(
         )
         self.logger.info(f"Building Python artifact in {project_dir} with: {cmd!r}")
 
-        process = await self.command_runner.run(cmd=cmd, cwd=project_dir)
-        await process.wait_for_end()
+        process = await self.command_runner.run_to_completion(cmd=cmd, cwd=project_dir)
 
         exit_code = process.get_exit_code()
         if exit_code != 0:

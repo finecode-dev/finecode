@@ -29,6 +29,19 @@ _STDOUT = "ImportError: cannot import name '_derive_service_name'"
 _STDERR = "PytestDeprecationWarning: asyncio_default_fixture_loop_scope is unset"
 
 
+class _FakeScope:
+    """Stands in for the owned scope: entering yields the canned process."""
+
+    def __init__(self, process: _Process) -> None:
+        self._process = process
+
+    async def __aenter__(self):
+        return self._process
+
+    async def __aexit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+        return False
+
+
 class _Process:
     def __init__(self, exit_code: int, stdout: str, stderr: str) -> None:
         self._exit_code, self._stdout, self._stderr = exit_code, stdout, stderr
@@ -54,14 +67,14 @@ class _CommandRunner:
         self._process = process
         self._report = report
 
-    async def run(self, cmd, cwd=None, env=None, new_process_group=False):  # type: ignore[no-untyped-def]
+    def run(self, cmd, cwd=None, env=None, new_process_group=True):  # type: ignore[no-untyped-def]
         if self._report is not None:
             prefix = "--json-report-file="
             report_arg = next(a for a in cmd if a.startswith(prefix))
             pathlib.Path(report_arg[len(prefix) :]).write_text(
                 json.dumps(self._report), encoding="utf-8"
             )
-        return self._process
+        return _FakeScope(self._process)
 
 
 class _ProjectInfoProvider:

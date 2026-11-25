@@ -101,26 +101,25 @@ async def _wait_gone(pid: int, timeout: float = 5.0) -> bool:
 
 @pytest.mark.asyncio
 async def test_kill_reaches_a_command_that_ignores_sigterm_and_its_child() -> None:
-    process = await _runner().run(_python(_STUBBORN), new_process_group=True)
+    async with _runner().run(_python(_STUBBORN), new_process_group=True) as process:
+        lines = process.stdout_lines()
+        agent_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
 
-    lines = process.stdout_lines()
-    agent_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
+        process.terminate()
+        with pytest.raises(TimeoutError):
+            await process.wait_for_end(timeout=0.5)
+        assert process.is_alive(), (
+            "SIGTERM is ignored here, so the command is still running -- "
+            "even though the shell that started it may already have exited"
+        )
 
-    process.terminate()
-    with pytest.raises(TimeoutError):
-        await process.wait_for_end(timeout=0.5)
-    assert process.is_alive(), (
-        "SIGTERM is ignored here, so the command is still running -- "
-        "even though the shell that started it may already have exited"
-    )
+        process.kill()
+        with contextlib.suppress(TimeoutError):
+            await process.wait_for_end(timeout=2.0)
 
-    process.kill()
-    with contextlib.suppress(TimeoutError):
-        await process.wait_for_end(timeout=2.0)
-
-    assert await _wait_gone(agent_pid), "the command survived kill()"
-    assert await _wait_gone(child_pid), "the command's child survived kill()"
-    assert not process.is_alive()
+        assert await _wait_gone(agent_pid), "the command survived kill()"
+        assert await _wait_gone(child_pid), "the command's child survived kill()"
+        assert not process.is_alive()
 
 
 @pytest.mark.asyncio
@@ -132,20 +131,19 @@ async def test_is_alive_while_the_command_ignores_sigterm() -> None:
     have exited. A teardown that reads the exit code concludes "gone" and
     stops one rung too early.
     """
-    process = await _runner().run(_python(_STUBBORN), new_process_group=True)
-    lines = process.stdout_lines()
-    agent_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
+    async with _runner().run(_python(_STUBBORN), new_process_group=True) as process:
+        lines = process.stdout_lines()
+        agent_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
 
-    try:
         process.terminate()
         await asyncio.sleep(0.3)
 
         assert process.is_alive()
         assert not _is_gone(agent_pid)
-    finally:
+
         process.kill()
-        await _wait_gone(agent_pid)
-        await _wait_gone(child_pid)
+        assert await _wait_gone(agent_pid)
+        assert await _wait_gone(child_pid)
 
 
 @pytest.mark.asyncio
@@ -156,57 +154,58 @@ async def test_is_alive_tracks_the_group_after_a_forking_launcher_exits() -> Non
     while what it started keeps running in the same group: a teardown that
     stops at the launcher's exit code orphans the work still running under it.
     """
-    process = await _runner().run(_python(_LAUNCHER), new_process_group=True)
-    lines = process.stdout_lines()
-    launcher_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
+    async with _runner().run(_python(_LAUNCHER), new_process_group=True) as process:
+        lines = process.stdout_lines()
+        launcher_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
 
-    process.terminate()
+        process.terminate()
 
-    # `wait_for_end()` cannot return here: the child holds the inherited
-    # stdout pipe open, so the drain never sees EOF. Poll the exit code
-    # instead -- it is set the moment the launcher itself dies.
-    deadline = asyncio.get_running_loop().time() + 5.0
-    while (
-        process.get_exit_code() is None and asyncio.get_running_loop().time() < deadline
-    ):
-        await asyncio.sleep(0.05)
+        # `wait_for_end()` cannot return here: the child holds the inherited
+        # stdout pipe open, so the drain never sees EOF. Poll the exit code
+        # instead -- it is set the moment the launcher itself dies.
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while (
+            process.get_exit_code() is None and asyncio.get_running_loop().time() < deadline
+        ):
+            await asyncio.sleep(0.05)
 
-    assert process.get_exit_code() is not None
-    assert process.is_alive(), (
-        "the child that ignored SIGTERM is still a member of the launcher's "
-        "group, so the group outlives the launcher"
-    )
+        assert process.get_exit_code() is not None
+        assert process.is_alive(), (
+            "the child that ignored SIGTERM is still a member of the launcher's "
+            "group, so the group outlives the launcher"
+        )
 
-    process.kill()
-    assert await _wait_gone(launcher_pid), "the launcher survived kill()"
-    assert await _wait_gone(child_pid), "the child survived kill()"
-    assert not process.is_alive()
+        process.kill()
+        assert await _wait_gone(launcher_pid), "the launcher survived kill()"
+        assert await _wait_gone(child_pid), "the child survived kill()"
+        assert not process.is_alive()
 
 
 @pytest.mark.asyncio
 async def test_terminate_stops_an_ordinary_command_without_a_process_group() -> None:
     """The default spawn keeps the old signal semantics: no session of its own,
     and `terminate()` signals the process rather than a group."""
-    process = await _runner().run(_python("import time; time.sleep(300)"))
+    async with _runner().run(
+        _python("import time; time.sleep(300)"), new_process_group=False
+    ) as process:
+        process.terminate()
+        with contextlib.suppress(TimeoutError):
+            await process.wait_for_end(timeout=2.0)
 
-    process.terminate()
-    with contextlib.suppress(TimeoutError):
-        await process.wait_for_end(timeout=2.0)
-
-    assert not process.is_alive()
-    assert process.get_exit_code() is not None
+        assert not process.is_alive()
+        assert process.get_exit_code() is not None
 
 
 @pytest.mark.asyncio
 async def test_signals_after_exit_are_a_no_op() -> None:
     """A teardown ladder races the exit it is hoping for, and losing that race
     is the good outcome -- not an error to handle."""
-    process = await _runner().run(_python("pass"), new_process_group=True)
-    await process.wait_for_end(timeout=5.0)
+    async with _runner().run(_python("pass"), new_process_group=True) as process:
+        await process.wait_for_end(timeout=5.0)
 
-    assert not process.is_alive()
-    process.terminate()
-    process.kill()
+        assert not process.is_alive()
+        process.terminate()
+        process.kill()
 
 
 @pytest.mark.asyncio
@@ -220,20 +219,18 @@ async def test_signalling_a_group_that_refuses_is_a_no_op(
     could not have stopped by any means. An error here would surface to the
     operator as a failed stop for a command that was already being torn down.
     """
-    process = await _runner().run(
+    async with _runner().run(
         _python("import time; time.sleep(30)"), new_process_group=True
-    )
+    ) as process:
 
-    def fake(_pgid: int, sig: int) -> None:
-        if sig == 0:
-            return
-        raise PermissionError()
+        def fake(_pgid: int, sig: int) -> None:
+            if sig == 0:
+                return
+            raise PermissionError()
 
-    try:
         monkeypatch.setattr(os, "killpg", fake)
         process.terminate()
         process.kill()
-    finally:
         monkeypatch.undo()
-        process.kill()
-        await process.wait_for_end(timeout=5.0)
+
+    assert not process.is_alive()

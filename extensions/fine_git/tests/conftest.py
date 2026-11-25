@@ -59,6 +59,17 @@ class FakeCommandRunner:
         self.commands.append(list(cmd))
         return self._results.pop(0)
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> FakeCommandResult:
+        return await self.run(cmd, cwd=cwd, env=env)
+
 
 @pytest.fixture
 def repo_root(tmp_path: Path) -> Path:

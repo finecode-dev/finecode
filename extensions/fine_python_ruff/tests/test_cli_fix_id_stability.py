@@ -62,6 +62,17 @@ class _StubCommandRunner:
         self.commands.append(list(cmd))
         return _StubProcess(self._output)
 
+    async def run_to_completion(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd=None,
+        env=None,
+        new_process_group: bool = True,
+        input: str | None = None,
+        timeout: float | None = None,
+    ):
+        return await self.run(cmd, cwd=cwd, env=env)
+
     def run_sync(self, cmd: icommandrunner.Argv, cwd=None, env=None):
         raise NotImplementedError
 

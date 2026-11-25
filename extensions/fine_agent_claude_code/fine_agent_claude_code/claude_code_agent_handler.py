@@ -158,7 +158,7 @@ def _request_question(request: dict[str, typing.Any]) -> str:
     return "a pending permission request"
 
 
-def _clock_blocked(clock: _QuestionClock) -> bool:
+def _clock_blocked(clock: "_QuestionClock") -> bool:
     """Whether the settle budget is paused while requests are pending."""
     ids = {
         entry.tool_use_id
@@ -335,7 +335,7 @@ class ClaudeCodeAgentHandler(
                 # project after this handler has returned.
                 new_process_group=True,
             )
-        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+        except icommandrunner.CommandStartError as error:
             # The program could not be started at all -- missing from PATH, or
             # (on Windows) a shim refusing an argument cmd.exe would
             # reinterpret. A settled-with-error result is still a structured
@@ -560,7 +560,7 @@ class ClaudeCodeAgentHandler(
                 cwd=project_dir,
                 new_process_group=True,
             )
-        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+        except icommandrunner.CommandStartError as error:
             failed = RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 error=backend_support.spawn_error(command[0], error),
@@ -1633,22 +1633,13 @@ class ClaudeCodeAgentHandler(
 
     async def _probe_backend_version(self) -> tuple[str | None, str | None]:
         try:
-            process = await self.command_runner.run([*self._executable(), "--version"])
-        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
-            return None, f"claude version probe failed: {error}"
-        try:
-            await asyncio.wait_for(process.wait_for_end(), timeout=_VERSION_TIMEOUT_SEC)
+            process = await self.command_runner.run_to_completion(
+                [*self._executable(), "--version"], timeout=_VERSION_TIMEOUT_SEC
+            )
         except TimeoutError:
-            with contextlib.suppress(Exception):
-                process.terminate()
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(
-                    process.wait_for_end(), timeout=_SIGNAL_GRACE_SEC
-                )
-            if process.is_alive():
-                with contextlib.suppress(Exception):
-                    process.kill()
             return None, "claude version probe timed out"
+        except icommandrunner.CommandStartError as error:
+            return None, f"claude version probe failed: {error}"
         except Exception as error:  # noqa: BLE001
             return None, f"claude version probe failed: {error}"
         try:

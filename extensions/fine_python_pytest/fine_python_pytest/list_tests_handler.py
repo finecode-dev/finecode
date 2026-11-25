@@ -95,9 +95,8 @@ class PytestListTestsHandler(
         self.logger.debug(f"Running pytest collect: {cmd_parts!r}")
 
         async with run_context.progress("Discovering tests") as progress:
-            process = await self.command_runner.run(cmd_parts, cwd=project_dir)
+            process = await self.command_runner.run_to_completion(cmd_parts, cwd=project_dir)
             await progress.report("Collecting tests")
-            await process.wait_for_end()
 
         output = process.get_output() or ""
         node_ids = _parse_collect_output(output)

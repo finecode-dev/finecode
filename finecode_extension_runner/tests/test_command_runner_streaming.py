@@ -54,7 +54,7 @@ def _python(script: str) -> list[str]:
 
 async def test_lines_arrive_before_the_process_exits() -> None:
     """The point of streaming: a caller sees output while the child still runs."""
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             "import sys, time\n"
             "for i in range(3):\n"
@@ -62,19 +62,19 @@ async def test_lines_arrive_before_the_process_exits() -> None:
             "    time.sleep(0.1)\n"
             "time.sleep(0.5)\n"
         )
-    )
+    ) as process:
 
-    received: list[str] = []
-    async for line in process.stdout_lines():
-        received.append(line)
-        if len(received) == 3:
-            # Still inside the child's final sleep -- if this only worked after
-            # exit, we would not be here yet.
-            assert process.get_exit_code() is None
-            break
+        received: list[str] = []
+        async for line in process.stdout_lines():
+            received.append(line)
+            if len(received) == 3:
+                # Still inside the child's final sleep -- if this only worked after
+                # exit, we would not be here yet.
+                assert process.get_exit_code() is None
+                break
 
-    assert received == ["0", "1", "2"]
-    await process.wait_for_end()
+        assert received == ["0", "1", "2"]
+        await process.wait_for_end()
 
 
 async def test_line_longer_than_the_default_reader_limit_survives() -> None:
@@ -84,13 +84,13 @@ async def test_line_longer_than_the_default_reader_limit_survives() -> None:
     spawn. Without that, this line would come back truncated or not at all.
     """
     payload_size = 512 * 1024
-    process = await _runner().run(_python(f"print('x' * {payload_size}, flush=True)"))
+    async with _runner().run(_python(f"print('x' * {payload_size}, flush=True)")) as process:
 
-    received = [line async for line in process.stdout_lines()]
-    await process.wait_for_end()
+        received = [line async for line in process.stdout_lines()]
+        await process.wait_for_end()
 
-    assert len(received) == 1
-    assert received[0] == "x" * payload_size
+        assert len(received) == 1
+        assert received[0] == "x" * payload_size
 
 
 async def test_unread_stderr_does_not_block_the_child() -> None:
@@ -100,22 +100,22 @@ async def test_unread_stderr_does_not_block_the_child() -> None:
     deadlocks if only the subscribed pipe is read: stderr's OS buffer fills and
     the child blocks writing to it, forever.
     """
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             "import sys\n"
             "sys.stderr.write('e' * 1024 * 1024)\n"
             "sys.stderr.flush()\n"
             "print('done', flush=True)\n"
         )
-    )
+    ) as process:
 
-    received = [line async for line in process.stdout_lines()]
-    await asyncio.wait_for(process.wait_for_end(), timeout=15)
+        received = [line async for line in process.stdout_lines()]
+        await asyncio.wait_for(process.wait_for_end(), timeout=15)
 
-    assert received == ["done"]
-    assert process.get_exit_code() == 0
-    # stderr was never subscribed, so it kept accumulating and is still readable.
-    assert len(process.get_error_output()) == 1024 * 1024
+        assert received == ["done"]
+        assert process.get_exit_code() == 0
+        # stderr was never subscribed, so it kept accumulating and is still readable.
+        assert len(process.get_error_output()) == 1024 * 1024
 
 
 async def test_subscribing_late_replays_what_was_already_produced() -> None:
@@ -124,17 +124,17 @@ async def test_subscribing_late_replays_what_was_already_produced() -> None:
     This is the one way the stop-accumulating-on-subscribe rule could lose data,
     and for a line-framed protocol it would mean losing the opening messages.
     """
-    process = await _runner().run(_python("print('first')\nprint('second')"))
-    await process.wait_for_end()
+    async with _runner().run(_python("print('first')\nprint('second')")) as process:
+        await process.wait_for_end()
 
-    received = [line async for line in process.stdout_lines()]
+        received = [line async for line in process.stdout_lines()]
 
-    assert received == ["first", "second"]
+        assert received == ["first", "second"]
 
 
 async def test_buffered_output_is_unchanged_for_callers_that_never_subscribe() -> None:
     """The path every existing handler uses, including the trailing newline."""
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             "import sys\n"
             "sys.stdout.buffer.write(b'out\\n')\n"
@@ -142,20 +142,20 @@ async def test_buffered_output_is_unchanged_for_callers_that_never_subscribe() -
             "sys.stderr.buffer.write(b'err\\n')\n"
             "sys.stderr.buffer.flush()\n"
         )
-    )
-    await process.wait_for_end()
+    ) as process:
+        await process.wait_for_end()
 
-    assert process.get_output() == "out\n"
-    assert process.get_error_output() == "err\n"
-    assert process.get_exit_code() == 0
+        assert process.get_output() == "out\n"
+        assert process.get_error_output() == "err\n"
+        assert process.get_exit_code() == 0
 
 
 async def test_output_without_a_trailing_newline_is_preserved() -> None:
     """Reassembling from lines must not invent a newline the child never wrote."""
-    process = await _runner().run(_python("import sys\nsys.stdout.write('no-eol')"))
-    await process.wait_for_end()
+    async with _runner().run(_python("import sys\nsys.stdout.write('no-eol')")) as process:
+        await process.wait_for_end()
 
-    assert process.get_output() == "no-eol"
+        assert process.get_output() == "no-eol"
 
 
 async def test_get_output_after_subscribing_raises_rather_than_returning_empty() -> (
@@ -166,35 +166,35 @@ async def test_get_output_after_subscribing_raises_rather_than_returning_empty()
     Returning `""` here would be indistinguishable from a child that printed
     nothing -- the silent-empty failure this design avoids everywhere else.
     """
-    process = await _runner().run(_python("print('streamed')"))
-    lines = process.stdout_lines()
+    async with _runner().run(_python("print('streamed')")) as process:
+        lines = process.stdout_lines()
 
-    with pytest.raises(RuntimeError, match="consumed by a subscriber"):
-        process.get_output()
+        with pytest.raises(RuntimeError, match="consumed by a subscriber"):
+            process.get_output()
 
-    # stderr decided independently and still accumulates.
-    assert process.get_error_output() == ""
+        # stderr decided independently and still accumulates.
+        assert process.get_error_output() == ""
 
-    assert [line async for line in lines] == ["streamed"]
-    await process.wait_for_end()
+        assert [line async for line in lines] == ["streamed"]
+        await process.wait_for_end()
 
 
 async def test_a_second_subscriber_to_one_stream_raises() -> None:
-    process = await _runner().run(_python("print('once')"))
-    process.stdout_lines()
-
-    with pytest.raises(RuntimeError, match="already being consumed"):
+    async with _runner().run(_python("print('once')")) as process:
         process.stdout_lines()
 
-    await process.wait_for_end()
+        with pytest.raises(RuntimeError, match="already being consumed"):
+            process.stdout_lines()
+
+        await process.wait_for_end()
 
 
 async def test_output_is_complete_when_wait_for_end_returns() -> None:
     """A process can exit with bytes still buffered in its pipes."""
-    process = await _runner().run(_python("for i in range(500): print(i)"))
-    await process.wait_for_end()
+    async with _runner().run(_python("for i in range(500): print(i)")) as process:
+        await process.wait_for_end()
 
-    assert process.get_output().splitlines() == [str(i) for i in range(500)]
+        assert process.get_output().splitlines() == [str(i) for i in range(500)]
 
 
 async def test_undecodable_output_is_decoded_with_replacement_and_stays_complete() -> (
@@ -206,7 +206,7 @@ async def test_undecodable_output_is_decoded_with_replacement_and_stays_complete
     not fail the run: the stream stays complete and `wait_for_end()` returns
     normally.
     """
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             "import sys\n"
             "sys.stdout.buffer.write(b'good\\n')\n"
@@ -214,12 +214,12 @@ async def test_undecodable_output_is_decoded_with_replacement_and_stays_complete
             "sys.stdout.buffer.write(b'after\\n')\n"
             "sys.stdout.buffer.flush()\n"
         )
-    )
+    ) as process:
 
-    received = [line async for line in process.stdout_lines()]
-    await process.wait_for_end()
+        received = [line async for line in process.stdout_lines()]
+        await process.wait_for_end()
 
-    assert received == ["good", "\ufffd\ufffd bad", "after"]
+        assert received == ["good", "\ufffd\ufffd bad", "after"]
 
 
 async def test_stderr_is_complete_when_a_stdout_failure_surfaces() -> None:
@@ -230,7 +230,7 @@ async def test_stderr_is_complete_when_a_stdout_failure_surfaces() -> None:
     -- precisely when it needs it most.
     """
     oversized = 9 * 1024 * 1024
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             "import sys\n"
             f"sys.stdout.write('x' * {oversized})\n"
@@ -238,12 +238,14 @@ async def test_stderr_is_complete_when_a_stdout_failure_surfaces() -> None:
             "sys.stderr.buffer.write(b'the real error message\\n')\n"
             "sys.stderr.buffer.flush()\n"
         )
-    )
+    ) as process:
 
-    with pytest.raises(RuntimeError, match="exceeded"):
-        await asyncio.wait_for(process.wait_for_end(), timeout=60)
+        with pytest.raises(RuntimeError, match="exceeded"):
+            await asyncio.wait_for(process.wait_for_end(), timeout=60)
 
-    assert process.get_error_output() == "the real error message\n"
+        # Only the failed stream goes strict: stderr drained fine, so the
+        # diagnostic is still readable after the stdout failure.
+        assert process.get_error_output() == "the real error message\n"
 
 
 async def test_a_failed_stream_keeps_draining_so_the_child_still_exits() -> None:
@@ -253,7 +255,7 @@ async def test_a_failed_stream_keeps_draining_so_the_child_still_exits() -> None
     overruns, so it can only reach its exit if the stream is still being read.
     """
     oversized = 9 * 1024 * 1024
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             "import sys\n"
             f"sys.stdout.write('x' * {oversized})\n"
@@ -263,12 +265,12 @@ async def test_a_failed_stream_keeps_draining_so_the_child_still_exits() -> None
             "sys.stdout.flush()\n"
             "sys.exit(3)\n"
         )
-    )
+    ) as process:
 
-    with pytest.raises(RuntimeError, match="exceeded"):
-        await asyncio.wait_for(process.wait_for_end(), timeout=60)
+        with pytest.raises(RuntimeError, match="exceeded"):
+            await asyncio.wait_for(process.wait_for_end(), timeout=60)
 
-    assert process.get_exit_code() == 3
+        assert process.get_exit_code() == 3
 
 
 async def test_abandoning_a_subscriber_stops_the_queue_from_growing() -> None:
@@ -278,25 +280,25 @@ async def test_abandoning_a_subscriber_stops_the_queue_from_growing() -> None:
     signature short of running the process out of memory, and this is the exact
     buffer the class docstring claims streaming avoids.
     """
-    process = await _runner().run(_python("for i in range(2000): print(i)"))
-    assert isinstance(process, AsyncProcess)
+    async with _runner().run(_python("for i in range(2000): print(i)")) as process:
+        assert isinstance(process, AsyncProcess)
 
-    # `aclose()` rather than relying on the generator being collected: closing
-    # is what a `break` eventually triggers, and doing it explicitly keeps the
-    # assertion off the garbage collector's schedule.
-    lines = cast("AsyncGenerator[str, None]", process.stdout_lines())
-    received: list[str] = []
-    async for line in lines:
-        received.append(line)
-        if len(received) == 2:
-            break
-    await lines.aclose()
+        # `aclose()` rather than relying on the generator being collected: closing
+        # is what a `break` eventually triggers, and doing it explicitly keeps the
+        # assertion off the garbage collector's schedule.
+        lines = cast("AsyncGenerator[str, None]", process.stdout_lines())
+        received: list[str] = []
+        async for line in lines:
+            received.append(line)
+            if len(received) == 2:
+                break
+        await lines.aclose()
 
-    assert received == ["0", "1"]
+        assert received == ["0", "1"]
 
-    await process.wait_for_end()
-    assert process._stdout._queue is None
-    assert process._stdout._accumulated == []
+        await process.wait_for_end()
+        assert process._stdout._queue is None
+        assert process._stdout._accumulated == []
 
 
 async def test_a_drain_failure_nobody_awaits_is_not_logged_as_unhandled() -> None:
@@ -307,22 +309,22 @@ async def test_a_drain_failure_nobody_awaits_is_not_logged_as_unhandled() -> Non
     thing to assert -- the alternative is forcing a GC pass and scraping logs.
     """
     oversized = 9 * 1024 * 1024
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             f"import sys\nsys.stdout.write('x' * {oversized})\nsys.stdout.flush()\n"
         )
-    )
-    assert isinstance(process, AsyncProcess)
+    ) as process:
+        assert isinstance(process, AsyncProcess)
 
-    with pytest.raises(RuntimeError, match="exceeded"):
-        async for _ in process.stdout_lines():
-            pass
+        with pytest.raises(RuntimeError, match="exceeded"):
+            async for _ in process.stdout_lines():
+                pass
 
-    # Let the drain task finish on its own, as a streaming caller would.
-    await asyncio.sleep(0.5)
+        # Let the drain task finish on its own, as a streaming caller would.
+        await asyncio.sleep(0.5)
 
-    assert process._drain.done()
-    assert process._drain._log_traceback is False
+        assert process._drain.done()
+        assert process._drain._log_traceback is False
 
 
 async def test_the_subscriber_and_the_drain_do_not_share_one_exception() -> None:
@@ -332,21 +334,21 @@ async def test_the_subscriber_and_the_drain_do_not_share_one_exception() -> None
     anyone debugging it to the wrong side of the pipe.
     """
     oversized = 9 * 1024 * 1024
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             f"import sys\nsys.stdout.write('x' * {oversized})\nsys.stdout.flush()\n"
         )
-    )
+    ) as process:
 
-    with pytest.raises(RuntimeError) as from_subscriber:
-        async for _ in process.stdout_lines():
-            pass
+        with pytest.raises(RuntimeError) as from_subscriber:
+            async for _ in process.stdout_lines():
+                pass
 
-    with pytest.raises(RuntimeError) as from_drain:
-        await process.wait_for_end()
+        with pytest.raises(RuntimeError) as from_drain:
+            await process.wait_for_end()
 
-    assert from_subscriber.value is not from_drain.value
-    assert isinstance(from_subscriber.value.__cause__, ValueError)
+        assert from_subscriber.value is not from_drain.value
+        assert isinstance(from_subscriber.value.__cause__, ValueError)
 
 
 async def test_a_trailing_carriage_return_without_a_newline_is_data() -> None:
@@ -355,31 +357,31 @@ async def test_a_trailing_carriage_return_without_a_newline_is_data() -> None:
     Tools that redraw progress emit exactly this, and stripping it both loses a
     byte and makes subscribers disagree with `text()`.
     """
-    process = await _runner().run(
+    async with _runner().run(
         _python("import sys\nsys.stdout.write('spin\\r')\nsys.stdout.flush()")
-    )
+    ) as process:
 
-    received = [line async for line in process.stdout_lines()]
-    await process.wait_for_end()
+        received = [line async for line in process.stdout_lines()]
+        await process.wait_for_end()
 
-    assert received == ["spin\r"]
+        assert received == ["spin\r"]
 
 
 async def test_crlf_line_endings_are_still_stripped() -> None:
     """The `\\r` that does precede a `\\n` is part of the terminator. It writes
     bytes because a text-mode stdout on Windows would turn the literal `\\r\\n`
     into `\\r\\r\\n`."""
-    process = await _runner().run(
+    async with _runner().run(
         _python(
             "import sys\nsys.stdout.buffer.write(b'one\\r\\ntwo\\r\\n')\n"
             "sys.stdout.buffer.flush()"
         )
-    )
+    ) as process:
 
-    received = [line async for line in process.stdout_lines()]
-    await process.wait_for_end()
+        received = [line async for line in process.stdout_lines()]
+        await process.wait_for_end()
 
-    assert received == ["one", "two"]
+        assert received == ["one", "two"]
 
 
 def test_the_streaming_methods_carry_their_contract_as_a_docstring() -> None:
