@@ -406,7 +406,8 @@ async def _prepare_envs_impl(
         workdir_path: Absolute path to the workspace root directory.
         recreate: Delete and recreate the venvs this run covers. Subproject dev_workspace venvs are wiped only when no --env filter is given or it names dev_workspace.
         env_names: Limit to specific environment(s): a name, a matrix base
-            (its default interpreters), <base>@<impl>-<version>, or <base>@all.
+            (its default interpreters), a matrix child by its concrete name
+            (`<base>-<impl>-<version>`), or <base>@all.
             Repeatable.
         project_names: Limit steps 3, 5, and 6 to these projects.
         dev_env: Active dev-env, used to resolve each matrix base's

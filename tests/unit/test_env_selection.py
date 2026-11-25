@@ -42,7 +42,7 @@ def _matrix_base(
             impl, version = v.split("@")
         else:
             impl, version = implementation, v
-        table[f"{base}@{impl}-{version}"] = {
+        table[f"{base}-{impl}-{version}"] = {
             **_env(
                 interpreter=f"{impl}@{version}",
                 default_interpreters=default_interpreters,
@@ -125,22 +125,22 @@ class TestEnvSelector:
 
         assert selection.active is True
         assert selection.selected_env_names == {
-            "testing@cpython-3.11",
-            "testing@cpython-3.12",
-            "testing@cpython-3.13",
+            "testing-cpython-3.11",
+            "testing-cpython-3.12",
+            "testing-cpython-3.13",
         }
 
     def test_env_equal_to_concrete_child_name_selects_only_that_child(self) -> None:
-        """`--env=<base>@cpython-3.11` (the exact concrete env name) selects only
+        """`--env=<base>-cpython-3.11` (the exact concrete env name) selects only
         that one child, not its siblings."""
         env_table = {
             **_matrix_base("testing", ["3.11", "3.12", "3.13"]),
             "dev_no_runtime": _env(),
         }
 
-        selection = resolve_env_selection(env_table, ["testing@cpython-3.11"], "cli")
+        selection = resolve_env_selection(env_table, ["testing-cpython-3.11"], "cli")
 
-        assert selection.selected_env_names == {"testing@cpython-3.11"}
+        assert selection.selected_env_names == {"testing-cpython-3.11"}
 
     def test_non_matrix_env_name_passes_through(self) -> None:
         """`--env=<non-matrix-name>`: only the
@@ -175,7 +175,7 @@ class TestEnvSelector:
 
         selection = resolve_env_selection(env_table, ["testing"], "cli")
 
-        assert selection.selected_env_names == {"testing@cpython-3.13"}
+        assert selection.selected_env_names == {"testing-cpython-3.13"}
 
 
 class TestPrepareSelectionForms:
@@ -194,7 +194,7 @@ class TestPrepareSelectionForms:
         assert cli_selection.selected_env_names == {
             "dev_workspace",
             "dev_no_runtime",
-            "testing@cpython-3.14",
+            "testing-cpython-3.14",
         }
         ci_selection = resolve_env_selection(env_table, [], "ci")
 
@@ -206,37 +206,37 @@ class TestPrepareSelectionForms:
 
         assert resolve_env_selection(
             env_table, ["testing"], "cli"
-        ).selected_env_names == {"testing@cpython-3.14"}
+        ).selected_env_names == {"testing-cpython-3.14"}
         assert resolve_env_selection(
             env_table, ["testing"], "ci"
         ).selected_env_names == {
-            "testing@cpython-3.11",
-            "testing@cpython-3.12",
-            "testing@cpython-3.13",
-            "testing@cpython-3.14",
+            "testing-cpython-3.11",
+            "testing-cpython-3.12",
+            "testing-cpython-3.13",
+            "testing-cpython-3.14",
         }
         assert resolve_env_selection(
             env_table, ["testing@all"], "cli"
         ).selected_env_names == {
-            "testing@cpython-3.11",
-            "testing@cpython-3.12",
-            "testing@cpython-3.13",
-            "testing@cpython-3.14",
+            "testing-cpython-3.11",
+            "testing-cpython-3.12",
+            "testing-cpython-3.13",
+            "testing-cpython-3.14",
         }
         assert resolve_env_selection(
-            env_table, ["testing@cpython-3.12"], "cli"
-        ).selected_env_names == {"testing@cpython-3.12"}
+            env_table, ["testing-cpython-3.12"], "cli"
+        ).selected_env_names == {"testing-cpython-3.12"}
 
     def test_env_forms_union(self) -> None:
         env_table = _ac_table()
 
         selection = resolve_env_selection(
-            env_table, ["testing", "testing@cpython-3.11"], "cli"
+            env_table, ["testing", "testing-cpython-3.11"], "cli"
         )
 
         assert selection.selected_env_names == {
-            "testing@cpython-3.14",
-            "testing@cpython-3.11",
+            "testing-cpython-3.14",
+            "testing-cpython-3.11",
         }
 
 
@@ -244,13 +244,13 @@ class TestRunSelection:
     def test_no_selector_selects_default_subset(self) -> None:
         env_table = _ac_table()
 
-        assert resolve_run_selection(env_table, [], "cli") == {"testing@cpython-3.14"}
+        assert resolve_run_selection(env_table, [], "cli") == {"testing-cpython-3.14"}
 
     def test_explicit_interpreter_selects_matching_children(self) -> None:
         env_table = _ac_table()
 
         assert resolve_run_selection(env_table, ["3.12"], "cli") == {
-            "testing@cpython-3.12"
+            "testing-cpython-3.12"
         }
 
     def test_all_selects_full_axis_as_none(self) -> None:
@@ -288,8 +288,8 @@ class TestRunSelection:
         }
 
         assert resolve_run_selection(env_table, ["3.11"], "cli") == {
-            "testing@cpython-3.11",
-            "stubs@cpython-3.11",
+            "testing-cpython-3.11",
+            "stubs-cpython-3.11",
         }
 
     def test_explicit_interpreter_overrides_config_default(self) -> None:
@@ -300,7 +300,7 @@ class TestRunSelection:
         )
 
         assert resolve_run_selection(env_table, ["3.11"], "cli") == {
-            "testing@cpython-3.11"
+            "testing-cpython-3.11"
         }
 
     def test_two_bases_each_contribute_their_own_default(self) -> None:
@@ -312,8 +312,8 @@ class TestRunSelection:
         }
 
         assert resolve_run_selection(env_table, [], "cli") == {
-            "testing@cpython-3.14",
-            "stubs@cpython-3.10",
+            "testing-cpython-3.14",
+            "stubs-cpython-3.10",
         }
 
     def test_config_default_naming_interpreter_outside_axis_raises(self) -> None:
@@ -332,7 +332,7 @@ class TestConfigDefault:
         selection = resolve_env_selection(env_table, [], "cli")
 
         assert selection.active is True
-        assert selection.selected_env_names == {"testing@cpython-3.13"}
+        assert selection.selected_env_names == {"testing-cpython-3.13"}
 
     def test_default_all_for_ci_dev_env_selects_everything_and_is_inactive(
         self,
@@ -353,7 +353,7 @@ class TestConfigDefault:
 
         selection = resolve_env_selection(env_table, [], "cli")
 
-        assert selection.selected_env_names == {"testing@cpython-3.11"}
+        assert selection.selected_env_names == {"testing-cpython-3.11"}
 
     def test_default_explicit_list_selects_named_interpreters(self) -> None:
         env_table = _matrix_base(
@@ -365,8 +365,8 @@ class TestConfigDefault:
         selection = resolve_env_selection(env_table, [], "cli")
 
         assert selection.selected_env_names == {
-            "testing@cpython-3.11",
-            "testing@cpython-3.13",
+            "testing-cpython-3.11",
+            "testing-cpython-3.13",
         }
 
     def test_exact_dev_env_key_beats_bucket_key(self) -> None:
@@ -378,7 +378,7 @@ class TestConfigDefault:
 
         selection = resolve_env_selection(env_table, [], "cli")
 
-        assert selection.selected_env_names == {"testing@cpython-3.11"}
+        assert selection.selected_env_names == {"testing-cpython-3.11"}
 
     def test_absent_default_selects_all(self) -> None:
         env_table = _matrix_base("testing", ["3.11", "3.12"])
@@ -401,8 +401,8 @@ class TestConfigDefault:
         selection = resolve_env_selection(env_table, [], "cli")
 
         assert selection.selected_env_names == {
-            "testing@cpython-3.12",
-            "testing@pypy-3.12",
+            "testing-cpython-3.12",
+            "testing-pypy-3.12",
         }
 
     def test_default_explicit_list_naming_interpreter_outside_axis_raises(self) -> None:
@@ -423,21 +423,21 @@ class TestMatrixChildNames:
             "dev_no_runtime": _env(),
         }
 
-        selection = resolve_env_selection(env_table, ["testing@cpython-3.11"], "cli")
+        selection = resolve_env_selection(env_table, ["testing-cpython-3.11"], "cli")
 
         assert selection.matrix_child_names == {
-            "testing@cpython-3.11",
-            "testing@cpython-3.12",
+            "testing-cpython-3.11",
+            "testing-cpython-3.12",
         }
 
 
 class TestDerivedGating:
     def test_inactive_selection_creates_and_installs_everything(self) -> None:
-        all_names = {"testing@cpython-3.11", "testing@cpython-3.12", "dev"}
+        all_names = {"testing-cpython-3.11", "testing-cpython-3.12", "dev"}
         selection = EnvSelection(
             active=False,
             selected_env_names=set(),
-            matrix_child_names={"testing@cpython-3.11", "testing@cpython-3.12"},
+            matrix_child_names={"testing-cpython-3.11", "testing-cpython-3.12"},
         )
 
         assert compute_prepare_set(selection, all_names) == all_names
@@ -447,14 +447,14 @@ class TestDerivedGating:
     ) -> None:
         """A non-matrix env outside the selection is neither created nor installed,
         the same as an unselected matrix child."""
-        all_names = {"testing@cpython-3.11", "testing@cpython-3.12", "dev"}
+        all_names = {"testing-cpython-3.11", "testing-cpython-3.12", "dev"}
         selection = EnvSelection(
             active=True,
-            selected_env_names={"testing@cpython-3.11"},
-            matrix_child_names={"testing@cpython-3.11", "testing@cpython-3.12"},
+            selected_env_names={"testing-cpython-3.11"},
+            matrix_child_names={"testing-cpython-3.11", "testing-cpython-3.12"},
         )
 
-        assert compute_prepare_set(selection, all_names) == {"testing@cpython-3.11"}
+        assert compute_prepare_set(selection, all_names) == {"testing-cpython-3.11"}
 
 
 class TestEnvSelectorKnownIn:
@@ -469,7 +469,7 @@ class TestEnvSelectorKnownIn:
     def test_concrete_matrix_child_name_is_known(self) -> None:
         env_table = _matrix_base("testing", ["3.11", "3.12"])
 
-        assert env_selector_known_in("testing@cpython-3.11", env_table) is True
+        assert env_selector_known_in("testing-cpython-3.11", env_table) is True
 
     def test_non_matrix_env_name_is_known(self) -> None:
         env_table = {"dev_no_runtime": _env()}
@@ -490,6 +490,40 @@ class TestEnvSelectorKnownIn:
         assert env_selector_known_in("testing@all", matrix_table) is True
         assert env_selector_known_in("testing@all", {"testing": _env()}) is False
         assert env_selector_known_in("dev@all", {"dev": _env()}) is False
+
+
+class TestOldChildFormIsUnknown:
+    """The pre-rename `<base>@<impl>-<version>` form no longer names a child."""
+
+    def test_old_child_form_selects_nothing(self) -> None:
+        env_table = _matrix_base("testing", ["3.11", "3.12"])
+        selection = resolve_env_selection(env_table, ["testing@cpython-3.11"], "cli")
+        assert selection.selected_env_names == set()
+
+    def test_old_child_form_is_not_known(self) -> None:
+        env_table = _matrix_base("testing", ["3.11", "3.12"])
+        assert env_selector_known_in("testing@cpython-3.11", env_table) is False
+
+    def test_new_child_form_selects_exactly_that_child(self) -> None:
+        env_table = _matrix_base("testing", ["3.11", "3.12"])
+        selection = resolve_env_selection(env_table, ["testing-cpython-3.11"], "cli")
+        assert selection.selected_env_names == {"testing-cpython-3.11"}
+
+    def test_at_all_selects_every_child_and_base_selects_default_subset(self) -> None:
+        env_table = _matrix_base(
+            "testing", ["3.11", "3.12"], {"local": "newest"}
+        )
+        assert resolve_env_selection(
+            env_table, ["testing@all"], "cli"
+        ).selected_env_names == {"testing-cpython-3.11", "testing-cpython-3.12"}
+        assert resolve_env_selection(
+            env_table, ["testing"], "cli"
+        ).selected_env_names == {"testing-cpython-3.12"}
+
+    def test_declared_non_matrix_env_with_at_sign_is_selected_literally(self) -> None:
+        env_table = {"legacy@env": _env()}
+        selection = resolve_env_selection(env_table, ["legacy@env"], "cli")
+        assert selection.selected_env_names == {"legacy@env"}
 
 
 class TestInterpreterSelectorKnownIn:

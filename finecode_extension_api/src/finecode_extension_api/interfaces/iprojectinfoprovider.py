@@ -43,8 +43,10 @@ class IProjectInfoProvider(Protocol):
         - **interpreter matrices are already expanded** (ADR-0047): an env declaring
           `interpreters` is gone from `[tool.finecode.env]` by the time a handler sees
           it, replaced by one concrete child per interpreter named
-          `<base>@<impl>-<version>`, each carrying a singular `interpreter` identity
-          instead of the `interpreters` list.
+          `<base>-<impl>-<version>`, each carrying a singular `interpreter` identity
+          and a `matrix_env` key naming its base instead of the `interpreters`
+          list. Handlers should use `matrix_env`, not the env name, to
+          recognise a child.
 
         The expansion point matters for anything reading the env table: a matrix env
         is only ever observable through its children here. Read the project's own file

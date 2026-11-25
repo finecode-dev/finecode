@@ -41,15 +41,15 @@ def test_matrix_base_venv_is_the_only_orphan(tmp_path: pathlib.Path) -> None:
     entries = env_inventory.scan_envs(
         declared_names=[
             "dev_workspace",
-            "testing@cpython-3.11",
-            "testing@cpython-3.12",
+            "testing-cpython-3.11",
+            "testing-cpython-3.12",
         ],
         venvs_dir_path=venvs_dir,
         existing={
             "dev_workspace": EnvState.CREATED,
             "testing": EnvState.CREATED,
-            "testing@cpython-3.11": EnvState.CREATED,
-            "testing@cpython-3.12": EnvState.CREATED,
+            "testing-cpython-3.11": EnvState.CREATED,
+            "testing-cpython-3.12": EnvState.CREATED,
         },
     )
 
@@ -63,7 +63,7 @@ def test_declared_env_without_venv_is_missing_not_orphaned(
     `default_interpreters`) is still declared — reporting it as an orphan
     would offer to delete an env the user wants."""
     entries = env_inventory.scan_envs(
-        declared_names=["testing@cpython-3.14"],
+        declared_names=["testing-cpython-3.14"],
         venvs_dir_path=tmp_path / ".venvs",
         existing={},
     )

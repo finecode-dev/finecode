@@ -12,7 +12,7 @@ def _build_config() -> dict[str, Any]:
         "tool": {
             "finecode": {
                 "env": {
-                    "testing@cpython-3.11": {
+                    "testing-cpython-3.11": {
                         "interpreter": "cpython@3.11",
                         MATRIX_ENV_KEY: "testing",
                     },
@@ -25,7 +25,7 @@ def _build_config() -> dict[str, Any]:
                             {
                                 "name": "matrix_handler",
                                 "source": "test.handlers.MatrixHandler",
-                                "env": "testing@cpython-3.11",
+                                "env": "testing-cpython-3.11",
                             },
                             {
                                 "name": "plain_handler",

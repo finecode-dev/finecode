@@ -706,7 +706,7 @@ def run(ctx) -> None:
     "env_names",
     multiple=True,
     metavar="ENV_NAME",
-    help="Limit to specific environment(s): a name, a matrix base (its default interpreters), <base>@<impl>-<version>, or <base>@all. Repeatable.",
+    help="Limit to specific environment(s): a name, a matrix base (its default interpreters), a matrix child by its concrete name (`<base>-<impl>-<version>`), or <base>@all. Repeatable.",
 )
 @click.option(
     "--project",

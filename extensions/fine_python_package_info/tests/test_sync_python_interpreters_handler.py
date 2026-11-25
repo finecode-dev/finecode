@@ -294,6 +294,59 @@ async def test_axis_already_current_is_left_alone(tmp_path: pathlib.Path) -> Non
     assert [axis.changed for axis in result.axes] == [False]
 
 
+async def test_regular_env_with_base_prefix_does_not_declare_the_base(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A regular env sharing the matrix base prefix carries no child marker, so it
+    # must not count as proof that the base env is declared.
+    _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
+    merged_config = {
+        "dependency-groups": {"testing-extra": ["hypothesis"]},
+        "tool": {"finecode": {"env": {"testing-extra": {}}}},
+    }
+
+    async with handler_test_session(
+        project_dir=tmp_path,
+        actions=_actions(envs=["testing"]),
+        service_overrides={
+            IFileEditor: InMemoryFileEditor(seed_from_disk=True),
+            IProjectInfoProvider: _StubProjectInfoProvider(tmp_path, merged_config),
+        },
+    ) as session:
+        with pytest.raises(ActionRunFailed, match="not declared"):
+            await session.run_action(
+                _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
+            )
+
+
+async def test_regular_env_with_base_prefix_does_not_trigger_the_layer_warning(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The layer warning reads the same child marker, so a name-prefix sibling
+    # without the marker must stay silent.
+    _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
+    logger = CollectingLogger()
+    merged_config = {
+        "dependency-groups": {"testing": ["pytest"], "testing-extra": ["hypothesis"]},
+        "tool": {"finecode": {"env": {"testing-extra": {}}}},
+    }
+
+    async with handler_test_session(
+        project_dir=tmp_path,
+        actions=_actions(envs=["testing"]),
+        service_overrides={
+            IFileEditor: InMemoryFileEditor(seed_from_disk=True),
+            ILogger: logger,
+            IProjectInfoProvider: _StubProjectInfoProvider(tmp_path, merged_config),
+        },
+    ) as session:
+        await session.run_action(
+            _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
+        )
+
+    assert logger.warnings == []
+
+
 async def test_version_only_shorthand_is_not_drift(tmp_path: pathlib.Path) -> None:
     # ADR-0047: "3.13" and "cpython@3.13" are the same identity, so a project that
     # spelled the axis the short way must not be reported as out of date.
@@ -383,7 +436,7 @@ async def test_env_already_expanded_into_matrix_children_is_accepted(
     tmp_path: pathlib.Path,
 ) -> None:
     # Once a matrix env's axis is known, config resolution expands the base name into
-    # one concrete env per interpreter (`<name>@<impl>-<version>`, ADR-0047) -- the bare
+    # one concrete env per interpreter (ADR-0047) -- the bare
     # base name then no longer appears as a key in the merged config at all. A run right
     # after the axis was first derived and written must not treat the env as undeclared
     # (regression test).
@@ -398,14 +451,20 @@ async def test_env_already_expanded_into_matrix_children_is_accepted(
     file_editor = InMemoryFileEditor(seed_from_disk=True)
     merged_config = {
         "dependency-groups": {
-            "testing@cpython-3.12": ["pytest"],
-            "testing@cpython-3.13": ["pytest"],
+            "testing-cpython-3.12": ["pytest"],
+            "testing-cpython-3.13": ["pytest"],
         },
         "tool": {
             "finecode": {
                 "env": {
-                    "testing@cpython-3.12": {"interpreter": "cpython@3.12"},
-                    "testing@cpython-3.13": {"interpreter": "cpython@3.13"},
+                    "testing-cpython-3.12": {
+                        "interpreter": "cpython@3.12",
+                        "matrix_env": "testing",
+                    },
+                    "testing-cpython-3.13": {
+                        "interpreter": "cpython@3.13",
+                        "matrix_env": "testing",
+                    },
                 }
             }
         },
@@ -438,12 +497,15 @@ def _preset_axis_merged_config(*interpreters: str) -> dict:
     """
     return {
         "dependency-groups": {
-            f"testing@{value.replace('@', '-')}": ["pytest"] for value in interpreters
+            f"testing-{value.replace('@', '-')}": ["pytest"] for value in interpreters
         },
         "tool": {
             "finecode": {
                 "env": {
-                    f"testing@{value.replace('@', '-')}": {"interpreter": value}
+                    f"testing-{value.replace('@', '-')}": {
+                        "interpreter": value,
+                        "matrix_env": "testing",
+                    }
                     for value in interpreters
                 }
             }

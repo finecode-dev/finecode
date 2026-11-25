@@ -167,7 +167,7 @@ async def test_report_from_another_env_keeps_cache(
         tmp_path,
         project,
         _meta(canonical_source="other.Canonical"),
-        "testing@cpython-3.14",
+        "testing-cpython-3.14",
         monkeypatch,
     )
 

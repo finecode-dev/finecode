@@ -26,15 +26,15 @@ def _make_project(tmp_path: pathlib.Path):
         dir_path=project_dir,
         action_name="test_action",
         handler_envs=[
-            "testing@cpython-3.13",
-            "testing@cpython-3.14",
+            "testing-cpython-3.13",
+            "testing-cpython-3.14",
             "dev_no_runtime",
         ],
     )
     for handler in project.actions[0].handlers:
-        if handler.env == "testing@cpython-3.13":
+        if handler.env == "testing-cpython-3.13":
             handler.interpreter = "cpython@3.13"
-        elif handler.env == "testing@cpython-3.14":
+        elif handler.env == "testing-cpython-3.14":
             handler.interpreter = "cpython@3.14"
     ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
     ws_context.ws_projects[project.dir_path] = project
@@ -81,10 +81,10 @@ async def test_only_selected_child_is_started(tmp_path: pathlib.Path) -> None:
         await proxy_utils.start_required_environments(
             {project.dir_path: [project.actions[0].name]},
             ws_context,
-            selected_envs_by_project={project.dir_path: {"testing@cpython-3.14"}},
+            selected_envs_by_project={project.dir_path: {"testing-cpython-3.14"}},
         )
 
-    assert sorted(started) == ["dev_no_runtime", "testing@cpython-3.14"]
+    assert sorted(started) == ["dev_no_runtime", "testing-cpython-3.14"]
 
 
 async def test_no_selection_starts_every_child(tmp_path: pathlib.Path) -> None:
@@ -92,12 +92,12 @@ async def test_no_selection_starts_every_child(tmp_path: pathlib.Path) -> None:
     the gate keeps today's behaviour and starts every child."""
     expected = [
         "dev_no_runtime",
-        "testing@cpython-3.13",
-        "testing@cpython-3.14",
+        "testing-cpython-3.13",
+        "testing-cpython-3.14",
     ]
     assert sorted(await _run_gate(tmp_path, None)) == expected
     assert sorted(
-        await _run_gate(tmp_path, {tmp_path / "other": {"testing@cpython-3.14"}})
+        await _run_gate(tmp_path, {tmp_path / "other": {"testing-cpython-3.14"}})
     ) == (expected)
     assert sorted(await _run_gate(tmp_path, {tmp_path / "p": None})) == expected
 
@@ -119,11 +119,11 @@ async def test_non_matrix_env_starts_despite_selection(
         await proxy_utils.start_required_environments(
             {project.dir_path: [project.actions[0].name]},
             ws_context,
-            selected_envs_by_project={project.dir_path: {"testing@cpython-3.13"}},
+            selected_envs_by_project={project.dir_path: {"testing-cpython-3.13"}},
         )
 
     assert "dev_no_runtime" in started
-    assert "testing@cpython-3.11" not in started
+    assert "testing-cpython-3.11" not in started
 
 
 async def test_crashed_needed_env_is_repaired_once_then_fails(

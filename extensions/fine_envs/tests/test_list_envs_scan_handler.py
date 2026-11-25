@@ -54,22 +54,22 @@ async def test_matrix_base_venv_reported_as_orphan(tmp_path: pathlib.Path) -> No
     for name in (
         "dev_workspace",
         "testing",
-        "testing@cpython-3.11",
-        "testing@cpython-3.12",
+        "testing-cpython-3.11",
+        "testing-cpython-3.12",
     ):
         _make_venv(venvs_dir, name)
 
     raw_config = {
         "dependency-groups": {
             "dev_workspace": [],
-            "testing@cpython-3.11": [],
-            "testing@cpython-3.12": [],
+            "testing-cpython-3.11": [],
+            "testing-cpython-3.12": [],
         },
         "tool": {
             "finecode": {
                 "env": {
-                    "testing@cpython-3.11": {"interpreter": "cpython@3.11"},
-                    "testing@cpython-3.12": {"interpreter": "cpython@3.12"},
+                    "testing-cpython-3.11": {"interpreter": "cpython@3.11"},
+                    "testing-cpython-3.12": {"interpreter": "cpython@3.12"},
                 }
             }
         },
@@ -93,7 +93,7 @@ async def test_declared_env_without_venv_is_missing(tmp_path: pathlib.Path) -> N
     _make_venv(venvs_dir, "dev_workspace")
 
     raw_config = {
-        "dependency-groups": {"dev_workspace": [], "testing@cpython-3.14": []},
+        "dependency-groups": {"dev_workspace": [], "testing-cpython-3.14": []},
     }
     handler = ListEnvsScanHandler(
         project_info_provider=_FakeProjectInfoProvider(raw_config),
@@ -106,8 +106,8 @@ async def test_declared_env_without_venv_is_missing(tmp_path: pathlib.Path) -> N
     )
 
     by_name = {env.name: env for env in result.envs}
-    assert by_name["testing@cpython-3.14"].state is EnvState.MISSING
-    assert by_name["testing@cpython-3.14"].orphaned is False
+    assert by_name["testing-cpython-3.14"].state is EnvState.MISSING
+    assert by_name["testing-cpython-3.14"].orphaned is False
 
 
 async def test_broken_venv_reported(tmp_path: pathlib.Path) -> None:

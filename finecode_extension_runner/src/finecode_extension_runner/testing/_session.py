@@ -62,7 +62,7 @@ async def _default_raw_config_getter(project_def_path: str) -> dict:
 
     It is **not** faithful beyond that, and the gap is easy to miss: in production the
     WM serves a *resolved* config, with presets merged and interpreter matrices already
-    expanded into ``<base>@<impl>-<version>`` children (ADR-0047, see
+    expanded into ``<base>-<impl>-<version>`` children (ADR-0047, see
     ``IProjectInfoProvider.get_project_raw_config``). This default reproduces neither.
     A test whose project declares ``interpreters`` therefore gets a config shape that
     never reaches a real handler. Override ``IProjectInfoProvider`` and supply the

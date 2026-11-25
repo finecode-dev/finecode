@@ -85,11 +85,11 @@ def _make_run_context(
 
 async def test_discovers_only_orphans(tmp_path: pathlib.Path) -> None:
     venvs_dir = tmp_path / ".venvs"
-    for name in ("dev_workspace", "testing", "testing@cpython-3.11"):
+    for name in ("dev_workspace", "testing", "testing-cpython-3.11"):
         _make_venv(venvs_dir, name)
 
     handler = _make_handler(
-        tmp_path, declared=["dev_workspace", "testing@cpython-3.11"]
+        tmp_path, declared=["dev_workspace", "testing-cpython-3.11"]
     )
     payload = remove_envs_action.RemoveEnvsRunPayload()
     run_context = _make_run_context(payload)

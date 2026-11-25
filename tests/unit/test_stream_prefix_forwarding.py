@@ -20,7 +20,11 @@ import typing
 import pytest
 
 from finecode.wm_server import context, domain
-from finecode.wm_server.config.interpreter_matrix import Interpreter
+from finecode.wm_server.config.interpreter_matrix import (
+    Interpreter,
+    concrete_env_name,
+    parse_interpreter,
+)
 from finecode.wm_server.runner.runner_client import RunActionResponse, RunResultFormat
 from finecode.wm_server.services import partial_results_service
 from finecode.wm_server.services.run_service import (
@@ -399,7 +403,7 @@ def _make_matrix_action(*, interpreters: list[str]) -> domain.Action:
             name=f"handler_{interpreter}",
             source="test.handlers.TestHandler",
             config={},
-            env=f"testing@{interpreter}",
+            env=concrete_env_name("testing", parse_interpreter(interpreter)),
             dependencies=[],
             interpreter=interpreter,
         )

@@ -18,7 +18,7 @@ from finecode.wm_server.services.run_service.run_selection import (
 
 def _matrix_env_table(base: str, versions: list[str]) -> dict[str, dict]:
     return {
-        f"{base}@cpython-{v}": {"interpreter": f"cpython@{v}", MATRIX_ENV_KEY: base}
+        f"{base}-cpython-{v}": {"interpreter": f"cpython@{v}", MATRIX_ENV_KEY: base}
         for v in versions
     }
 
@@ -85,24 +85,24 @@ def _variant_ws_context() -> tuple[pathlib.Path, pathlib.Path, types.SimpleNames
     project_a = wm_testing.make_multi_env_action_project(
         dir_path=path_a,
         action_name="run_tests",
-        handler_envs=["testing@cpython-3.11", "testing@cpython-3.12"],
+        handler_envs=["testing-cpython-3.11", "testing-cpython-3.12"],
     )
     project_a.name = "project_a"
     for handler in project_a.actions[0].handlers:
-        if handler.env == "testing@cpython-3.11":
+        if handler.env == "testing-cpython-3.11":
             handler.interpreter = "cpython@3.11"
-        elif handler.env == "testing@cpython-3.12":
+        elif handler.env == "testing-cpython-3.12":
             handler.interpreter = "cpython@3.12"
     project_b = wm_testing.make_multi_env_action_project(
         dir_path=path_b,
         action_name="run_tests",
-        handler_envs=["testing@cpython-3.12", "testing@cpython-3.13"],
+        handler_envs=["testing-cpython-3.12", "testing-cpython-3.13"],
     )
     project_b.name = "project_b"
     for handler in project_b.actions[0].handlers:
-        if handler.env == "testing@cpython-3.12":
+        if handler.env == "testing-cpython-3.12":
             handler.interpreter = "cpython@3.12"
-        elif handler.env == "testing@cpython-3.13":
+        elif handler.env == "testing-cpython-3.13":
             handler.interpreter = "cpython@3.13"
     ws_context = types.SimpleNamespace(
         ws_projects={path_a: project_a, path_b: project_b},
@@ -127,7 +127,7 @@ class TestCheckVariantSelection:
 
         await check_variant_selection(
             {path_a: ["run_tests"], path_b: ["run_tests"]},
-            {path_a: {"testing@cpython-3.13"}, path_b: {"testing@cpython-3.13"}},
+            {path_a: {"testing-cpython-3.13"}, path_b: {"testing-cpython-3.13"}},
             ["3.13"],
             ws_context,
         )

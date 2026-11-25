@@ -6,7 +6,7 @@ An environment is *declared* when its name is a key of the project's resolved
 matrices before a handler sees the config (ADR-0047, see
 ``IProjectInfoProvider.get_project_raw_config``), a matrix base name such as
 ``testing`` is *not* declared — only its concrete children
-(``testing@cpython-3.11``, ...) are. A venv directory left behind by a base
+(``testing-cpython-3.11``, ...) are. A venv directory left behind by a base
 name that was matrixed, by a renamed env, or by a preset change is therefore
 *orphaned*: nothing references it, no Extension Runner will ever start in it,
 and ``prepare-envs --recreate`` will not touch it because that only rebuilds

@@ -45,10 +45,10 @@ async def test_discovered_env_carries_interpreter_from_raw_config(
     """
     project_def_path = tmp_path / "pyproject.toml"
     raw_config = {
-        "dependency-groups": {"testing@cpython-3.11": []},
+        "dependency-groups": {"testing-cpython-3.11": []},
         "tool": {
             "finecode": {
-                "env": {"testing@cpython-3.11": {"interpreter": "cpython@3.11"}}
+                "env": {"testing-cpython-3.11": {"interpreter": "cpython@3.11"}}
             }
         },
     }
@@ -72,7 +72,7 @@ async def test_discovered_env_carries_interpreter_from_raw_config(
     assert run_context.envs is not None
     assert len(run_context.envs) == 1
     env_info = run_context.envs[0]
-    assert env_info.name == "testing@cpython-3.11"
+    assert env_info.name == "testing-cpython-3.11"
     assert env_info.interpreter == "cpython@3.11"
 
 
@@ -118,15 +118,15 @@ async def test_env_names_filters_discovered_envs(tmp_path: pathlib.Path) -> None
     project_def_path = tmp_path / "pyproject.toml"
     raw_config = {
         "dependency-groups": {
-            "testing@cpython-3.11": [],
-            "testing@cpython-3.12": [],
+            "testing-cpython-3.11": [],
+            "testing-cpython-3.12": [],
             "dev": [],
         },
         "tool": {
             "finecode": {
                 "env": {
-                    "testing@cpython-3.11": {"interpreter": "cpython@3.11"},
-                    "testing@cpython-3.12": {"interpreter": "cpython@3.12"},
+                    "testing-cpython-3.11": {"interpreter": "cpython@3.11"},
+                    "testing-cpython-3.12": {"interpreter": "cpython@3.12"},
                 }
             }
         },
@@ -137,7 +137,7 @@ async def test_env_names_filters_discovered_envs(tmp_path: pathlib.Path) -> None
         logger=_FakeLogger(),
     )
     payload = create_envs_action.CreateEnvsRunPayload(
-        envs=None, env_names=["testing@cpython-3.11", "dev"]
+        envs=None, env_names=["testing-cpython-3.11", "dev"]
     )
     run_context = create_envs_action.CreateEnvsRunContext(
         run_id=1,
@@ -152,4 +152,4 @@ async def test_env_names_filters_discovered_envs(tmp_path: pathlib.Path) -> None
     await handler.run(payload, run_context)
 
     assert run_context.envs is not None
-    assert {e.name for e in run_context.envs} == {"testing@cpython-3.11", "dev"}
+    assert {e.name for e in run_context.envs} == {"testing-cpython-3.11", "dev"}

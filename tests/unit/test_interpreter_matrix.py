@@ -120,15 +120,21 @@ class TestExpand:
 
         assert result == ExpansionResult(
             concrete_envs=[
-                ConcreteEnv("testing@cpython-3.11", Interpreter("cpython", "3.11")),
-                ConcreteEnv("testing@cpython-3.12", Interpreter("cpython", "3.12")),
-                ConcreteEnv("testing@pypy-3.11", Interpreter("pypy", "3.11")),
-                ConcreteEnv("lint", None),
+                ConcreteEnv(
+                    "testing-cpython-3.11", Interpreter("cpython", "3.11"), "testing"
+                ),
+                ConcreteEnv(
+                    "testing-cpython-3.12", Interpreter("cpython", "3.12"), "testing"
+                ),
+                ConcreteEnv(
+                    "testing-pypy-3.11", Interpreter("pypy", "3.11"), "testing"
+                ),
+                ConcreteEnv("lint", None, None),
             ],
             handlers=[
-                HandlerRef("run_tests", "pytest", "testing@cpython-3.11"),
-                HandlerRef("run_tests", "pytest", "testing@cpython-3.12"),
-                HandlerRef("run_tests", "pytest", "testing@pypy-3.11"),
+                HandlerRef("run_tests", "pytest", "testing-cpython-3.11"),
+                HandlerRef("run_tests", "pytest", "testing-cpython-3.12"),
+                HandlerRef("run_tests", "pytest", "testing-pypy-3.11"),
                 HandlerRef("lint", "ruff", "lint"),
             ],
             matrix_environments={
@@ -147,7 +153,8 @@ class TestExpand:
 
         result = expand(envs, handlers)
 
-        assert result.concrete_envs == [ConcreteEnv("lint", None)]
+        assert result.concrete_envs == [ConcreteEnv("lint", None, None)]
+        assert result.concrete_envs[0].matrix_env is None
         assert result.handlers == [HandlerRef("lint", "ruff", "lint")]
         assert result.matrix_environments == {}
 
@@ -161,10 +168,11 @@ class TestExpand:
         result = expand(envs, handlers)
 
         assert result.concrete_envs == [
-            ConcreteEnv("solo@cpython-3.11", Interpreter("cpython", "3.11"))
+            ConcreteEnv("solo-cpython-3.11", Interpreter("cpython", "3.11"), "solo")
         ]
+        assert result.concrete_envs[0].matrix_env == "solo"
         assert result.handlers == [
-            HandlerRef("build", "build_wheel", "solo@cpython-3.11")
+            HandlerRef("build", "build_wheel", "solo-cpython-3.11")
         ]
         assert result.matrix_environments == {"solo": [Interpreter("cpython", "3.11")]}
 

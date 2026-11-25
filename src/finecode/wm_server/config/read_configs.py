@@ -1212,21 +1212,22 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     Per ADR-0047, an env declaring `interpreters` on
     `[tool.finecode.env.<name>]` is a *matrix environment*. This expands each matrix environment
     in place into one concrete env per interpreter
-    (`<name>@<impl>-<version>`), rewrites every handler `env` reference
+    (`<name>-<impl>-<version>`), rewrites every handler `env` reference
     from the matrix environment to its concrete children, replicates every service
     bound to the matrix environment into one service per concrete child, and gives
     each concrete child a copy of the matrix environment's dependency-groups entry
     and env-table settings (minus `interpreters`, plus a singular
     `interpreter` identity and a `MATRIX_ENV_KEY` entry naming the matrix
     environment). A project with no `interpreters` axis
-    anywhere is left unchanged (PRD-0003 R7).
+    anywhere is left unchanged (PRD-0003 R7). Generated child names are
+    checked for PEP 735 validity and collisions.
 
     Raises:
         ConfigurationError: An interpreter string is malformed, an
             action mixes matrix environment and single-interpreter handlers, or a
             matrixed action's matrix environments declare unequal interpreter
             sets. [wraps InvalidInterpreterError / MixedMatrixError /
-            MatrixSetMismatchError from interpreter_matrix]
+            MatrixSetMismatchError / ConcreteEnvNameError from interpreter_matrix]
     """
     finecode_section = project_config.get("tool", {}).get("finecode", {})
     env_table: dict[str, Any] = finecode_section.get("env", {})
@@ -1272,10 +1273,15 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
         ]
         interpreter_matrix.validate(env_specs, handler_refs)
         expansion = interpreter_matrix.expand(env_specs, handler_refs)
+        declared_names = list(env_names) + list(
+            project_config.get("dependency-groups", {}).keys()
+        )
+        interpreter_matrix.check_concrete_env_names(expansion, declared_names)
     except (
         interpreter_matrix.InvalidInterpreterError,
         interpreter_matrix.MixedMatrixError,
         interpreter_matrix.MatrixSetMismatchError,
+        interpreter_matrix.ConcreteEnvNameError,
     ) as exception:
         raise config_models.ConfigurationError(
             f"Invalid interpreter matrix configuration: {exception}"
@@ -1290,7 +1296,8 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     for concrete_env in expansion.concrete_envs:
         if concrete_env.interpreter is None:
             continue
-        matrix_env_name = concrete_env.name.split("@", 1)[0]
+        assert concrete_env.matrix_env is not None
+        matrix_env_name = concrete_env.matrix_env
         child_raw = copy.deepcopy(env_table[matrix_env_name])
         child_raw.pop("interpreters", None)
         child_raw["interpreter"] = concrete_env.interpreter.canonical
@@ -1351,7 +1358,9 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
             matrix_env_name = service_raw.get("env")
             if matrix_env_name in expansion.matrix_environments:
                 for interpreter in expansion.matrix_environments[matrix_env_name]:
-                    concrete_name = f"{matrix_env_name}@{interpreter.env_suffix}"
+                    concrete_name = interpreter_matrix.concrete_env_name(
+                        matrix_env_name, interpreter
+                    )
                     child_service_raw = copy.deepcopy(service_raw)
                     child_service_raw["env"] = concrete_name
                     new_services_raw.append(child_service_raw)

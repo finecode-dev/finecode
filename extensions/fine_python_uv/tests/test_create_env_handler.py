@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pathlib
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fine_envs import create_env_action, create_envs_action, dump_config_action
@@ -139,6 +139,10 @@ class _FakeProjectActionRunner:
 class _FakeProjectInfoProvider:
     """Only `get_project_raw_config` is exercised (by the config-dump step)."""
 
+    def __init__(self, raw_config: dict[str, Any] | None = None) -> None:
+        self.raw_config: dict[str, Any] = raw_config if raw_config is not None else {}
+        self.raw_config_calls: list[pathlib.Path] = []
+
     def get_current_project_dir_path(self) -> pathlib.Path:
         raise NotImplementedError
 
@@ -151,7 +155,8 @@ class _FakeProjectInfoProvider:
     async def get_project_raw_config(
         self, project_def_path: pathlib.Path
     ) -> dict[str, Any]:
-        return {}
+        self.raw_config_calls.append(project_def_path)
+        return self.raw_config
 
     async def get_current_project_raw_config(self) -> dict[str, Any]:
         raise NotImplementedError
@@ -168,6 +173,7 @@ class _FakeProjectInfoProvider:
 def _service_overrides(
     command_runner: _FakeCommandRunner,
     project_action_runner: _FakeProjectActionRunner | None = None,
+    project_info_provider: _FakeProjectInfoProvider | None = None,
 ) -> dict[type, Any]:
     return {
         icommandrunner.ICommandRunner: command_runner,
@@ -175,14 +181,15 @@ def _service_overrides(
         ifilemanager.IFileManager: _FakeFileManager(),
         iprojectactionrunner.IProjectActionRunner: project_action_runner
         or _FakeProjectActionRunner(),
-        iprojectinfoprovider.IProjectInfoProvider: _FakeProjectInfoProvider(),
+        iprojectinfoprovider.IProjectInfoProvider: project_info_provider
+        or _FakeProjectInfoProvider(),
     }
 
 
 def _env_info(
     tmp_path: pathlib.Path,
     *,
-    name: str = "testing@cpython-3.11",
+    name: str = "testing-cpython-3.11",
     interpreter: str | None = "cpython@3.11",
 ) -> create_envs_action.EnvInfo:
     return create_envs_action.EnvInfo(
@@ -202,7 +209,7 @@ async def test_uv_venv_command_includes_python_flag_when_interpreter_is_set(
     venv_dir_path = tmp_path / "venvs" / "testing"
     project_def_path = tmp_path / "pyproject.toml"
     env_info = create_envs_action.EnvInfo(
-        name="testing@cpython-3.11",
+        name="testing-cpython-3.11",
         venv_dir_path=path_to_resource_uri(venv_dir_path),
         project_def_path=path_to_resource_uri(project_def_path),
         interpreter="cpython@3.11",
@@ -357,7 +364,8 @@ async def test_valid_venv_never_dumps_config(tmp_path: pathlib.Path) -> None:
     creation."""
     command_runner = _FakeCommandRunner()
     project_action_runner = _FakeProjectActionRunner()
-    venv_dir_path = tmp_path / "venvs" / "testing@cpython-3.11"
+    project_info_provider = _FakeProjectInfoProvider()
+    venv_dir_path = tmp_path / "venvs" / "testing-cpython-3.11"
     (venv_dir_path / "bin").mkdir(parents=True)
     (venv_dir_path / "bin" / "python").touch()
     (venv_dir_path / "pyvenv.cfg").touch()
@@ -370,13 +378,16 @@ async def test_valid_venv_never_dumps_config(tmp_path: pathlib.Path) -> None:
         payload,
         action_cls=create_env_action.CreateEnvAction,
         project_dir=tmp_path,
-        service_overrides=_service_overrides(command_runner, project_action_runner),
+        service_overrides=_service_overrides(
+            command_runner, project_action_runner, project_info_provider
+        ),
     )
 
     assert result is not None
     assert result.created is False
     assert result.errors == []
     assert project_action_runner.recorded_payloads == []
+    assert project_info_provider.raw_config_calls == []
     # Only the validity probe ran, never a `uv venv` command.
     assert command_runner.commands and not any(
         "venv" in cmd for cmd in command_runner.commands

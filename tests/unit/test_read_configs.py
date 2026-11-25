@@ -430,9 +430,9 @@ def _matrix_env_project_config() -> dict[str, Any]:
 
 
 _TESTING_CONCRETE_ENV_NAMES = {
-    "testing@cpython-3.11",
-    "testing@cpython-3.12",
-    "testing@pypy-3.11",
+    "testing-cpython-3.11",
+    "testing-cpython-3.12",
+    "testing-pypy-3.11",
 }
 
 
@@ -498,7 +498,7 @@ def test_config_served_to_extensions_has_matrices_already_expanded(
     Extensions read the env table out of `IProjectInfoProvider.get_project_raw_config`,
     which is served straight from `ws_projects_raw_configs`
     (`runner_manager.get_project_raw_config`). They rely on a matrix env arriving as its
-    concrete `<base>@<impl>-<version>` children rather than as an `interpreters` list --
+    concrete `<base>-<impl>-<version>` children rather than as an `interpreters` list --
     `fine_python_package_info`'s sync_python_interpreters handler uses exactly this to
     tell "this env has an axis from somewhere" from "this env has no axis at all".
 
@@ -536,9 +536,9 @@ interpreters = ["cpython@3.11", "cpython@3.12"]
     served_config = ws_context.ws_projects_raw_configs[tmp_path]
     env_table = served_config["tool"]["finecode"]["env"]
     assert "testing" not in env_table
-    assert {"testing@cpython-3.11", "testing@cpython-3.12"} <= set(env_table)
-    assert env_table["testing@cpython-3.11"]["interpreter"] == "cpython@3.11"
-    assert "interpreters" not in env_table["testing@cpython-3.11"]
+    assert {"testing-cpython-3.11", "testing-cpython-3.12"} <= set(env_table)
+    assert env_table["testing-cpython-3.11"]["interpreter"] == "cpython@3.11"
+    assert "interpreters" not in env_table["testing-cpython-3.11"]
 
 
 def _make_project(
@@ -804,9 +804,9 @@ def test_matrix_env_expands_to_one_concrete_env_per_interpreter() -> None:
     assert set(env_table.keys()) == _TESTING_CONCRETE_ENV_NAMES
 
     expected_interpreters = {
-        "testing@cpython-3.11": "cpython@3.11",
-        "testing@cpython-3.12": "cpython@3.12",
-        "testing@pypy-3.11": "pypy@3.11",
+        "testing-cpython-3.11": "cpython@3.11",
+        "testing-cpython-3.12": "cpython@3.12",
+        "testing-pypy-3.11": "pypy@3.11",
     }
     for concrete_name, expected_interpreter in expected_interpreters.items():
         child = env_table[concrete_name]
@@ -814,6 +814,148 @@ def test_matrix_env_expands_to_one_concrete_env_per_interpreter() -> None:
         assert child["interpreter"] == expected_interpreter
         assert child[MATRIX_ENV_KEY] == "testing"
         assert "interpreters" not in child
+
+
+def test_generated_child_names_are_pep735_valid_and_match_base_group() -> None:
+    """Generated children use `<base>-<impl>-<version>` and stay PEP 735-valid.
+
+    The resolved `[dependency-groups]` has no `testing` key. It has one key per
+    child, each equal to the base group's content, and every key matches the
+    PEP 735 / PEP 508 name pattern.
+    """
+    import re
+
+    project_config: dict[str, Any] = {
+        "dependency-groups": {"testing": ["pytest"]},
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {
+                        "interpreters": [
+                            "cpython@3.11",
+                            "cpython@3.12",
+                            "pypy@3.11",
+                        ]
+                    }
+                }
+            }
+        },
+    }
+
+    resolve_interpreter_matrices(project_config)
+
+    deps_groups = project_config["dependency-groups"]
+    assert "testing" not in deps_groups
+    assert set(deps_groups.keys()) == {
+        "testing-cpython-3.11",
+        "testing-cpython-3.12",
+        "testing-pypy-3.11",
+    }
+    for name, group in deps_groups.items():
+        assert group == ["pytest"]
+    pattern = re.compile("^([A-Z0-9]|[A-Z0-9][A-Z0-9._-]*[A-Z0-9])$", re.IGNORECASE)
+    for name in deps_groups.keys():
+        assert pattern.match(name) is not None
+
+
+def test_generated_child_name_clashes_raise_configuration_error() -> None:
+    """Exact and normalized clashes with generated child names raise."""
+    import pytest as _pytest
+
+    cases: list[dict[str, Any]] = [
+        {"dependency-groups": {"testing-cpython-3.11": ["x"]}},
+        {"dependency-groups": {"Testing_CPython-3.11": ["x"]}},
+        {
+            "tool": {
+                "finecode": {"env": {"testing-cpython-3.11": {}}},
+            }
+        },
+        {
+            "tool": {
+                "finecode": {
+                    "action": {
+                        "run_tests": {
+                            "source": "myext.RunTests",
+                            "handlers": [
+                                {
+                                    "name": "pytest",
+                                    "source": "myext.Pytest",
+                                    "env": "testing-cpython-3.11",
+                                    "dependencies": [],
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        },
+    ]
+    for extra in cases:
+        project_config: dict[str, Any] = {
+            "dependency-groups": {"testing": ["pytest"]},
+            "tool": {
+                "finecode": {
+                    "env": {
+                        "testing": {"interpreters": ["cpython@3.11"]},
+                    }
+                }
+            },
+        }
+        # merge extra keys in
+        if "dependency-groups" in extra:
+            project_config["dependency-groups"].update(extra["dependency-groups"])
+        if "tool" in extra:
+            finecode_extra = extra["tool"]["finecode"]
+            base_fc = project_config["tool"]["finecode"]
+            for key, value in finecode_extra.items():
+                if key == "env":
+                    base_fc.setdefault("env", {}).update(value)
+                elif key == "action":
+                    base_fc.update({"action": value})
+        with _pytest.raises(config_models.ConfigurationError) as excinfo:
+            resolve_interpreter_matrices(project_config)
+        message = str(excinfo.value)
+        assert "testing" in message
+        assert "cpython@3.11" in message
+
+
+def test_duplicate_generated_child_names_raise_configuration_error() -> None:
+    """Two axis entries normalizing to the same child name raise."""
+    project_config: dict[str, Any] = {
+        "dependency-groups": {"testing": ["pytest"]},
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {"interpreters": ["cpython@3.11", "3.11"]},
+                }
+            }
+        },
+    }
+    with pytest.raises(config_models.ConfigurationError) as excinfo:
+        resolve_interpreter_matrices(project_config)
+    message = str(excinfo.value)
+    assert "testing" in message
+    assert "cpython@3.11" in message
+
+
+def test_invalid_generated_child_name_raises_configuration_error() -> None:
+    """An axis entry producing a PEP 735-invalid child name raises."""
+    project_config: dict[str, Any] = {
+        "dependency-groups": {"testing": ["pytest"]},
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {"interpreters": ["cpython@3.14+ft"]},
+                }
+            }
+        },
+    }
+    with pytest.raises(config_models.ConfigurationError) as excinfo:
+        resolve_interpreter_matrices(project_config)
+    message = str(excinfo.value)
+    assert "testing" in message
+    assert "cpython@3.14+ft" in message
+    assert "testing-cpython-3.14+ft" in message
 
 
 def test_interpreter_pin_env_is_not_marked_as_matrix_child() -> None:
@@ -827,6 +969,37 @@ def test_interpreter_pin_env_is_not_marked_as_matrix_child() -> None:
 
     dev_env = project_config["tool"]["finecode"]["env"]["dev"]
     assert dev_env == {"interpreter": "cpython@3.14"}
+
+
+def test_regular_env_sharing_a_matrix_base_prefix_is_not_a_child() -> None:
+    """A regular env whose name shares a matrix base prefix is not a child.
+
+    Child detection reads the expansion's base marker rather than parsing the
+    env name, so a sibling env that merely starts with the same prefix keeps
+    its own settings and gains no child marker.
+    """
+    project_config: dict[str, Any] = {
+        "dependency-groups": {
+            "testing": ["pytest"],
+            "testing-extra": ["hypothesis"],
+        },
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {"interpreters": ["cpython@3.11"]},
+                    "testing-extra": {"install_project": False},
+                },
+            }
+        },
+    }
+
+    resolve_interpreter_matrices(project_config)
+
+    env_table = project_config["tool"]["finecode"]["env"]
+    assert MATRIX_ENV_KEY not in env_table["testing-extra"]
+    assert env_table["testing-extra"]["install_project"] is False
+    assert "hypothesis" in project_config["dependency-groups"]["testing-extra"]
+    assert env_table["testing-cpython-3.11"][MATRIX_ENV_KEY] == "testing"
 
 
 def test_matrix_env_handler_ref_rewritten_to_concrete_children() -> None:

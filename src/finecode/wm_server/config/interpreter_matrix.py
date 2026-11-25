@@ -6,11 +6,14 @@ per-interpreter envs, and validating matrix configurations. No I/O, no
 config-file reading, no venv creation.
 """
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 __all__ = [
     "MATRIX_ENV_KEY",
     "ConcreteEnv",
+    "ConcreteEnvNameError",
     "EnvSpec",
     "ExpansionResult",
     "HandlerRef",
@@ -18,6 +21,8 @@ __all__ = [
     "InvalidInterpreterError",
     "MatrixSetMismatchError",
     "MixedMatrixError",
+    "check_concrete_env_names",
+    "concrete_env_name",
     "expand",
     "matrix_child_interpreter",
     "parse_interpreter",
@@ -70,10 +75,15 @@ class HandlerRef:
     env: str
 
 
+class ConcreteEnvNameError(ValueError):
+    """A generated matrix child name is invalid or collides."""
+
+
 @dataclass
 class ConcreteEnv:
     name: str
     interpreter: Interpreter | None
+    matrix_env: str | None
 
 
 @dataclass
@@ -117,6 +127,75 @@ def parse_interpreter(value: str) -> Interpreter:
     return Interpreter(implementation.lower(), version)
 
 
+def concrete_env_name(base: str, interpreter: Interpreter) -> str:
+    """Concrete env name for one matrix child."""
+    return f"{base}-{interpreter.env_suffix}"
+
+
+_NAME_PATTERN = "^([A-Z0-9]|[A-Z0-9][A-Z0-9._-]*[A-Z0-9])$"
+_NAME_RE = re.compile(_NAME_PATTERN, re.IGNORECASE)
+
+
+def _normalize_concrete_name(value: str) -> str:
+    lowered = value.lower()
+    out: list[str] = []
+    prev_dash = False
+    for ch in lowered:
+        if ch == "-" or ch == "_" or ch == ".":
+            if not prev_dash:
+                out.append("-")
+            prev_dash = True
+        else:
+            out.append(ch)
+            prev_dash = False
+    return "".join(out)
+
+
+def check_concrete_env_names(
+    expansion: ExpansionResult, declared_names: Iterable[str]
+) -> None:
+    """Validate generated child names.
+
+    Raises:
+        ConcreteEnvNameError: If a generated name is invalid under PEP 735 /
+            PEP 508, or collides after normalization with a declared name or
+            another generated name. Reports the first failing child in
+            `concrete_envs` order.
+    """
+    declared_list = list(declared_names)
+    seen: dict[str, str] = {}
+    for concrete_env in expansion.concrete_envs:
+        if concrete_env.matrix_env is None:
+            continue
+        name = concrete_env.name
+        base = concrete_env.matrix_env
+        canonical = (
+            concrete_env.interpreter.canonical
+            if concrete_env.interpreter is not None
+            else ""
+        )
+        if _NAME_RE.match(name) is None:
+            raise ConcreteEnvNameError(
+                f"matrix env {base!r} interpreter {canonical!r} "
+                f"produces invalid dependency-group name {name!r}"
+            )
+        normalized = _normalize_concrete_name(name)
+        for declared in declared_list:
+            if _normalize_concrete_name(declared) == normalized:
+                raise ConcreteEnvNameError(
+                    f"matrix env {base!r} interpreter {canonical!r} "
+                    f"produces name {name!r} conflicting with "
+                    f"declared name {declared!r}"
+                )
+        if normalized in seen:
+            raise ConcreteEnvNameError(
+                f"matrix env {base!r} interpreter {canonical!r} "
+                f"produces name {name!r} conflicting with generated "
+                f"name {seen[normalized]!r}"
+            )
+        seen[normalized] = name
+
+
 def expand(envs: list[EnvSpec], handlers: list[HandlerRef]) -> ExpansionResult:
     """Expand matrix environments into concrete per-interpreter envs and
     rewrite handler references accordingly."""
@@ -126,14 +205,16 @@ def expand(envs: list[EnvSpec], handlers: list[HandlerRef]) -> ExpansionResult:
 
     for env in envs:
         if env.interpreters is None:
-            concrete_envs.append(ConcreteEnv(env.name, None))
+            concrete_envs.append(ConcreteEnv(env.name, None, None))
             env_names_by_base[env.name] = [env.name]
         else:
             matrix_environments[env.name] = env.interpreters
             concrete_names: list[str] = []
             for interpreter in env.interpreters:
-                concrete_name = f"{env.name}@{interpreter.env_suffix}"
-                concrete_envs.append(ConcreteEnv(concrete_name, interpreter))
+                concrete_name = concrete_env_name(env.name, interpreter)
+                concrete_envs.append(
+                    ConcreteEnv(concrete_name, interpreter, env.name)
+                )
                 concrete_names.append(concrete_name)
             env_names_by_base[env.name] = concrete_names
 

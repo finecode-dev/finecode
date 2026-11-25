@@ -8,7 +8,11 @@ import typing
 import pytest
 
 from finecode.wm_server import context, domain
-from finecode.wm_server.config.interpreter_matrix import Interpreter
+from finecode.wm_server.config.interpreter_matrix import (
+    Interpreter,
+    concrete_env_name,
+    parse_interpreter,
+)
 from finecode.wm_server.runner.runner_client import (
     DevEnv,
     RunActionResponse,
@@ -25,7 +29,7 @@ def _make_matrix_action(*, interpreters: list[str]) -> domain.Action:
             name=f"handler_{interpreter}",
             source="test.handlers.TestHandler",
             config={},
-            env=f"testing@{interpreter}",
+            env=concrete_env_name("testing", parse_interpreter(interpreter)),
             dependencies=[],
             interpreter=interpreter,
         )
@@ -614,7 +618,7 @@ async def test_selected_envs_restricts_fan_out_to_that_variant(
         merge_results=False,
         on_partial=on_partial,
         on_prefix=_ack_prefix,
-        selected_envs={f"testing@{cpython_311.canonical}"},
+        selected_envs={concrete_env_name("testing", cpython_311)},
         origin=None,
     )
 
@@ -650,7 +654,7 @@ async def test_selection_naming_no_env_runs_nothing_without_raising(
         merge_results=False,
         on_partial=on_partial,
         on_prefix=_ack_prefix,
-        selected_envs={"other@cpython-3.14"},
+        selected_envs={"other-cpython-3.14"},
         origin=None,
     )
 

@@ -1,7 +1,7 @@
 """Auto-repair must create a matrix child venv with that child's interpreter.
 
 Without the interpreter in the env spec, discovery is skipped and uv runs
-``venv`` without ``--python`` — a missing ``testing@cpython-3.11`` venv is
+``venv`` without ``--python`` — a missing ``testing-cpython-3.11`` venv is
 recreated with the default Python under the wrong name.
 """
 
@@ -23,7 +23,7 @@ def _make_context(
     project = wm_testing.make_single_action_project(
         dir_path=project_dir,
         action_name="test_action",
-        handler_env="testing@cpython-3.13",
+        handler_env="testing-cpython-3.13",
     )
     ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
     ws_context.ws_projects[project.dir_path] = project
@@ -40,7 +40,7 @@ async def test_matrix_child_interpreter_is_forwarded(
     both the create and the install calls, so the venv is built with the
     right Python."""
     ws_context, project = _make_context(
-        tmp_path, {"testing@cpython-3.13": {"interpreter": "cpython@3.13"}}
+        tmp_path, {"testing-cpython-3.13": {"interpreter": "cpython@3.13"}}
     )
     seen: list[tuple[str, dict]] = []
 
@@ -60,7 +60,7 @@ async def test_matrix_child_interpreter_is_forwarded(
         ),
     ):
         await prepare_envs_service.install_env_for_project(
-            project, "testing@cpython-3.13", ws_context
+            project, "testing-cpython-3.13", ws_context
         )
 
     assert [source for source, _ in seen] == [

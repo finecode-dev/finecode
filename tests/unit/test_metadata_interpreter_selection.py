@@ -18,7 +18,7 @@ def _matrix_project(path: Path):
     project = testing.make_multi_env_action_project(
         dir_path=path,
         action_name="run_tests",
-        handler_envs=["testing@cpython-3.11", "testing@cpython-3.14"],
+        handler_envs=["testing-cpython-3.11", "testing-cpython-3.14"],
     )
     ws_context = testing.make_workspace_context(
         project=project,
@@ -42,11 +42,11 @@ def _matrix_project(path: Path):
 @pytest.mark.parametrize(
     ("options", "expected"),
     [
-        ({}, "testing@cpython-3.14"),
-        ({"interpreterSelectors": ["3.14"]}, "testing@cpython-3.14"),
-        ({"interpreterSelectors": ["3.11"]}, "testing@cpython-3.11"),
-        ({"devEnv": "ci"}, "testing@cpython-3.11"),
-        ({"interpreterSelectors": ["all"]}, "testing@cpython-3.11"),
+        ({}, "testing-cpython-3.14"),
+        ({"interpreterSelectors": ["3.14"]}, "testing-cpython-3.14"),
+        ({"interpreterSelectors": ["3.11"]}, "testing-cpython-3.11"),
+        ({"devEnv": "ci"}, "testing-cpython-3.11"),
+        ({"interpreterSelectors": ["all"]}, "testing-cpython-3.11"),
     ],
 )
 async def test_single_run_metadata_starts_a_selected_child(
@@ -83,7 +83,7 @@ async def test_batch_metadata_uses_local_default_before_scope_resolution(
 
     async def start(*, env_name, **kwargs):
         started.append(env_name)
-        assert env_name == "testing@cpython-3.14"
+        assert env_name == "testing-cpython-3.14"
         action.canonical_source = action.source
         action.scope = domain.ActionScope.PROJECT
 
@@ -94,7 +94,7 @@ async def test_batch_metadata_uses_local_default_before_scope_resolution(
     )
 
     assert actions == {tmp_path: [action.name]}
-    assert started == ["testing@cpython-3.14"]
+    assert started == ["testing-cpython-3.14"]
 
 
 @pytest.mark.parametrize("selectors", [["3.11"], ["3.14"]])
@@ -120,7 +120,7 @@ async def test_streamed_source_resolution_preserves_interpreter_override(
     )
 
     assert name == action.name
-    assert started == [f"testing@cpython-{selectors[0]}"]
+    assert started == [f"testing-cpython-{selectors[0]}"]
 
 
 async def test_needed_metadata_does_not_fall_back_to_an_unselected_child(
@@ -135,13 +135,13 @@ async def test_needed_metadata_does_not_fall_back_to_an_unselected_child(
 
     monkeypatch.setattr(proxy_utils, "_start_runner_or_update_config", fail_start)
 
-    with pytest.raises(ActionNotResolvableError, match="testing@cpython-3.14"):
+    with pytest.raises(ActionNotResolvableError, match="testing-cpython-3.14"):
         await _helpers._parse_and_validate_run_action_params(
             {"project": str(tmp_path), "actionSource": project.actions[0].source},
             ws_context,
         )
 
-    assert started == ["testing@cpython-3.14"]
+    assert started == ["testing-cpython-3.14"]
 
 
 async def test_warm_selected_runner_restores_metadata_after_project_rebuild(
@@ -149,9 +149,9 @@ async def test_warm_selected_runner_restores_metadata_after_project_rebuild(
 ) -> None:
     project, ws_context = _matrix_project(tmp_path)
     action = project.actions[0]
-    ws_context.ws_projects_extension_runners[tmp_path]["testing@cpython-3.14"] = (
+    ws_context.ws_projects_extension_runners[tmp_path]["testing-cpython-3.14"] = (
         testing.make_running_runner(
-            working_dir_path=tmp_path, env_name="testing@cpython-3.14"
+            working_dir_path=tmp_path, env_name="testing-cpython-3.14"
         )
     )
     queried = []
@@ -180,7 +180,7 @@ async def test_warm_selected_runner_restores_metadata_after_project_rebuild(
 
     assert parsed.action.canonical_source == action.source
     assert parsed.action.scope == domain.ActionScope.PROJECT
-    assert queried == ["testing@cpython-3.14"]
+    assert queried == ["testing-cpython-3.14"]
 
 
 async def test_batch_can_read_scope_without_starting_a_deselected_root_child(
@@ -192,7 +192,7 @@ async def test_batch_can_read_scope_without_starting_a_deselected_root_child(
     other, other_context = _matrix_project(sibling)
     project.actions[0].handlers = project.actions[0].handlers[:1]
     ws_context.ws_projects_raw_configs[root]["tool"]["finecode"]["env"].pop(
-        "testing@cpython-3.14"
+        "testing-cpython-3.14"
     )
     ws_context.ws_projects[sibling] = other
     ws_context.ws_projects_raw_configs.update(other_context.ws_projects_raw_configs)

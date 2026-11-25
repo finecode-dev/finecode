@@ -15,7 +15,7 @@ def _env(interpreter: str | None = None) -> dict:
 
 def _matrix_base(base: str, versions: list[str]) -> dict[str, dict]:
     return {
-        f"{base}@cpython-{v}": {
+        f"{base}-cpython-{v}": {
             **_env(interpreter=f"cpython@{v}"),
             MATRIX_ENV_KEY: base,
         }
@@ -59,7 +59,7 @@ class TestBuildCreateEnvsParams:
 
         assert params["recreate"] is True
         assert params["env_names"] == sorted(
-            {"testing@cpython-3.11", "testing@cpython-3.12"}
+            {"testing-cpython-3.11", "testing-cpython-3.12"}
         )
 
     def test_recreate_false_with_active_env_selection_still_forwards_recreate_key(
@@ -69,12 +69,12 @@ class TestBuildCreateEnvsParams:
             **_matrix_base("testing", ["3.11", "3.12"]),
             "dev_no_runtime": _env(),
         }
-        sel = resolve_env_selection(env_table, ["testing@cpython-3.11"], "cli")
+        sel = resolve_env_selection(env_table, ["testing-cpython-3.11"], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=False)
 
         assert params["recreate"] is False
-        assert params["env_names"] == sorted({"testing@cpython-3.11"})
+        assert params["env_names"] == sorted({"testing-cpython-3.11"})
 
 
 class TestBuildCreateEnvsParamsExcludesDevWorkspace:
@@ -123,7 +123,7 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         params = build_create_envs_params(sel, env_table, recreate=True)
 
         assert params["env_names"] == sorted(
-            {"testing@cpython-3.11", "testing@cpython-3.12"}
+            {"testing-cpython-3.11", "testing-cpython-3.12"}
         )
         assert "dev_workspace" not in params["env_names"]
 
@@ -166,7 +166,7 @@ class TestBuildCreateEnvsParamsFollowsEnvFilter:
             (["dev_no_runtime"],),
             (["testing"],),
             (["testing@all"],),
-            (["testing@cpython-3.12"],),
+            (["testing-cpython-3.12"],),
             (["dev_workspace"],),
         ],
     )
@@ -216,8 +216,8 @@ class TestBuildInstallEnvsParams:
         params = build_install_envs_params(sel, env_table)
 
         assert params["env_names"] == [
-            "testing@cpython-3.11",
-            "testing@cpython-3.12",
+            "testing-cpython-3.11",
+            "testing-cpython-3.12",
         ]
 
     def test_no_selection_without_dev_workspace_installs_every_env(self) -> None:
