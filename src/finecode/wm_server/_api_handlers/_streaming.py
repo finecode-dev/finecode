@@ -812,6 +812,12 @@ async def _handle_run_batch_with_partial_results(
                             "progress forwarder finished before stream end"
                         )
         finally:
+            # asyncio.wait does not cancel the tasks it waits on: without this,
+            # a cancelled request leaves its project tasks awaiting the ERs.
+            for _pt in project_remaining:
+                if not _pt.done():
+                    _pt.cancel()
+            await asyncio.gather(*project_remaining, return_exceptions=True)
             if batch_combined is not None:
                 for _slot in batch_slot_streams.values():
                     _slot.end()

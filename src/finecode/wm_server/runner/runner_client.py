@@ -5,7 +5,6 @@ API of ER client for "higher" layers like services, CLI.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import dataclasses
 import enum
 import pathlib
@@ -211,8 +210,14 @@ async def _supervised_send(
         return send_task.result()
     except asyncio.CancelledError:
         _ = send_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
+        try:
             await send_task
+        except jsonrpc_client.RequestCancelledError as error:
+            # It carries the request id; callers need it to send the ER
+            # $/cancelRequest. The outer plain CancelledError does not.
+            raise error from None
+        except (asyncio.CancelledError, Exception):
+            pass
         raise
 
 
