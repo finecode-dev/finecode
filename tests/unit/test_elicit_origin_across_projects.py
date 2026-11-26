@@ -48,7 +48,9 @@ class _AskingErClient(wm_testing.FakeErClient):
         method: str,
         params: typing.Any = None,
         timeout: float | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
+        _ = await_reply_after_cancel
         run_id = (getattr(params, "options", None) or {}).get("runId")
         self.run_ids.append(run_id)
         self.origin_while_running.append(
@@ -69,8 +71,12 @@ class _DispatchingErClient(_AskingErClient):
         method: str,
         params: typing.Any = None,
         timeout: float | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
-        result = await super().send_request(method, params, timeout)
+        result = await super().send_request(
+            method, params, timeout,
+            await_reply_after_cancel=await_reply_after_cancel,
+        )
         if self.dispatch_onward is not None:
             # The ER echoes the run it is executing, which is how the WM knows
             # whose continuation the next run is.

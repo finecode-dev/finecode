@@ -21,6 +21,7 @@ from finecode.wm_server import (
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.runner import elicitation_bridge, runner_client, runner_manager
 from finecode.wm_server.runner import stream_completion as runner_streams
+from finecode.wm_server.runner.delegated_child_stops import DelegatedChildStops
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.services import (
     action_meta_cache,
@@ -122,10 +123,16 @@ async def run_action_in_runner(
     params: dict[str, typing.Any],
     runner: runner_client.ExtensionRunnerInfo,
     options: dict[str, typing.Any] | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> runner_client.RunActionResponse:
     try:
         response = await runner_client.run_action(
-            runner=runner, action_name=action_name, params=params, options=options
+            runner=runner,
+            action_name=action_name,
+            params=params,
+            options=options,
+            child_stops=child_stops,
         )
     except runner_client.BaseRunnerRequestException as exception:
         if isinstance(exception, runner_client.ActionRunCancelled):
@@ -204,6 +211,7 @@ async def run_action_and_notify(
     *,
     orchestration_depth: int,
     wal_writer: wal.WalWriter | None,
+    child_stops: DelegatedChildStops | None,
 ) -> runner_client.RunActionResponse:
     options: dict[str, typing.Any] = {
         "partialResultToken": partial_result_token,
@@ -242,6 +250,7 @@ async def run_action_and_notify(
             params=params,
             runner=runner,
             options=options,
+            child_stops=child_stops,
         )
     except ActionCancelledError as exc:
         wal.emit_run_event(
@@ -540,6 +549,9 @@ async def run_with_partial_results(
                             caller_kwargs=caller_kwargs,
                             orchestration_depth=orchestration_depth,
                             wal_writer=wal_writer,
+                            child_stops=origin.delegated_call
+                            if origin is not None
+                            else None,
                         )
                     except Exception as exception:
                         failures.append(exception)
@@ -653,12 +665,29 @@ async def run_with_partial_results(
                 yield ctx
             except BaseException as exc:
                 consumer_error = exc
+            # The final sink has left, so nothing will acknowledge a fence a
+            # later runner reply inserts. Abort the outputs before the join so
+            # a producer draining after an absorbed cancel cannot wait forever.
+            # An ended output has no pending fence: producers finish first.
+            consumer_left = completion_streams.PipelineFailure(
+                consumer_error
+                if consumer_error is not None
+                else RuntimeError("consumer left before the run ended")
+            )
+            for output in (result, progress_result):
+                if (
+                    output is not None
+                    and output.state is completion_streams.StreamState.OPEN
+                ):
+                    output.abort(consumer_left)
             finalizer = asyncio.ensure_future(_finalize(coordinator))
             first_interruption: asyncio.CancelledError | None = None
-            while True:
+            # Loop on the finalizer's state, not `while True`: when the
+            # finalizer itself is cancelled (event-loop teardown cancels every
+            # task), shielding it again raises at once without yielding.
+            while not finalizer.done():
                 try:
                     await asyncio.shield(finalizer)
-                    break
                 except asyncio.CancelledError as exc:
                     if first_interruption is None:
                         first_interruption = exc
@@ -1495,6 +1524,7 @@ async def run_action(
                     caller_kwargs=caller_kwargs,
                     run_variant=_execute_action,
                     selected_envs=selected_envs,
+                    child_stops=origin.delegated_call if origin is not None else None,
                 )
             else:
                 response = await _execute_action(
@@ -1513,6 +1543,7 @@ async def run_action(
                     orchestration_depth=orchestration_depth,
                     caller_kwargs=caller_kwargs,
                     allow_no_handlers=allow_no_handlers,
+                    child_stops=origin.delegated_call if origin is not None else None,
                 )
 
             return response
@@ -1535,6 +1566,7 @@ async def _execute_action(
     orchestration_depth: int,
     caller_kwargs: dict | None,
     allow_no_handlers: bool,
+    child_stops: DelegatedChildStops | None,
 ) -> RunActionResponse:
     """Run *action*'s handlers (all in one env, or fanned out across envs)."""
     all_handlers_envs = ordered_set.OrderedSet(
@@ -1572,6 +1604,7 @@ async def _execute_action(
             traceparent=traceparent,
             orchestration_depth=orchestration_depth,
             caller_kwargs=caller_kwargs,
+            child_stops=child_stops,
         )
     else:
         run_concurrently = action.runs_concurrently
@@ -1592,6 +1625,7 @@ async def _execute_action(
                 traceparent=traceparent,
                 orchestration_depth=orchestration_depth,
                 caller_kwargs=caller_kwargs,
+                child_stops=child_stops,
             )
         else:
             response = await _run_multi_env_sequential(
@@ -1609,6 +1643,7 @@ async def _execute_action(
                 traceparent=traceparent,
                 orchestration_depth=orchestration_depth,
                 caller_kwargs=caller_kwargs,
+                child_stops=child_stops,
             )
 
     return response
@@ -1629,6 +1664,8 @@ async def _run_action_in_env_runner(
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
     caller_kwargs: dict | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ):
     wal.emit_run_event(
         ws_context.wal_writer,
@@ -1693,6 +1730,7 @@ async def _run_action_in_env_runner(
                 action_name=action_name,
                 params=payload,
                 options=options,
+                child_stops=child_stops,
             )
         wal.emit_run_event(
             ws_context.wal_writer,
@@ -1802,6 +1840,8 @@ async def _run_handlers_in_env_runner(
     orchestration_depth: int = 0,
     previous_context: dict | None = None,
     caller_kwargs: dict | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> runner_client.RunHandlersResponse:
     """Call actions/runHandlers on the ER for one segment of a multi-env run."""
     wal.emit_run_event(
@@ -1869,6 +1909,7 @@ async def _run_handlers_in_env_runner(
             previous_context=previous_context,
             caller_kwargs=caller_kwargs,
             options=options,
+            child_stops=child_stops,
         )
     except runner_client.BaseRunnerRequestException as error:
         if isinstance(error, runner_client.ActionRunCancelled):
@@ -1942,6 +1983,8 @@ async def _run_multi_env_sequential(
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
     caller_kwargs: dict | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> runner_client.RunActionResponse:
     """Drive multi-env sequential execution segment-by-segment."""
     segments = _build_sequential_segments(action.handlers)
@@ -1971,6 +2014,7 @@ async def _run_multi_env_sequential(
             progress_token=progress_token if is_last else None,
             orchestration_depth=orchestration_depth,
             caller_kwargs=caller_kwargs,
+            child_stops=child_stops,
         )
 
         if seg_response.status == "stopped":
@@ -2007,6 +2051,8 @@ async def _run_multi_env_concurrent(
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
     caller_kwargs: dict | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> runner_client.RunActionResponse:
     """Drive multi-env concurrent execution: dispatch all env groups in parallel."""
     groups = _build_concurrent_groups(action.handlers)
@@ -2033,6 +2079,7 @@ async def _run_multi_env_concurrent(
                         progress_token=None,
                         orchestration_depth=orchestration_depth,
                         caller_kwargs=caller_kwargs,
+                        child_stops=child_stops,
                     )
                 )
                 group_tasks.append(task)
@@ -2126,6 +2173,7 @@ async def _run_multi_env_concurrent(
         progress_token=progress_token,
         orchestration_depth=orchestration_depth,
         caller_kwargs=caller_kwargs,
+        child_stops=child_stops,
     )
 
     return runner_client.RunActionResponse(

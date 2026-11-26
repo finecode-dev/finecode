@@ -1,6 +1,12 @@
+from .cancel_reply import (
+    AwaitReplyAfterCancel,
+    ReplyAfterCancel,
+    ReplyAfterCancelKind,
+)
 from .client import (
     BaseRunnerRequestException,
     ErrorOnRequest,
+    InvalidResponse,
     JsonRpcClient,
     NoResponse,
     RequestCancelledError,
@@ -32,7 +38,10 @@ from .tracing import (
 from .transports import StdioTransport
 
 __all__ = [
+    "AwaitReplyAfterCancel",
     "CancelNotice",
+    "ReplyAfterCancel",
+    "ReplyAfterCancelKind",
     "DEFAULT_REQUEST_CANCELLED",
     "REQUEST_CANCELLED",
     "BaseRunnerRequestException",
@@ -46,6 +55,7 @@ __all__ = [
     "HopToken",
     "IHopObserver",
     "ITracingHooks",
+    "InvalidResponse",
     "JsonRpcClient",
     "JsonRpcError",
     "JsonRpcHandlerError",

@@ -45,12 +45,17 @@ class _ScriptedClient(wm_testing.FakeErClient):
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
         assert self.runner is not None
         for admission in self.admissions:
             runner_manager.admit_runner_progress(self.runner, admission)
         return await super().send_request(
-            method, params, timeout=timeout, on_response=on_response
+            method,
+            params,
+            timeout=timeout,
+            on_response=on_response,
+            await_reply_after_cancel=await_reply_after_cancel,
         )
 
 
@@ -329,6 +334,7 @@ class _SiblingClient(wm_testing.FakeErClient):
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
         assert self.runner is not None
         token = (params.options or {}).get("partialResultToken")
@@ -347,7 +353,11 @@ class _SiblingClient(wm_testing.FakeErClient):
                 self.runner, _partial_params(token, {"marker": "A#0"})
             )
         return await super().send_request(
-            method, params, timeout=timeout, on_response=on_response
+            method,
+            params,
+            timeout=timeout,
+            on_response=on_response,
+            await_reply_after_cancel=await_reply_after_cancel,
         )
 
 
@@ -410,11 +420,16 @@ class _GatedClient(wm_testing.FakeErClient):
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
         token = (params.options or {}).get("partialResultToken")
         if token == self.gated_token:
             self.entered.set()
             await self.release.wait()
         return await super().send_request(
-            method, params, timeout=timeout, on_response=on_response
+            method,
+            params,
+            timeout=timeout,
+            on_response=on_response,
+            await_reply_after_cancel=await_reply_after_cancel,
         )

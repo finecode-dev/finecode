@@ -1661,9 +1661,16 @@ class RunActionInProjectParams:
     run_id: str | None = None
 
 
+class SubtreeStopData(typing.TypedDict):
+    """``error.data`` shape for a cancelled delegated call."""
+
+    subtreeStopped: bool
+
+
 @dataclasses.dataclass
 class RunActionInProjectResult(BaseResult):
     return_code: int
+    subtree_stopped: bool
     result: dict | None = None
 
 
@@ -1717,6 +1724,7 @@ class RunActionInWorkspaceParams:
 @dataclasses.dataclass
 class RunActionInWorkspaceResult(BaseResult):
     results_by_project: dict
+    subtree_stopped: bool
 
 
 @dataclasses.dataclass
@@ -2026,6 +2034,7 @@ class ErRunActionResult(BaseResult):
     return_code: int | None = None
     result_by_format: dict | None = None
     status: str | None = None
+    subtree_stopped: bool | None = None
 
 
 @dataclasses.dataclass
@@ -2057,6 +2066,7 @@ class ErRunHandlersResult(BaseResult):
     result_by_format: dict | None = None
     return_code: int | None = None
     context: dict | None = None
+    subtree_stopped: bool | None = None
 
 
 @dataclasses.dataclass

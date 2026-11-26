@@ -69,6 +69,7 @@ async def test_notify_emits_dispatched_then_completed() -> None:
             caller_kwargs=None,
             orchestration_depth=2,
             wal_writer=typing.cast(typing.Any, writer),
+            child_stops=None,
         )
     events = _emit_calls(mock_emit)
     assert [e for e, _ in events] == ["run.dispatched", "run.completed"]
@@ -107,6 +108,7 @@ async def test_notify_nonzero_return_is_still_completed() -> None:
             caller_kwargs=None,
             orchestration_depth=0,
             wal_writer=object(),
+            child_stops=None,
         )
     events = _emit_calls(mock_emit)
     assert [e for e, _ in events] == ["run.dispatched", "run.completed"]
@@ -136,6 +138,7 @@ async def test_notify_disabled_writer_does_not_fail() -> None:
             caller_kwargs=None,
             orchestration_depth=0,
             wal_writer=None,
+            child_stops=None,
         )
     assert response.return_code == 0
 
@@ -165,6 +168,7 @@ async def test_notify_service_failure_emits_failed_once() -> None:
                 caller_kwargs=None,
                 orchestration_depth=0,
                 wal_writer=object(),
+                child_stops=None,
             )
         except ActionRunFailed:
             pass
@@ -200,6 +204,7 @@ async def test_notify_runner_cancellation_emits_failed() -> None:
                 caller_kwargs=None,
                 orchestration_depth=0,
                 wal_writer=object(),
+                child_stops=None,
             )
         except ActionCancelledError:
             pass
@@ -235,6 +240,7 @@ async def test_notify_task_cancellation_emits_no_terminal() -> None:
                 caller_kwargs=None,
                 orchestration_depth=0,
                 wal_writer=object(),
+                child_stops=None,
             )
         except asyncio.CancelledError:
             pass
@@ -269,6 +275,7 @@ async def test_notify_unexpected_exception_emits_no_terminal() -> None:
                 caller_kwargs=None,
                 orchestration_depth=0,
                 wal_writer=object(),
+                child_stops=None,
             )
         except RuntimeError:
             pass

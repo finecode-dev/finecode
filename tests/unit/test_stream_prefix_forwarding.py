@@ -690,6 +690,99 @@ async def test_service_failed_sink_aborts_producer_without_waiting(
     assert aborted.is_set()
 
 
+async def test_service_cancelled_finalizer_ends_the_shielded_join(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finalizer cancelled from outside ends the consumer's join.
+
+    Event-loop teardown cancels every task, the finalizer included. The join
+    must then stop shielding it and raise the interruption; re-shielding a
+    cancelled task raises at once without yielding, so it would spin forever.
+    """
+    project = _make_collected(tmp_path / "a")
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path / "a"])
+    ws_context.ws_projects[tmp_path / "a"] = project
+    _stub_routing(monkeypatch, ws_context, project)
+    release = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def _cancel_resistant_dispatch(
+        **kwargs: typing.Any,
+    ) -> collections.abc.AsyncGenerator[_ScriptedProxyCtx, None]:
+        inner = _ScriptedProxyCtx(
+            responses=[
+                RunActionResponse(result_by_format={}, return_code=0, status="streamed")
+            ],
+            hold_open=True,
+        )
+        try:
+            yield inner
+        finally:
+            # Keeps the coordinator, and so the finalizer, pending after the
+            # consumer's cancel.
+            while not release.is_set():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await release.wait()
+            inner.partials.end()
+
+    monkeypatch.setattr(
+        partial_results_service, "run_with_partial_results", _cancel_resistant_dispatch
+    )
+
+    def _is_finalizer(candidate: object) -> bool:
+        get_coro = getattr(candidate, "get_coro", None)
+        coro = get_coro() if get_coro is not None else None
+        return getattr(coro, "__qualname__", "").endswith("._finalize")
+
+    real_shield = asyncio.shield
+    finalizer_shields = 0
+
+    class _Spinning(Exception):
+        pass
+
+    def _guarded_shield(arg: typing.Any) -> typing.Any:
+        nonlocal finalizer_shields
+        if _is_finalizer(arg):
+            finalizer_shields += 1
+            if finalizer_shields > 50:
+                raise _Spinning("join keeps re-shielding a finished finalizer")
+        return real_shield(arg)
+
+    monkeypatch.setattr(partial_results_service.asyncio, "shield", _guarded_shield)
+
+    async def _consume() -> None:
+        async with partial_results_service.run_action_with_partial_results(
+            action_name="lint",
+            project_path=str(tmp_path / "a"),
+            params={},
+            partial_result_token="tok",
+            run_trigger=RunActionTrigger("system"),
+            dev_env=DevEnv("ide"),
+            ws_context=ws_context,
+            origin=None,
+            result_formats=["json"],
+        ) as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.ensure_future(_consume())
+    try:
+        await asyncio.sleep(0.05)
+        _ = task.cancel()
+        await asyncio.sleep(0.05)
+        finalizers = [t for t in asyncio.all_tasks() if _is_finalizer(t)]
+        assert len(finalizers) == 1, "the join is not waiting on a finalizer"
+        _ = finalizers[0].cancel()
+        # The cancelled finalizer finishes once the coordinator does.
+        release.set()
+        done, _pending = await asyncio.wait({task}, timeout=1.0)
+        assert task in done, "the join did not end after its finalizer was cancelled"
+        assert task.cancelled(), f"expected CancelledError, got {task!r}"
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+
+
 async def test_api_sink_acknowledges_only_after_notify_and_drain() -> None:
     """The direct API sink pattern acknowledges a fence only after the
     notify + writer-drain handoff resumes, never at dequeue time."""

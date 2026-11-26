@@ -5,10 +5,11 @@ from unittest import mock
 
 import pytest
 
-from finecode.wm_server import context, errors
+from finecode.wm_server import context
 from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import _internal_client_types, runner_manager
 from finecode.wm_server.services.run_service import er_dispatch, proxy_utils
+from finecode_jsonrpc import JsonRpcHandlerError, error_codes
 
 _CANONICAL = "test.actions.TestAction"
 
@@ -87,8 +88,11 @@ async def test_unresolvable_canonical_raises_not_found(tmp_path: pathlib.Path) -
         mock.patch.object(
             runner_manager, "start_runner", side_effect=AssertionError("must not start")
         ),
-        pytest.raises(errors.ActionNotFoundError),
+        pytest.raises(JsonRpcHandlerError) as exc_info,
     ):
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=runner, params=_params(_CANONICAL), ws_context=ws_context
         )
+
+    assert exc_info.value.code == error_codes.INTERNAL_ERROR
+    assert exc_info.value.data == {"subtreeStopped": True}

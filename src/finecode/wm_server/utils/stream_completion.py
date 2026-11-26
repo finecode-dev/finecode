@@ -330,10 +330,12 @@ class OwnedRunTasks:
                     if not child.done():
                         _ = child.cancel()
         if self.finalizer is not None:
-            while True:
+            # Loop on the finalizer's state, not `while True`: when the
+            # finalizer itself is cancelled, shielding it again raises at
+            # once without yielding.
+            while not self.finalizer.done():
                 try:
                     await asyncio.shield(self.finalizer)
-                    break
                 except asyncio.CancelledError as exc:
                     if pending is None:
                         pending = exc

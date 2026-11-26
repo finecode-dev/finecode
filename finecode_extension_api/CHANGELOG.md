@@ -25,6 +25,10 @@ Breaking changes (minor bump is breaking in `0.x`):
   `UnlaunchableProgramError`) no longer subclasses `ValueError`; it is a
   `CommandStartError`. Replace `except (OSError, CommandNotLaunchableError)`
   with `except CommandStartError`.
+- An early close or a cancellation of `IProjectActionRunner.run_action_iter`
+  now cancels the child run and waits up to 5.0 s for its stop; a
+  cancelled delegated `run_action` waits the same way. `IProjectActionRunner`
+  no longer has a `delegated_calls_outcome()` read.
 
 Additions:
 
@@ -34,3 +38,6 @@ Additions:
   `ProcessOutputIncompleteError` (with `.stream`).
 - `CommandStartError`, the base of every "the command could not be started"
   error, and its subtype `ProgramStartError`.
+- `RunActionContext.delegated_calls_outcome()` and
+  `code_action.DelegatedCallsOutcome`: whether every delegated call of the
+  handler's own action run ended stopped.

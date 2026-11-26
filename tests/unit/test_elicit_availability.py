@@ -9,6 +9,7 @@ reports its root client's availability.
 from __future__ import annotations
 
 import asyncio
+import collections.abc
 import pathlib
 import typing
 
@@ -71,8 +72,15 @@ class _RecordingClient:
         self.startup_timeline = finecode_jsonrpc.StartupTimeline()
 
     def feature(
-        self, name: str, impl: object, *, on_peer_cancel: object = None
+        self,
+        name: str,
+        impl: object,
+        *,
+        on_peer_cancel: object = None,
+        not_started_cancel_data: collections.abc.Mapping[str, object] | None = None,
+        cancel_on_connection_loss: bool = False,
     ) -> None:
+        _ = (on_peer_cancel, not_started_cancel_data, cancel_on_connection_loss)
         self.feature_impls[name] = impl
 
     def feature_sync(self, name: str, impl: object) -> None:
@@ -249,7 +257,9 @@ class _AskingErClient(wm_testing.FakeErClient):
         method: str,
         params: typing.Any = None,
         timeout: float | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
+        _ = await_reply_after_cancel
         run_id = (getattr(params, "options", None) or {}).get("runId")
         self.run_ids.append(run_id)
         installed = elicitation_bridge.handlers()

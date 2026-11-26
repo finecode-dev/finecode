@@ -108,6 +108,7 @@ async def test_registry_check_uses_artifact_resolved_config(
                 "runId": str(uuid.uuid4()),
                 "meta": {"trigger": "user", "devEnv": "cli"},
             },
+            child_stops=None,
         )
         assert result.return_code == 0
         json_result = result.result_by_format["json"]
@@ -146,6 +147,7 @@ async def test_registry_check_reports_unknown_artifact_config(
                 "runId": str(uuid.uuid4()),
                 "meta": {"trigger": "user", "devEnv": "cli"},
             },
+            child_stops=None,
         )
 
     assert "Config of project" in str(caught.value)

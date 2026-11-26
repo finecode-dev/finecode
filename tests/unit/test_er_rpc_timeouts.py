@@ -37,7 +37,9 @@ class _RecordingErClient:
         method: str,
         params: object = None,
         timeout: float | None = None,
+        await_reply_after_cancel: object = None,
     ) -> object:
+        _ = await_reply_after_cancel
         self.calls.append((method, timeout))
         raise _NoResponse()
 
@@ -77,8 +79,10 @@ async def test_work_rpcs_remain_unbounded_by_design(tmp_path: pathlib.Path) -> N
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
 
     calls = [
-        runner_client.run_action(runner, "some_action", {}),
-        runner_client.run_handlers(runner, "some_action", ["some_handler"]),
+        runner_client.run_action(runner, "some_action", {}, child_stops=None),
+        runner_client.run_handlers(
+            runner, "some_action", ["some_handler"], child_stops=None
+        ),
         runner_client.merge_results(runner, "some_action", []),
     ]
 

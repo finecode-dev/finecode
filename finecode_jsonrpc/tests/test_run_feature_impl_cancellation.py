@@ -165,3 +165,32 @@ async def test_successful_handler_is_unaffected() -> None:
     assert len(sent) == 1
     assert "error" not in sent[0]
     assert sent[0]["id"] == 1
+
+
+async def test_cancelled_reply_with_data_is_debug_only() -> None:
+    """A coded cancellation carrying data is answered with it, quietly."""
+    from loguru import logger
+
+    from finecode_jsonrpc import JsonRpcHandlerError
+
+    seen: list[str] = []
+    handler_id = logger.add(lambda m: seen.append(str(m)), level="WARNING")
+    try:
+
+        async def impl(_params: _Params) -> _Result:
+            raise JsonRpcHandlerError(
+                error_codes.DEFAULT_REQUEST_CANCELLED,
+                "Request cancelled",
+                {"subtreeStopped": True},
+            )
+
+        client, sent = _make_client(impl)
+        task = await _dispatch(client)
+        await task
+    finally:
+        logger.remove(handler_id)
+
+    assert len(sent) == 1
+    assert sent[0]["error"]["code"] == error_codes.DEFAULT_REQUEST_CANCELLED
+    assert sent[0]["error"]["data"] == {"subtreeStopped": True}
+    assert seen == []

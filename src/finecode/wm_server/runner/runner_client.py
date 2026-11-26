@@ -19,6 +19,10 @@ from finecode.wm_server import domain
 from finecode.wm_server.domain import ErLoggingConfig
 from finecode.wm_server.runner import _internal_client_api, _internal_client_types
 from finecode.wm_server.runner import stream_completion as runner_streams
+from finecode.wm_server.runner.delegated_child_stops import (
+    DelegatedChildStops,
+    subtree_stopped_of,
+)
 from finecode.wm_server.utils import stream_completion as completion_streams
 from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 from finecode_extension_runner import schema_utils
@@ -187,6 +191,7 @@ async def _supervised_send(
     boundary: runner_streams.InvocationBoundary,
     method: str,
     params: typing.Any,
+    await_reply_after_cancel: jsonrpc_client.AwaitReplyAfterCancel | None = None,
 ) -> typing.Any:
     """Send one covered request while supervising subscription faults.
 
@@ -196,7 +201,11 @@ async def _supervised_send(
     """
     send_task: asyncio.Task[typing.Any] = asyncio.ensure_future(
         client.send_request(
-            method, params, timeout=None, on_response=boundary.completion
+            method,
+            params,
+            timeout=None,
+            on_response=boundary.completion,
+            await_reply_after_cancel=await_reply_after_cancel,
         )
     )
     faults = [subscription.failure for subscription in boundary.subscriptions]
@@ -210,14 +219,51 @@ async def _supervised_send(
         return send_task.result()
     except asyncio.CancelledError:
         _ = send_task.cancel()
+        current = asyncio.current_task()
+        if current is not None and current.cancelling() > 0:
+            current.uncancel()
+        # A repeated cancellation must not abandon this wait: consume it and
+        # keep waiting for the send to settle, so an in-flight delegated call
+        # is never dropped before the child replied.
+        while not send_task.done():
+            try:
+                await asyncio.shield(send_task)
+            except asyncio.CancelledError:
+                if current is not None and current.cancelling() > 0:
+                    current.uncancel()
+        # The send settled: translate its outcome exactly as the direct wait
+        # below did — the request id lets callers send the ER $/cancelRequest.
         try:
-            await send_task
+            settled = send_task.result()
         except jsonrpc_client.RequestCancelledError as error:
-            # It carries the request id; callers need it to send the ER
-            # $/cancelRequest. The outer plain CancelledError does not.
             raise error from None
+        except jsonrpc_client.ErrorOnRequest as error:
+            if await_reply_after_cancel is not None:
+                # No $/cancelRequest follows a received reply, so the id
+                # (which an error reply does not carry) is never used.
+                raise jsonrpc_client.RequestCancelledError(
+                    "",
+                    reply=jsonrpc_client.ReplyAfterCancel(
+                        kind=jsonrpc_client.ReplyAfterCancelKind.ERROR,
+                        error_code=error.error.code,
+                        error_data=error.error.data,
+                    ),
+                ) from None
         except (asyncio.CancelledError, Exception):
             pass
+        else:
+            if await_reply_after_cancel is not None:
+                # The reply finished the send before the cancel reached this
+                # wait. Report it as a reply after cancel, as the client does
+                # when the cancel reaches the send, so the caller still
+                # records the child's subtreeStopped verdict.
+                raise jsonrpc_client.RequestCancelledError(
+                    settled.id,
+                    reply=jsonrpc_client.ReplyAfterCancel(
+                        kind=jsonrpc_client.ReplyAfterCancelKind.RESULT,
+                        result=settled,
+                    ),
+                ) from None
         raise
 
 
@@ -270,6 +316,7 @@ async def _subscribed_request(
     boundary: runner_streams.InvocationBoundary,
     method: str,
     params: typing.Any,
+    await_reply_after_cancel: jsonrpc_client.AwaitReplyAfterCancel | None = None,
 ) -> typing.Any:
     """Covered request path: capture the outcome, drain, then map.
 
@@ -282,7 +329,13 @@ async def _subscribed_request(
     send_error: BaseException | None = None
     response: typing.Any = None
     try:
-        response = await _supervised_send(runner.client, boundary, method, params)
+        response = await _supervised_send(
+            runner.client,
+            boundary,
+            method,
+            params,
+            await_reply_after_cancel=await_reply_after_cancel,
+        )
     except BaseException as exc:
         send_error = exc
     if send_error is None:
@@ -304,10 +357,16 @@ async def _subscribed_request(
     except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
         raise
     except Exception as drain_error:
-        logger.warning(
+        message = (
             f"Prefix fault after runner error on {runner.readable_id}:"
             f" {drain_error}; reporting the runner outcome"
         )
+        if isinstance(send_error, asyncio.CancelledError):
+            # An interrupted prefix has no delivery guarantee, so
+            # its unsettled fence is expected on a cancel.
+            logger.debug(message)
+        else:
+            logger.warning(message)
     raise send_error
 
 
@@ -321,11 +380,32 @@ def _invocation_boundary(
     )
 
 
+def _stopped_of_result(response: typing.Any) -> bool:
+    """Whether a structured child-ER response carries ``subtreeStopped: true``."""
+    subtree_stopped: object = response.result.subtree_stopped
+    return subtree_stopped is True
+
+
+def _stopped_of_cancel_reply(
+    reply: jsonrpc_client.ReplyAfterCancel | None,
+) -> bool:
+    """Whether a post-cancel wait observed a stopped child."""
+    if reply is None:
+        return False
+    if reply.kind is jsonrpc_client.ReplyAfterCancelKind.RESULT:
+        return _stopped_of_result(reply.result)
+    if reply.kind is jsonrpc_client.ReplyAfterCancelKind.ERROR:
+        return subtree_stopped_of(reply.error_data)
+    return False
+
+
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
     params: dict[str, Any],
     options: dict[str, Any] | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> RunActionResponse:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
@@ -343,34 +423,66 @@ async def run_action(
     runner.active_requests += 1
     try:
         boundary = _invocation_boundary(runner, options)
-        if boundary.subscriptions:
-            response = await _subscribed_request(
-                runner,
-                boundary,
-                _internal_client_types.ER_RUN_ACTION,
-                _internal_client_types.ErRunActionParams(
-                    action_name=action_name, params=params, options=options
-                ),
-            )
-        else:
-            response = await runner.client.send_request(
-                method=_internal_client_types.ER_RUN_ACTION,
-                params=_internal_client_types.ErRunActionParams(
-                    action_name=action_name, params=params, options=options
-                ),
-                timeout=None,
-            )
+        send_option = (
+            None
+            if child_stops is None
+            else jsonrpc_client.AwaitReplyAfterCancel(timeout=None)
+        )
+        if child_stops is not None:
+            child_stops.child_started()
+        try:
+            if boundary.subscriptions:
+                response = await _subscribed_request(
+                    runner,
+                    boundary,
+                    _internal_client_types.ER_RUN_ACTION,
+                    _internal_client_types.ErRunActionParams(
+                        action_name=action_name, params=params, options=options
+                    ),
+                    await_reply_after_cancel=send_option,
+                )
+            else:
+                response = await runner.client.send_request(
+                    method=_internal_client_types.ER_RUN_ACTION,
+                    params=_internal_client_types.ErRunActionParams(
+                        action_name=action_name, params=params, options=options
+                    ),
+                    timeout=None,
+                    await_reply_after_cancel=send_option,
+                )
+        except jsonrpc_client.RequestCancelledError as error:
+            if child_stops is not None:
+                child_stops.child_finished(
+                    stopped=_stopped_of_cancel_reply(error.reply)
+                )
+            raise
+        except (
+            jsonrpc_client.ServerStoppedError,
+            jsonrpc_client.InvalidResponse,
+        ):
+            if child_stops is not None:
+                child_stops.child_finished(stopped=False)
+            raise
+        except jsonrpc_client.ErrorOnRequest as error:
+            if child_stops is not None:
+                child_stops.child_finished(
+                    stopped=subtree_stopped_of(error.error.data)
+                )
+            raise
+        if child_stops is not None:
+            child_stops.child_finished(stopped=_stopped_of_result(response))
     except jsonrpc_client.ServerStoppedError as exc:
         raise ActionRunFailed(
             "Runner stopped during execution — it may have been restarted. Try again."
         ) from exc
     except jsonrpc_client.RequestCancelledError as error:
-        logger.trace(
-            f"Request {error.request_id} to {runner.readable_id} was cancelled"
-        )
-        await _internal_client_api.cancel_request(
-            client=runner.client, request_id=error.request_id
-        )
+        if child_stops is None:
+            logger.trace(
+                f"Request {error.request_id} to {runner.readable_id} was cancelled"
+            )
+            await _internal_client_api.cancel_request(
+                client=runner.client, request_id=error.request_id
+            )
         raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
@@ -406,6 +518,8 @@ async def run_handlers(
     previous_context: dict | None = None,
     caller_kwargs: dict | None = None,
     options: dict[str, typing.Any] | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> RunHandlersResponse:
     """Call actions/runHandlers on the ER for multi-env segment orchestration.
 
@@ -431,42 +545,74 @@ async def run_handlers(
     runner.active_requests += 1
     try:
         boundary = _invocation_boundary(runner, options)
-        if boundary.subscriptions:
-            response = await _subscribed_request(
-                runner,
-                boundary,
-                _internal_client_types.ER_RUN_HANDLERS,
-                _internal_client_types.ErRunHandlersParams(
-                    action_name=action_name,
-                    handler_names=handler_names,
-                    params=params or {},
-                    previous_result=previous_result,
-                    previous_context=previous_context,
-                    caller_kwargs=caller_kwargs,
-                    options=options,
-                ),
-            )
-        else:
-            response = await runner.client.send_request(
-                method=_internal_client_types.ER_RUN_HANDLERS,
-                params=_internal_client_types.ErRunHandlersParams(
-                    action_name=action_name,
-                    handler_names=handler_names,
-                    params=params or {},
-                    previous_result=previous_result,
-                    previous_context=previous_context,
-                    caller_kwargs=caller_kwargs,
-                    options=options,
-                ),
-                timeout=None,
-            )
+        send_option = (
+            None
+            if child_stops is None
+            else jsonrpc_client.AwaitReplyAfterCancel(timeout=None)
+        )
+        if child_stops is not None:
+            child_stops.child_started()
+        try:
+            if boundary.subscriptions:
+                response = await _subscribed_request(
+                    runner,
+                    boundary,
+                    _internal_client_types.ER_RUN_HANDLERS,
+                    _internal_client_types.ErRunHandlersParams(
+                        action_name=action_name,
+                        handler_names=handler_names,
+                        params=params or {},
+                        previous_result=previous_result,
+                        previous_context=previous_context,
+                        caller_kwargs=caller_kwargs,
+                        options=options,
+                    ),
+                    await_reply_after_cancel=send_option,
+                )
+            else:
+                response = await runner.client.send_request(
+                    method=_internal_client_types.ER_RUN_HANDLERS,
+                    params=_internal_client_types.ErRunHandlersParams(
+                        action_name=action_name,
+                        handler_names=handler_names,
+                        params=params or {},
+                        previous_result=previous_result,
+                        previous_context=previous_context,
+                        caller_kwargs=caller_kwargs,
+                        options=options,
+                    ),
+                    timeout=None,
+                    await_reply_after_cancel=send_option,
+                )
+        except jsonrpc_client.RequestCancelledError as error:
+            if child_stops is not None:
+                child_stops.child_finished(
+                    stopped=_stopped_of_cancel_reply(error.reply)
+                )
+            raise
+        except (
+            jsonrpc_client.ServerStoppedError,
+            jsonrpc_client.InvalidResponse,
+        ):
+            if child_stops is not None:
+                child_stops.child_finished(stopped=False)
+            raise
+        except jsonrpc_client.ErrorOnRequest as error:
+            if child_stops is not None:
+                child_stops.child_finished(
+                    stopped=subtree_stopped_of(error.error.data)
+                )
+            raise
+        if child_stops is not None:
+            child_stops.child_finished(stopped=_stopped_of_result(response))
     except jsonrpc_client.RequestCancelledError as error:
-        logger.trace(
-            f"Request {error.request_id} to {runner.readable_id} was cancelled"
-        )
-        await _internal_client_api.cancel_request(
-            client=runner.client, request_id=error.request_id
-        )
+        if child_stops is None:
+            logger.trace(
+                f"Request {error.request_id} to {runner.readable_id} was cancelled"
+            )
+            await _internal_client_api.cancel_request(
+                client=runner.client, request_id=error.request_id
+            )
         raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:

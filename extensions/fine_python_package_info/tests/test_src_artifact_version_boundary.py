@@ -60,6 +60,7 @@ async def _get_version(
             "runId": str(uuid.uuid4()),
             "meta": {"trigger": "user", "devEnv": "cli"},
         },
+        child_stops=None,
     )
     assert result.return_code == 0
     json_result = result.result_by_format["json"]

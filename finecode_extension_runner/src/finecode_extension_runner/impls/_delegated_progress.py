@@ -15,6 +15,7 @@ import typing
 DELEGATED_PROGRESS_END_TEXT: typing.Final = "Delegated progress ended"
 DELEGATED_PROGRESS_PENDING_LIMIT: typing.Final = 100
 RELEASE_WAIT_SECONDS: typing.Final = 2.0
+DELEGATED_STOP_WAIT_SECONDS: typing.Final = 5.0
 
 
 def delegated_progress_message(event: dict[str, object]) -> str | None:

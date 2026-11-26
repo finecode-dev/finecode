@@ -94,7 +94,7 @@ async def test_action_failed_exception_still_returns_error_dict(
 
     result = await er_server.run_action(server, _run_action_params())
 
-    assert result == {"error": "boom"}
+    assert result == {"error": "boom", "subtreeStopped": True}
 
 
 async def test_the_run_is_named_while_it_executes(

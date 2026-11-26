@@ -27,6 +27,7 @@ class _BlockingClient:
         method: str,
         params=None,
         timeout=None,
+        await_reply_after_cancel=None,
     ):
         from finecode.wm_server.runner import _internal_client_types
 
@@ -58,7 +59,9 @@ async def test_run_action_active_while_pending_and_zero_after() -> None:
     """
     release = asyncio.Event()
     runner = _make_runner(release)
-    task = asyncio.create_task(runner_client.run_action(runner, "lint", params={}))
+    task = asyncio.create_task(
+        runner_client.run_action(runner, "lint", params={}, child_stops=None)
+    )
     await asyncio.sleep(0)
     assert runner.active_requests == 1
     release.set()
@@ -74,7 +77,9 @@ async def test_run_action_cancel_returns_counter_to_zero() -> None:
     """
     release = asyncio.Event()
     runner = _make_runner(release)
-    task = asyncio.create_task(runner_client.run_action(runner, "lint", params={}))
+    task = asyncio.create_task(
+        runner_client.run_action(runner, "lint", params={}, child_stops=None)
+    )
     await asyncio.sleep(0)
     assert runner.active_requests == 1
     task.cancel()
@@ -97,6 +102,7 @@ async def test_run_action_server_stopped_returns_counter_to_zero() -> None:
             method: str,
             params=None,
             timeout=None,
+            await_reply_after_cancel=None,
         ):
             raise finecode_jsonrpc.ServerStoppedError("stopped")
 
@@ -106,7 +112,7 @@ async def test_run_action_server_stopped_returns_counter_to_zero() -> None:
         client=_FailingClient(release),  # type: ignore[arg-type]
     )
     with pytest.raises(runner_client.ActionRunFailed):
-        await runner_client.run_action(runner, "lint", params={})
+        await runner_client.run_action(runner, "lint", params={}, child_stops=None)
     assert runner.active_requests == 0
 
 
@@ -119,7 +125,9 @@ async def test_run_handlers_active_while_pending_and_zero_after() -> None:
     release = asyncio.Event()
     runner = _make_runner(release)
     task = asyncio.create_task(
-        runner_client.run_handlers(runner, "lint", handler_names=["h"], params={})
+        runner_client.run_handlers(
+            runner, "lint", handler_names=["h"], params={}, child_stops=None
+        )
     )
     await asyncio.sleep(0)
     assert runner.active_requests == 1

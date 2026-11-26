@@ -29,8 +29,10 @@ class _StubErClient:
         self.requests: list[str] = []
 
     async def send_request(
-        self, method: str, params: object, timeout: float | None = None
+        self, method: str, params: object, timeout: float | None = None,
+        await_reply_after_cancel: object = None,
     ) -> None:
+        _ = await_reply_after_cancel
         self.requests.append(method)
         if self._failure is not None:
             raise self._failure

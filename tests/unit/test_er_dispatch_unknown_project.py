@@ -15,10 +15,10 @@ import pathlib
 
 import pytest
 
-from finecode.wm_server import errors
 from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import _internal_client_types
 from finecode.wm_server.services.run_service import er_dispatch
+from finecode_jsonrpc import JsonRpcHandlerError, error_codes
 
 _CANONICAL_SOURCE = "test.actions.TestAction"
 
@@ -60,13 +60,15 @@ async def test_unknown_project_path_is_named_along_with_the_known_ones(
     # own last segment appended a second time
     unknown = tmp_path / tmp_path.name
 
-    with pytest.raises(errors.ProjectError) as exc_info:
+    with pytest.raises(JsonRpcHandlerError) as exc_info:
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=runner,
             params=_make_params([str(unknown)]),
             ws_context=ws_context,
         )
 
+    assert exc_info.value.code == error_codes.INTERNAL_ERROR
+    assert exc_info.value.data == {"subtreeStopped": True}
     message = str(exc_info.value)
     assert str(unknown) in message
     assert "not a project in this workspace" in message
@@ -86,13 +88,15 @@ async def test_the_hint_names_the_closest_projects_not_every_project(
     for extra in [near, *far]:
         ws_context.ws_projects[extra] = ws_context.ws_projects[tmp_path]
 
-    with pytest.raises(errors.ProjectError) as exc_info:
+    with pytest.raises(JsonRpcHandlerError) as exc_info:
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=runner,
             params=_make_params([str(near / "typo")]),
             ws_context=ws_context,
         )
 
+    assert exc_info.value.code == error_codes.INTERNAL_ERROR
+    assert exc_info.value.data == {"subtreeStopped": True}
     message = str(exc_info.value)
     assert str(near) in message
     assert "and 9 more" in message

@@ -106,6 +106,7 @@ async def test_run_matrix_action_invokes_run_variant_once_per_interpreter_with_f
         orchestration_depth=0,
         caller_kwargs=None,
         run_variant=fake_run_variant,
+        child_stops=None,
     )
 
     assert len(calls) == 2
@@ -151,6 +152,7 @@ async def test_run_matrix_action_isolates_variant_failure() -> None:
         orchestration_depth=0,
         caller_kwargs=None,
         run_variant=flaky_run_variant,
+        child_stops=None,
     )
 
     assert response.return_code != 0
@@ -185,6 +187,7 @@ async def test_run_matrix_action_with_selected_envs_runs_only_that_variant() -> 
         caller_kwargs=None,
         run_variant=fake_run_variant,
         selected_envs={"testing-cpython-3.11"},
+        child_stops=None,
     )
 
     assert len(calls) == 1
@@ -221,6 +224,7 @@ async def test_run_matrix_action_with_selection_naming_no_env_runs_nothing() -> 
         caller_kwargs=None,
         run_variant=fake_run_variant,
         selected_envs={"other-cpython-3.14"},
+        child_stops=None,
     )
 
     assert calls == []
@@ -328,6 +332,7 @@ async def test_run_matrix_action_with_other_base_env_runs_own_variant() -> None:
         caller_kwargs=None,
         run_variant=fake_run_variant,
         selected_envs={"testing-cpython-3.14", "stubs-cpython-3.10"},
+        child_stops=None,
     )
 
     assert len(calls) == 1
@@ -361,6 +366,7 @@ async def test_run_matrix_action_with_no_matching_env_runs_nothing() -> None:
         caller_kwargs=None,
         run_variant=fake_run_variant,
         selected_envs={"testing-cpython-3.14"},
+        child_stops=None,
     )
 
     assert calls == []

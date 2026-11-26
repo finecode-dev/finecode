@@ -31,6 +31,7 @@ from finecode.wm_server import domain
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode.wm_server.runner import runner_client
+from finecode.wm_server.runner.delegated_child_stops import DelegatedChildStops
 from finecode.wm_server.runner.runner_client import RunActionResponse
 
 __all__ = ["is_matrixed", "run_matrix_action", "selected_variants"]
@@ -90,12 +91,16 @@ async def _run_variant_safe(
     interpreter: Interpreter,
     variant_action: domain.Action,
     run_variant: RunVariant,
+    *,
+    child_stops: DelegatedChildStops | None,
     **kwargs: typing.Any,
 ) -> RunActionResponse:
     """Run one interpreter variant, converting any exception into a synthetic
     failed response so one variant's failure never aborts the others."""
     try:
-        return await run_variant(action=variant_action, **kwargs)
+        return await run_variant(
+            action=variant_action, child_stops=child_stops, **kwargs
+        )
     except Exception as exc:
         return RunActionResponse(
             result_by_format={"string": f"error: {exc}", "json": {"error": str(exc)}},
@@ -189,6 +194,7 @@ async def run_matrix_action(
     caller_kwargs: dict | None,
     run_variant: RunVariant,
     selected_envs: set[str] | None = None,
+    child_stops: DelegatedChildStops | None,
 ) -> RunActionResponse:
     """Fan a matrixed action out to one run per interpreter and combine the results.
 
@@ -227,6 +233,7 @@ async def run_matrix_action(
                 orchestration_depth=orchestration_depth,
                 caller_kwargs=caller_kwargs,
                 allow_no_handlers=False,
+                child_stops=child_stops,
             )
         )
 

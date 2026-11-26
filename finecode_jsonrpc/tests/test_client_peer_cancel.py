@@ -278,3 +278,134 @@ class _CancelNotification:
     jsonrpc: str
     method: str
     params: dict[str, typing.Any]
+
+
+def _make_flagged_client(
+    impl: typing.Callable[..., typing.Awaitable[typing.Any]],
+    on_peer_cancel: typing.Callable[[asyncio.Task[typing.Any]], None] | None,
+    *,
+    flagged_method: str = _METHOD,
+    not_started_data: dict[str, object] | None = None,
+) -> tuple[jc.JsonRpcClient, list[dict[str, typing.Any]]]:
+    client = jc.JsonRpcClient(
+        message_types={
+            _METHOD: (_Request, _Params, _Response, _Result),
+            _PLAIN_METHOD: (_Request, _Params, _Response, _Result),
+        },
+        readable_id="test-client",
+    )
+    sent: list[dict[str, typing.Any]] = []
+    client._send_data = lambda data: sent.append(json.loads(data))  # type: ignore[method-assign]
+    client.feature(
+        _METHOD,
+        impl,
+        on_peer_cancel=on_peer_cancel,
+        not_started_cancel_data=not_started_data,
+        cancel_on_connection_loss=(_METHOD == flagged_method),
+    )
+    client.feature(
+        _PLAIN_METHOD,
+        impl,
+        cancel_on_connection_loss=(_PLAIN_METHOD == flagged_method),
+    )
+    return client, sent
+
+
+async def test_not_started_cancel_answers_with_method_data(
+    problems: list[str],
+) -> None:
+    ran = False
+
+    async def impl(_params: _Params) -> _Result:
+        nonlocal ran
+        ran = True
+        return _Result()
+
+    hooked: list[asyncio.Task[typing.Any]] = []
+    client, sent = _make_flagged_client(
+        impl, hooked.append, not_started_data={"subtreeStopped": True}
+    )
+    await _request(client, 1)
+    await _cancel(client, 1)
+    await _finish(client)
+
+    assert not ran
+    assert sent[0]["error"]["data"] == {"subtreeStopped": True}
+    assert problems == []
+
+
+async def test_connection_loss_cancels_only_flagged_requests_once(
+    problems: list[str],
+) -> None:
+    started_flagged = asyncio.Event()
+    started_plain = asyncio.Event()
+    release_plain = asyncio.Event()
+
+    async def flagged_impl(_params: _Params) -> _Result:
+        started_flagged.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def plain_impl(_params: _Params) -> _Result:
+        started_plain.set()
+        await release_plain.wait()
+        return _Result()
+
+    hooked: list[asyncio.Task[typing.Any]] = []
+    client = jc.JsonRpcClient(
+        message_types={
+            _METHOD: (_Request, _Params, _Response, _Result),
+            _PLAIN_METHOD: (_Request, _Params, _Response, _Result),
+        },
+        readable_id="test-client",
+    )
+    sent: list[dict[str, typing.Any]] = []
+    client._send_data = lambda data: sent.append(json.loads(data))  # type: ignore[method-assign]
+    client.feature(
+        _METHOD, flagged_impl, on_peer_cancel=hooked.append,
+        cancel_on_connection_loss=True,
+    )
+    client.feature(_PLAIN_METHOD, plain_impl)
+    await _request(client, 1)
+    await _request(client, 2, _PLAIN_METHOD)
+    await started_flagged.wait()
+    await started_plain.wait()
+
+    client._fail_pending_requests("transport gone")
+    # A second channel failure must not cancel again.
+    client._fail_pending_requests("transport gone")
+    release_plain.set()
+    await _finish(client)
+
+    assert len(hooked) == 1
+    cancelled = [m for m in sent if m.get("id") == 1]
+    assert cancelled and cancelled[0]["error"]["code"] == (
+        error_codes.DEFAULT_REQUEST_CANCELLED
+    )
+    served = [m for m in sent if m.get("id") == 2]
+    assert served and "result" in served[0]
+    assert problems == []
+
+
+async def test_late_reply_to_cancelled_request_is_debug_only() -> None:
+    seen: list[str] = []
+    handler_id = logger.add(lambda m: seen.append(str(m)), level="DEBUG")
+    try:
+        client, _sent = _make_client(_blocking_impl, lambda task: None)
+        task = asyncio.ensure_future(client.send_request(_METHOD, _Params()))
+        await asyncio.sleep(0)
+        request_id = next(iter(client._async_request_futures))
+        task.cancel()
+        with pytest.raises(jc.RequestCancelledError):
+            await task
+        await client.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32603, "message": "late"},
+            }
+        )
+        assert client._cancelled_request_ids == set()
+    finally:
+        logger.remove(handler_id)
+    assert not any("ERROR" in s for s in seen)

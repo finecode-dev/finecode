@@ -446,6 +446,13 @@ class ProgressContext:
         await self._sender.report(message=message, percentage=percentage)
 
 
+class DelegatedCallsOutcome(enum.StrEnum):
+    """How the delegated calls of the handler's own action run ended."""
+
+    STOPPED = "stopped"
+    UNCONFIRMED = "unconfirmed"
+
+
 class RunActionContext(typing.Generic[RunPayloadType]):
     # data object to save data between action steps(only during one run, after run data
     # is removed). Keep it simple, without business logic, just data storage, but you
@@ -454,6 +461,10 @@ class RunActionContext(typing.Generic[RunPayloadType]):
     # initialized already.
 
     STATE_TYPE: ClassVar[type | None] = None
+
+    _delegated_calls_source: (
+        collections.abc.Callable[[], DelegatedCallsOutcome] | None
+    ) = None
 
     def __init__(
         self,
@@ -473,6 +484,23 @@ class RunActionContext(typing.Generic[RunPayloadType]):
         self._progress_sender = progress_sender
         if self.STATE_TYPE is not None:
             self.state = self.STATE_TYPE()
+
+    def delegated_calls_outcome(self) -> DelegatedCallsOutcome:
+        """How the delegated calls of this handler's own action run ended.
+
+        Synchronous; does no I/O and never raises. Returns ``STOPPED`` iff
+        every delegated call of this run ended stopped; a pending call or one
+        that ended unconfirmed reads ``UNCONFIRMED``; a run with no delegated
+        call reads ``STOPPED``. Same-env child runs at any depth count in
+        their caller's run; a still-running child counts as pending. A call
+        counts in the run that is current in the task making it. Not counted:
+        a call from a task that carries no run, and a call made after the run
+        ended. A context the ER did not set up reads ``UNCONFIRMED``.
+        """
+        source = self._delegated_calls_source
+        if source is None:
+            return DelegatedCallsOutcome.UNCONFIRMED
+        return source()
 
     def progress(
         self,

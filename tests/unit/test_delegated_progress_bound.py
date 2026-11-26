@@ -202,12 +202,12 @@ class _FakeBridgeCtx:
         progress: completion_streams.BoundedProgressStream[dict],
         responses: list[typing.Any],
     ) -> None:
-        self._partials = partials
+        self.partials = partials
         self.progress = progress
         self.responses = responses
 
     def __aiter__(self) -> typing.AsyncIterator[dict]:
-        return self._partials.__aiter__()
+        return self.partials.__aiter__()
 
 
 def _make_runner_and_context(
@@ -543,7 +543,7 @@ async def test_progress_send_failure_stops_progress_only(
         ctx.progress.append(_report("second"))
         ctx.progress.append(_end("done"))
         ctx.progress.end()
-        ctx._partials.end()
+        ctx.partials.end()
         async with _live_patched_executor(ctx):
             result = await er_dispatch._BridgeHandlers()._run_action_in_project(
                 runner,
@@ -600,8 +600,8 @@ async def test_partial_send_failure_still_fails(tmp_path: pathlib.Path) -> None:
         ctx.progress.append(_report("kept"))
         ctx.progress.append(_end("done"))
         ctx.progress.end()
-        ctx._partials.append({"json": {"text": "lost"}})
-        ctx._partials.end()
+        ctx.partials.append({"json": {"text": "lost"}})
+        ctx.partials.end()
         async with _live_patched_executor(ctx):
             try:
                 await er_dispatch._BridgeHandlers()._run_action_in_project(

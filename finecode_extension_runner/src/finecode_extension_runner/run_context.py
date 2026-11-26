@@ -61,7 +61,7 @@ _current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 
 @contextlib.contextmanager
-def run(run_id: str) -> collections.abc.Iterator[None]:
+def run(run_id: str) -> collections.abc.Generator[None, None, None]:
     """Mark this task, and everything it starts, as executing *run_id*."""
     token = _current_run_id.set(run_id)
     try:

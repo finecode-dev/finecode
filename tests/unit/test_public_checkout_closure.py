@@ -36,6 +36,7 @@ Both tests skip when `.git` is absent (sdist installs, vendored checkouts), wher
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import pathlib
 import re
@@ -44,6 +45,9 @@ import tomllib
 from typing import Any
 
 import pytest
+
+from finecode.wm_server import context, domain
+from finecode.wm_server.config.read_configs import read_projects_in_dir
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -286,6 +290,30 @@ def test_dev_workspace_closure_is_fully_tracked() -> None:
         f"files, so a clean public checkout cannot install them: {untracked}. "
         "Declare them in the gitignored finecode-user.toml layer instead of the "
         "root pyproject.toml."
+    )
+
+
+def test_public_packages_are_available_for_action_dispatch(
+    tmp_path: pathlib.Path,
+) -> None:
+    packages = _tracked_package_names()
+    for rel_path in packages.values():
+        destination = tmp_path / rel_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        _ = destination.write_bytes((_REPO_ROOT / rel_path).read_bytes())
+
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    projects = asyncio.run(read_projects_in_dir(tmp_path, ws_context))
+
+    assert {project.name for project in projects} == set(packages)
+    unavailable = {
+        project.name: project.status.name
+        for project in projects
+        if project.status != domain.ProjectStatus.CONFIG_VALID
+    }
+    assert not unavailable, (
+        "public packages must accept actions so the release sweep can include "
+        f"them: {unavailable}"
     )
 
 

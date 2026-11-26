@@ -12,10 +12,11 @@ import pathlib
 
 import pytest
 
-from finecode.wm_server import context, domain, errors
+from finecode.wm_server import context, domain
 from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import _internal_client_types, runner_client
 from finecode.wm_server.services.run_service import er_dispatch
+from finecode_jsonrpc import JsonRpcHandlerError, error_codes
 
 _CANONICAL_SOURCE = "test.actions.TestAction"
 _PACKAGE_COUNT = 3
@@ -27,7 +28,7 @@ def _add_project(
     scope: domain.ActionScope,
     action_name: str = "test_action",
 ) -> runner_client.ExtensionRunnerInfo:
-    project =wm_testing.make_single_action_project(
+    project = wm_testing.make_single_action_project(
         dir_path=dir_path,
         action_name=action_name,
         action_source=_CANONICAL_SOURCE,
@@ -152,13 +153,15 @@ async def test_root_that_does_not_declare_the_action_is_an_error(
         tmp_path, domain.ActionScope.WORKSPACE, root_action_name="other_action"
     )
 
-    with pytest.raises(errors.ActionNotFoundError) as exc_info:
+    with pytest.raises(JsonRpcHandlerError) as exc_info:
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=package_runners[0],
             params=_make_params(None),
             ws_context=ws_context,
         )
 
+    assert exc_info.value.code == error_codes.INTERNAL_ERROR
+    assert exc_info.value.data == {"subtreeStopped": True}
     assert "test_action" in str(exc_info.value)
     assert str(tmp_path) in str(exc_info.value)
 
@@ -171,9 +174,11 @@ async def test_ambiguous_workspace_root_is_an_error(tmp_path: pathlib.Path) -> N
     runner = _add_project(ws_context, first, domain.ActionScope.WORKSPACE)
     _ = _add_project(ws_context, second, domain.ActionScope.WORKSPACE)
 
-    with pytest.raises(errors.ProjectError) as exc_info:
+    with pytest.raises(JsonRpcHandlerError) as exc_info:
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=runner, params=_make_params(None), ws_context=ws_context
         )
 
+    assert exc_info.value.code == error_codes.INTERNAL_ERROR
+    assert exc_info.value.data == {"subtreeStopped": True}
     assert "test_action" in str(exc_info.value)

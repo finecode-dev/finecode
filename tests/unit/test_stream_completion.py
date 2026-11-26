@@ -9,6 +9,7 @@ ownership primitives that every covered pipeline stage builds on.
 from __future__ import annotations
 
 import asyncio
+import typing
 
 import pytest
 
@@ -209,6 +210,47 @@ async def test_owned_tasks_aclose_cancels_joins_and_runs_cleanup() -> None:
         await closing
     assert sleeper.done()
     assert owned.finalizer is not None and owned.finalizer.done()
+
+
+async def test_owned_tasks_aclose_ends_when_finalizer_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finalizer cancelled from outside ends the shielded join.
+
+    Event-loop teardown cancels every task, the finalizer included. ``aclose``
+    must then stop shielding it and raise the interruption; re-shielding a
+    cancelled task raises at once without yielding, so it would spin forever.
+    """
+    owned = streams.OwnedRunTasks()
+    finalizer_started = asyncio.Event()
+
+    async def _finalizer() -> None:
+        finalizer_started.set()
+        await asyncio.sleep(3600)
+
+    owned.finalizer = asyncio.ensure_future(_finalizer())
+    real_shield = asyncio.shield
+    finalizer_shields = 0
+
+    class _Spinning(Exception):
+        pass
+
+    def _guarded_shield(arg: typing.Any) -> typing.Any:
+        nonlocal finalizer_shields
+        if arg is owned.finalizer:
+            finalizer_shields += 1
+            if finalizer_shields > 50:
+                raise _Spinning("aclose keeps re-shielding a finished finalizer")
+        return real_shield(arg)
+
+    monkeypatch.setattr(streams.asyncio, "shield", _guarded_shield)
+    await asyncio.wait_for(finalizer_started.wait(), timeout=5)
+    closing = asyncio.ensure_future(owned.aclose(lambda: None))
+    await asyncio.sleep(0)
+    _ = owned.finalizer.cancel()
+    done, _pending = await asyncio.wait({closing}, timeout=1.0)
+    assert closing in done, "aclose did not end after its finalizer was cancelled"
+    assert closing.cancelled(), f"expected CancelledError, got {closing!r}"
 
 
 async def test_owned_tasks_aclose_without_finalizer_still_joins() -> None:

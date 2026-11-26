@@ -40,8 +40,10 @@ class _UnresponsiveErClient:
         self.sent_requests: list[tuple[str, object]] = []
 
     async def send_request(
-        self, method: str, params: object = None, timeout: float | None = None
+        self, method: str, params: object = None, timeout: float | None = None,
+        await_reply_after_cancel: object = None,
     ) -> object:
+        _ = await_reply_after_cancel
         self.sent_requests.append((method, params))
         raise finecode_jsonrpc.ResponseTimeout(
             f"No response on '{method}' within {timeout}s"

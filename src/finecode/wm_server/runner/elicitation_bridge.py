@@ -48,6 +48,8 @@ import typing
 
 from loguru import logger
 
+from finecode.wm_server.runner.delegated_child_stops import DelegatedChildStops
+
 __all__ = [
     "QUESTION_TEXT_MAX_CHARS",
     "ElicitAnswer",
@@ -110,6 +112,7 @@ class RunDispatchOrigin:
 
     connection: asyncio.StreamWriter | None
     request_task: asyncio.Task[typing.Any] | None = None
+    delegated_call: DelegatedChildStops | None = None
 
 
 class ElicitationBridge(typing.Protocol):

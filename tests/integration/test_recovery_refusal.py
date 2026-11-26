@@ -311,7 +311,10 @@ async def test_the_streaming_run_path_registers_the_run_it_dispatches(
     async def _get_or_start_runner(**kwargs):
         return runner
 
-    async def _get_partial_results(result_list, partial_result_token, runner):
+    async def _get_partial_results(
+        result_list, partial_result_token, runner, *, subscribed
+    ):
+        subscribed.set()
         await asyncio.Event().wait()
 
     async def _run_action_and_notify(**kwargs):

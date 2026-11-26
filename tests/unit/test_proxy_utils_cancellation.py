@@ -85,7 +85,7 @@ async def test_run_action_in_runner_translates_er_cancellation_to_action_cancell
 
     with pytest.raises(exceptions.ActionCancelledError) as exc_info:
         await proxy_utils.run_action_in_runner(
-            action_name="test_action", params={}, runner=runner
+            action_name="test_action", params={}, runner=runner, child_stops=None
         )
 
     assert "cancelled by pyrefly" in exc_info.value.message
@@ -108,7 +108,7 @@ async def test_run_action_in_runner_still_translates_ordinary_failure_to_action_
 
     with pytest.raises(exceptions.ActionRunFailed):
         await proxy_utils.run_action_in_runner(
-            action_name="test_action", params={}, runner=runner
+            action_name="test_action", params={}, runner=runner, child_stops=None
         )
 
 
@@ -135,6 +135,7 @@ async def test_run_handlers_in_env_runner_translates_er_cancellation_to_action_c
             dev_env=proxy_utils.DevEnv.CI,
             result_formats=[],
             wal_run_id="wal-run-1",
+            child_stops=None,
         )
 
     assert "cancelled by pyrefly" in exc_info.value.message
@@ -168,6 +169,7 @@ async def test_run_handlers_in_env_runner_still_translates_ordinary_failure_to_a
             dev_env=proxy_utils.DevEnv.CI,
             result_formats=[],
             wal_run_id="wal-run-1",
+            child_stops=None,
         )
 
 
@@ -216,6 +218,7 @@ async def test_run_multi_env_concurrent_translates_all_cancelled_group_to_action
             dev_env=proxy_utils.DevEnv.CI,
             result_formats=[],
             wal_run_id="wal-run-1",
+            child_stops=None,
         )
 
 
@@ -249,4 +252,5 @@ async def test_run_multi_env_concurrent_mixed_cancellation_and_failure_is_action
             dev_env=proxy_utils.DevEnv.CI,
             result_formats=[],
             wal_run_id="wal-run-1",
+            child_stops=None,
         )

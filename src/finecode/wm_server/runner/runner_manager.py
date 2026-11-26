@@ -699,6 +699,8 @@ async def _start_extension_runner_process(
         on_peer_cancel: (
             collections.abc.Callable[[asyncio.Task[typing.Any]], None] | None
         ) = None,
+        not_started_cancel_data: collections.abc.Mapping[str, object] | None = None,
+        cancel_on_connection_loss: bool = False,
     ) -> None:
         """Register a back-channel handler, classified for the startup slot (ADR-0100).
 
@@ -719,9 +721,20 @@ async def _start_extension_runner_process(
             return await handler(params)
 
         if on_peer_cancel is None:
-            client.feature(method, _wrapped)
+            client.feature(
+                method,
+                _wrapped,
+                not_started_cancel_data=not_started_cancel_data,
+                cancel_on_connection_loss=cancel_on_connection_loss,
+            )
         else:
-            client.feature(method, _wrapped, on_peer_cancel=on_peer_cancel)
+            client.feature(
+                method,
+                _wrapped,
+                on_peer_cancel=on_peer_cancel,
+                not_started_cancel_data=not_started_cancel_data,
+                cancel_on_connection_loss=cancel_on_connection_loss,
+            )
 
     _register(_internal_client_types.WORKSPACE_APPLY_EDIT, _apply_workspace_edit)
 
@@ -912,6 +925,13 @@ async def _start_extension_runner_process(
             )
         return installed
 
+    def _note_delegated_peer_cancel(task: asyncio.Task[typing.Any]) -> None:
+        # The cancel itself is done by JsonRpcClient (it cancels the serving
+        # task and answers once the handler unwinds); this only records it.
+        logger.debug(
+            f"Parent ER cancelled its delegated call (serving task {task.get_name()})"
+        )
+
     async def handle_run_action_in_project(
         params: _internal_client_types.RunActionInProjectParams,
     ) -> _internal_client_types.RunActionInProjectResult:
@@ -922,6 +942,9 @@ async def _start_extension_runner_process(
     _register(
         _internal_client_types.RUN_ACTION_IN_PROJECT,
         handle_run_action_in_project,
+        on_peer_cancel=_note_delegated_peer_cancel,
+        not_started_cancel_data={"subtreeStopped": True},
+        cancel_on_connection_loss=True,
     )
 
     async def handle_run_action_in_workspace(
@@ -934,6 +957,9 @@ async def _start_extension_runner_process(
     _register(
         _internal_client_types.RUN_ACTION_IN_WORKSPACE,
         handle_run_action_in_workspace,
+        on_peer_cancel=_note_delegated_peer_cancel,
+        not_started_cancel_data={"subtreeStopped": True},
+        cancel_on_connection_loss=True,
     )
 
     async def handle_release_delegated_call(

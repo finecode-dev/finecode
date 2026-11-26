@@ -65,6 +65,7 @@ class FakeErClient:
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
         assert self._configured, (
             "FakeErClient.send_request called without configure_response()/"
@@ -73,6 +74,7 @@ class FakeErClient:
         )
         self.sent_requests.append((method, params))
         _ = timeout
+        _ = await_reply_after_cancel
         # Mirror the transport: run the per-request response capture before
         # the request future resolves, without replacing the received runner
         # response/error. This covers both success and received-error

@@ -239,6 +239,8 @@ async def test_gated_later_runner_discovery_keeps_output_open(
         params: dict[str, typing.Any],
         runner: typing.Any,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         _ = (action_name, params, options)
         runner_manager.admit_runner_progress(
@@ -297,6 +299,8 @@ async def test_two_producers_share_output_until_both_finish(
         params: dict[str, typing.Any],
         runner: typing.Any,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         _ = (action_name, params, options)
         sent.append(runner.env_name)
@@ -352,6 +356,8 @@ async def test_empty_output_still_delivers_responses(
         params: dict[str, typing.Any],
         runner: typing.Any,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         _ = (action_name, params, runner, options)
         return _ok_streamed_response()
@@ -416,6 +422,8 @@ async def test_duplicate_same_env_handlers_dispatch_once(
         params: dict[str, typing.Any],
         runner: typing.Any,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         nonlocal send_count
         _ = (action_name, params, runner, options)
@@ -464,6 +472,8 @@ async def test_runner_failure_does_not_cancel_sibling(
         params: dict[str, typing.Any],
         runner: typing.Any,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         _ = (action_name, params, options)
         if runner.env_name == "env_a":
@@ -546,6 +556,8 @@ async def test_fallback_drains_inside_owned_context(tmp_path: pathlib.Path) -> N
         params: dict[str, typing.Any],
         runner: typing.Any,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         _ = (action_name, params, runner, options)
         return runner_client.RunActionResponse(
@@ -618,8 +630,9 @@ class _FaultScriptClient(wm_testing.FakeErClient):
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
-        _ = timeout
+        _ = (timeout, await_reply_after_cancel)
         assert self.runner is not None
         token = (params.options or {}).get("partialResultToken")
         for admission in self.admissions.get(token, []):
@@ -966,8 +979,9 @@ async def test_repeated_cancellation_during_join_still_unwinds(
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
-        _ = (method, params, timeout, on_response)
+        _ = (method, params, timeout, on_response, await_reply_after_cancel)
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
@@ -1012,6 +1026,107 @@ async def test_repeated_cancellation_during_join_still_unwinds(
     assert runner.active_requests == 0
 
 
+async def test_cancelled_finalizer_ends_the_shielded_join(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A finalizer cancelled from outside ends the consumer's join.
+
+    Event-loop teardown cancels every task, the finalizer included. The join
+    must then stop shielding it and raise the interruption; re-shielding a
+    cancelled task raises at once without yielding, so it would spin forever.
+    """
+    from finecode.wm_server.services.run_service import proxy_utils
+
+    project = wm_testing.make_single_action_project(
+        dir_path=tmp_path,
+        action_name="test_action",
+        action_source=_CANONICAL_SOURCE,
+    )
+    project.actions[0].canonical_source = _CANONICAL_SOURCE
+    client = wm_testing.FakeErClient()
+    runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
+    ws_context = wm_testing.make_workspace_context(project=project, runner=runner)
+    release = asyncio.Event()
+
+    async def _cancel_resistant_send(
+        method: str,
+        params: typing.Any = None,
+        timeout: float | None = None,
+        on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
+    ) -> typing.Any:
+        # Keeps the producer, and so the finalizer, pending after the cancel.
+        _ = (method, params, timeout, on_response, await_reply_after_cancel)
+        while not release.is_set():
+            with contextlib.suppress(asyncio.CancelledError):
+                await release.wait()
+        raise asyncio.CancelledError()
+
+    async def _fake_start(**kwargs: typing.Any) -> typing.Any:
+        return runner
+
+    def _is_finalizer(candidate: object) -> bool:
+        get_coro = getattr(candidate, "get_coro", None)
+        coro = get_coro() if get_coro is not None else None
+        return getattr(coro, "__qualname__", "").endswith("._finalize")
+
+    real_shield = asyncio.shield
+    finalizer_shields = 0
+
+    class _Spinning(Exception):
+        pass
+
+    def _guarded_shield(arg: typing.Any) -> typing.Any:
+        nonlocal finalizer_shields
+        if _is_finalizer(arg):
+            finalizer_shields += 1
+            if finalizer_shields > 50:
+                raise _Spinning("join keeps re-shielding a finished finalizer")
+        return real_shield(arg)
+
+    async def _run() -> None:
+        async with proxy_utils.run_with_partial_results(
+            action_name="test_action",
+            params={},
+            partial_result_token="tok-fin",
+            project_dir_path=tmp_path,
+            run_trigger=runner_client.RunActionTrigger.USER,
+            dev_env=runner_client.DevEnv.CI,
+            ws_context=ws_context,
+            origin=None,
+        ) as ctx:
+            async for _ in ctx:
+                pass
+
+    with (
+        mock.patch.object(
+            proxy_utils.runner_start_service,
+            "get_or_start_runner_with_auto_prepare",
+            _fake_start,
+        ),
+        mock.patch.object(client, "send_request", _cancel_resistant_send),
+        mock.patch.object(proxy_utils.asyncio, "shield", _guarded_shield),
+    ):
+        task = asyncio.ensure_future(_run())
+        try:
+            await asyncio.sleep(0.05)
+            _ = task.cancel()
+            await asyncio.sleep(0.05)
+            finalizers = [t for t in asyncio.all_tasks() if _is_finalizer(t)]
+            assert len(finalizers) == 1, "the join is not waiting on a finalizer"
+            _ = finalizers[0].cancel()
+            # The cancelled finalizer finishes once the coordinator does.
+            release.set()
+            done, _pending = await asyncio.wait({task}, timeout=1.0)
+            assert task in done, (
+                "the join did not end after its finalizer was cancelled"
+            )
+            assert task.cancelled(), f"expected CancelledError, got {task!r}"
+        finally:
+            release.set()
+            await asyncio.sleep(0.05)
+
+
 async def test_broken_writer_fails_bridge_and_retires_producer(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1046,6 +1161,8 @@ async def test_broken_writer_fails_bridge_and_retires_producer(
         params: dict[str, typing.Any],
         runner: typing.Any,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         _ = (action_name, params, runner, options)
         return runner_client.RunActionResponse(

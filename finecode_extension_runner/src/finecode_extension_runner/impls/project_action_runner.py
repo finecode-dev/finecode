@@ -13,6 +13,7 @@ from loguru import logger
 
 from finecode_extension_runner import (
     coverage_sink,
+    delegation_ledger,
     domain,
     er_errors,
     er_telemetry,
@@ -20,10 +21,10 @@ from finecode_extension_runner import (
     run_utils,
     work_slots,
 )
-from finecode_extension_runner.impls import _delegated_progress
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner._services.run_action import _serialize_caller_kwargs
+from finecode_extension_runner.impls import _delegated_progress
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
@@ -69,9 +70,7 @@ class _ProgressContextForwarder:
             try:
                 await self._target.report(message=message, percentage=None)
             except Exception:
-                logger.warning(
-                    "Dropping delegated progress report after sink failure"
-                )
+                logger.warning("Dropping delegated progress report after sink failure")
                 return
 
     async def begin(
@@ -443,15 +442,34 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         }
         if serialized_kwargs is not None:
             wm_params["callerKwargs"] = serialized_kwargs
+        ledger = delegation_ledger.current()
+        child_call = ledger.open_call() if ledger is not None else None
         try:
             raw_result = await self._send(
                 "finecode/runActionInProject",
                 wm_params,
             )
+        except er_errors.WmCallAbandoned as exc:
+            # The handler's own await ended early (cancelled or closed): the
+            # child's verdict is recorded and the cancellation propagates as
+            # CancelledError itself, never ActionRunCancelled.
+            if child_call is not None:
+                child_call.end(stopped=exc.subtree_stopped)
+            raise
         except er_errors.WmCommunicationCancelled as exc:
+            if child_call is not None:
+                child_call.end(stopped=exc.subtree_stopped)
             raise iprojectactionrunner.ActionRunCancelled(exc.message) from exc
         except er_errors.WmCommunicationError as exc:
+            if child_call is not None:
+                child_call.end(stopped=exc.subtree_stopped)
             raise iprojectactionrunner.ActionRunFailed(exc.message) from exc
+        except Exception:
+            if child_call is not None:
+                child_call.end(stopped=False)
+            raise
+        if child_call is not None:
+            child_call.end(stopped=delegation_ledger.subtree_stopped_of(raw_result))
         raw_final_result = raw_result.get("result")
         if raw_final_result is None:
             raise iprojectactionrunner.ActionRunFailed(
@@ -489,9 +507,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 forwarder = _ProgressContextForwarder(progress)
             progress_sender: code_action.ProgressSender | None = None
             if forwarder is not None:
-                progress_sender = typing.cast(
-                    code_action.ProgressSender, forwarder
-                )
+                progress_sender = typing.cast(code_action.ProgressSender, forwarder)
             task = asyncio.ensure_future(
                 self._run_action_func(
                     action_def,
@@ -505,6 +521,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 )
             )
             task.add_done_callback(lambda _: queue.put_nowait(_SENTINEL))
+            ledger = delegation_ledger.current()
+            child_call = ledger.open_call() if ledger is not None else None
             try:
                 while True:
                     item = await queue.get()
@@ -518,13 +536,49 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 with run_action_service.public_run_errors():
                     await task
             finally:
-                # The child run is not cancelled (delegation is not a
-                # cancellable capability): it keeps its sender, whose further
-                # calls are dropped once closed. Closed is set before any
-                # await so a second cancellation cannot re-enable the forwarder.
+                # The forwarder is closed and drained before any await, so a
+                # second cancellation cannot re-enable it. A child task still
+                # running is then cancelled: the close waits for it up to the
+                # stop bound (repeats never shorten the wait) and records
+                # whether it ended in time.
                 if forwarder is not None:
                     forwarder.close()
                     await forwarder.drain()
+                first_cancel: asyncio.CancelledError | None = None
+                if task.done():
+                    if not task.cancelled():
+                        _ = task.exception()
+                else:
+                    _ = task.cancel()
+                    waiter: asyncio.Task[typing.Any] = asyncio.ensure_future(
+                        asyncio.gather(task, return_exceptions=True)
+                    )
+                    deadline = (
+                        asyncio.get_running_loop().time()
+                        + _delegated_progress.DELEGATED_STOP_WAIT_SECONDS
+                    )
+                    while True:
+                        remaining = deadline - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            break
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(waiter), timeout=remaining
+                            )
+                            break
+                        except TimeoutError:
+                            break
+                        except asyncio.CancelledError as exc:
+                            if first_cancel is None:
+                                first_cancel = exc
+                    if not waiter.done():
+                        _ = waiter.cancel()
+                    if not task.done():
+                        task.add_done_callback(_consume_release_outcome)
+                if child_call is not None:
+                    child_call.end(stopped=task.done())
+                if first_cancel is not None:
+                    raise first_cancel
             return
 
         if action_def is not None:
@@ -554,6 +608,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             else None
         )
         traceparent = er_telemetry.get_current_traceparent()
+        ledger = delegation_ledger.current()
+        child_call = ledger.open_call() if ledger is not None else None
 
         async def _call_wm() -> None:
             try:
@@ -577,17 +633,27 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     "finecode/runActionInProject",
                     wm_params,
                 )
+                if child_call is not None:
+                    child_call.end(
+                        stopped=delegation_ledger.subtree_stopped_of(raw_result)
+                    )
                 # Terminal success item. Shape: ("final", {"result": {...}, "returnCode": ...}).
                 wm_queue.put_nowait(("final", raw_result))
             except er_errors.WmCommunicationCancelled as exc:
+                if child_call is not None:
+                    child_call.end(stopped=exc.subtree_stopped)
                 wm_queue.put_nowait(
                     ("error", iprojectactionrunner.ActionRunCancelled(exc.message))
                 )
             except er_errors.WmCommunicationError as exc:
+                if child_call is not None:
+                    child_call.end(stopped=exc.subtree_stopped)
                 wm_queue.put_nowait(
                     ("error", iprojectactionrunner.ActionRunFailed(exc.message))
                 )
             except Exception as exc:
+                if child_call is not None:
+                    child_call.end(stopped=False)
                 # Terminal error item. Shape: ("error", Exception(...)).
                 wm_queue.put_nowait(("error", exc))
 
@@ -646,13 +712,72 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 _ = _wm_delegated_progress_tokens.pop(work_token, None)
             _ = _wm_pending_reports.pop(token, None)
             if not wm_task.done():
-                await self._release_wm_call(token)
-            if not wm_task.done():
-                _ = wm_task.cancel()
+                await self._close_wm_call(token, wm_task, child_call)
+
+    async def _close_wm_call(
+        self,
+        partial_token: int,
+        wm_task: asyncio.Task[None],
+        child_call: delegation_ledger.DelegatedCall | None,
+    ) -> None:
+        """End a reply-less WM call: release and cancel concurrently, bounded.
+
+        Starts the release and the cancellation of *wm_task* at the same moment
+        and completes when both have ended, or ``DELEGATED_STOP_WAIT_SECONDS``
+        after the close began, whichever is first. A repeated cancellation
+        never shortens the wait. Records the abandoned verdict on the ledger
+        call (unconfirmed when the bound cut the wait); the close itself never
+        raises, except to re-raise the first ``CancelledError`` when the close
+        was a cancellation.
+        """
+        loop = asyncio.get_running_loop()
+        bound = _delegated_progress.DELEGATED_STOP_WAIT_SECONDS
+        deadline = loop.time() + bound
+        release_task = asyncio.ensure_future(self._release_wm_call(partial_token))
+        _ = wm_task.cancel()
+        waiter: asyncio.Task[typing.Any] = asyncio.ensure_future(
+            asyncio.gather(wm_task, release_task, return_exceptions=True)
+        )
+        first_cancel: asyncio.CancelledError | None = None
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait_for(asyncio.shield(waiter), timeout=remaining)
+                break
+            except TimeoutError:
+                break
+            except asyncio.CancelledError as exc:
+                if first_cancel is None:
+                    first_cancel = exc
+        if not waiter.done():
+            _ = waiter.cancel()
+        for task in (wm_task, release_task):
+            if not task.done():
+                # Left past the bound: retrieved on completion, never unretrieved.
+                task.add_done_callback(_consume_release_outcome)
+        if child_call is not None:
+            stopped: bool | None = None
+            if wm_task.cancelled():
                 try:
-                    await wm_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+                    _ = wm_task.exception()
+                except er_errors.WmCallAbandoned as abandon:
+                    stopped = abandon.subtree_stopped
+                except asyncio.CancelledError:
+                    stopped = False
+            elif wm_task.done():
+                if wm_task.exception() is not None:
+                    # A failure escaped _call_wm without recording a verdict.
+                    stopped = False
+                # else: done normally — _call_wm recorded the reply verdict.
+            else:
+                # The bound cut the wait with the child still unconfirmed.
+                stopped = False
+            if stopped is not None:
+                child_call.end(stopped=stopped)
+        if first_cancel is not None:
+            raise first_cancel
 
     async def _release_wm_call(self, partial_token: int) -> None:
         """Send one release for a reply-less WM call.
@@ -681,9 +806,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 timed_out = True
                 break
             try:
-                await asyncio.wait_for(
-                    asyncio.shield(release_task), timeout=remaining
-                )
+                await asyncio.wait_for(asyncio.shield(release_task), timeout=remaining)
                 break
             except TimeoutError:
                 timed_out = True

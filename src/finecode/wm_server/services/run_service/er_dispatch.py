@@ -17,12 +17,14 @@ from pathlib import Path
 
 from loguru import logger
 
+import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode.wm_server import context, domain, errors
 from finecode.wm_server.runner import (
     _internal_client_types,
     elicitation_bridge,
     run_dispatch_bridge,
 )
+from finecode.wm_server.runner.delegated_child_stops import DelegatedChildStops
 from finecode.wm_server.runner.runner_client import (
     DevEnv,
     ExtensionRunnerInfo,
@@ -40,6 +42,8 @@ from finecode.wm_server.services.run_service.proxy_utils import (
     find_subactions_for_parent,
 )
 from finecode.wm_server.services.run_service.workspace_executor import WorkspaceExecutor
+from finecode.wm_server.utils.stream_completion import PipelineFailure
+from finecode_jsonrpc import error_codes
 
 _NEAREST_PROJECTS_IN_HINT = 3
 
@@ -171,6 +175,49 @@ def _origin_of_calling_run(
     )
 
 
+def _verdict_of(origin: elicitation_bridge.RunDispatchOrigin) -> bool:
+    """The subtree verdict for a delegated call dispatched under *origin*.
+
+    An origin without a collector (direct unit-test calls, never the public
+    handlers) reads ``True``: no child request was recorded against it.
+    """
+    stops = origin.delegated_call
+    if stops is None:
+        return True
+    return stops.subtree_stopped()
+
+
+def _error_with_verdict(
+    error: Exception, stops: DelegatedChildStops
+) -> finecode_jsonrpc_module.JsonRpcHandlerError:
+    """Rebuild *error* as a coded error carrying the subtree verdict.
+
+    Keeps the exception's code and message; ``error.data`` is the exception's
+    existing dict data (or {}) merged with ``subtreeStopped``.
+    """
+    code = getattr(error, "code", None)
+    if not isinstance(code, int):
+        code = error_codes.INTERNAL_ERROR
+    message = getattr(error, "message", None) or str(error)
+    if not message:
+        message = type(error).__name__
+    existing = getattr(error, "data", None)
+    data: dict[str, object] = dict(existing) if isinstance(existing, dict) else {}
+    data["subtreeStopped"] = stops.subtree_stopped()
+    return finecode_jsonrpc_module.JsonRpcHandlerError(code, message, data)
+
+
+def _cancelled_with_verdict(
+    stops: DelegatedChildStops,
+) -> finecode_jsonrpc_module.JsonRpcHandlerError:
+    """The coded cancellation reply for a delegated call that unwound."""
+    return finecode_jsonrpc_module.JsonRpcHandlerError(
+        finecode_jsonrpc_module.REQUEST_CANCELLED,
+        "Request cancelled",
+        _internal_client_types.SubtreeStopData(subtreeStopped=stops.subtree_stopped()),
+    )
+
+
 class _BridgeHandlers:
     """``run_dispatch_bridge``'s slot, filled by the module that owns run dispatch."""
 
@@ -186,8 +233,16 @@ class _BridgeHandlers:
         # the caller's connection is what lets a question asked inside it reach
         # the same person. Same-project dispatch is no exception — the run doing
         # the asking is a different one from the run that was addressed.
-        origin = _origin_of_calling_run(params.run_id)
-        return await self._run_action_in_project(runner, params, executor, origin)
+        stops = DelegatedChildStops()
+        origin = dataclasses.replace(
+            _origin_of_calling_run(params.run_id), delegated_call=stops
+        )
+        try:
+            return await self._run_action_in_project(runner, params, executor, origin)
+        except asyncio.CancelledError as error:
+            raise _cancelled_with_verdict(stops) from error
+        except Exception as error:
+            raise _error_with_verdict(error, stops) from error
 
     async def _run_action_in_project(
         self,
@@ -223,6 +278,7 @@ class _BridgeHandlers:
         return _internal_client_types.RunActionInProjectResult(
             result=result.result_by_format.get("json", {}),
             return_code=result.return_code,
+            subtree_stopped=_verdict_of(origin),
         )
 
     async def _run_streaming_action(
@@ -323,7 +379,10 @@ class _BridgeHandlers:
                         # (ADR-0135 rule 3), but it must not cancel the
                         # progress pump: that pump keeps draining the
                         # shared progress stream so its fences complete.
+                        # Nothing reads the partials any more, so abort them:
+                        # a later partial fence then settles at once.
                         partial_error = exc
+                        ctx.partials.abort(PipelineFailure(exc))
                     await progress_pump
                 finally:
                     for pump in (partial_pump, progress_pump):
@@ -369,9 +428,11 @@ class _BridgeHandlers:
                         )
                 return _internal_client_types.RunActionInProjectResult(
                     return_code=final.return_code,
+                    subtree_stopped=_verdict_of(origin),
                 )
             return _internal_client_types.RunActionInProjectResult(
                 return_code=0,
+                subtree_stopped=_verdict_of(origin),
             )
 
     async def release_delegated_call(
@@ -403,6 +464,28 @@ class _BridgeHandlers:
     ) -> _internal_client_types.RunActionInWorkspaceResult:
         run_trigger = RunActionTrigger(params.meta.trigger)
         dev_env = DevEnv(params.meta.dev_env)
+        stops = DelegatedChildStops()
+        origin = dataclasses.replace(
+            _origin_of_calling_run(params.run_id), delegated_call=stops
+        )
+        try:
+            return await self._run_action_in_workspace(
+                runner, params, ws_context, run_trigger, dev_env, origin
+            )
+        except asyncio.CancelledError as error:
+            raise _cancelled_with_verdict(stops) from error
+        except Exception as error:
+            raise _error_with_verdict(error, stops) from error
+
+    async def _run_action_in_workspace(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: _internal_client_types.RunActionInWorkspaceParams,
+        ws_context: context.WorkspaceContext,
+        run_trigger: RunActionTrigger,
+        dev_env: DevEnv,
+        origin: elicitation_bridge.RunDispatchOrigin,
+    ) -> _internal_client_types.RunActionInWorkspaceResult:
 
         # Resolve action name from source via the runner's own project actions.
         # Use canonical_source (resolved by ER)
@@ -477,7 +560,7 @@ class _BridgeHandlers:
             orchestration_depth=params.meta.orchestration_depth,
             concurrently=params.concurrently,
             payload_overrides_by_project=payload_overrides_by_project,
-            origin=_origin_of_calling_run(params.run_id),
+            origin=origin,
         )
         return _internal_client_types.RunActionInWorkspaceResult(
             results_by_project={
@@ -489,7 +572,8 @@ class _BridgeHandlers:
                     for action, resp in v.items()
                 }
                 for k, v in results.items()
-            }
+            },
+            subtree_stopped=_verdict_of(origin),
         )
 
     async def get_actions_for_parent(

@@ -85,6 +85,8 @@ async def test_transport_serializes_depth_in_meta() -> None:
         params: dict[str, typing.Any],
         runner: runner_client.ExtensionRunnerInfo,
         options: dict[str, typing.Any] | None = None,
+        *,
+        child_stops: typing.Any = None,
     ) -> runner_client.RunActionResponse:
         captured.update(options or {})
         return runner_client.RunActionResponse(
@@ -108,6 +110,7 @@ async def test_transport_serializes_depth_in_meta() -> None:
             caller_kwargs={"k": "v"},
             orchestration_depth=5,
             wal_writer=None,
+            child_stops=None,
         )
     assert captured["meta"]["orchestrationDepth"] == 5
     assert captured["meta"]["trigger"] == "user"

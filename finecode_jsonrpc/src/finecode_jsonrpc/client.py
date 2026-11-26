@@ -36,6 +36,11 @@ from finecode_jsonrpc._proc_snapshot import describe_spawned_processes
 
 from ._frames import OutgoingFrame, ReceivedFrame
 from ._hop_guard import call_guarded, guarded_handler_scope
+from .cancel_reply import (
+    AwaitReplyAfterCancel,
+    ReplyAfterCancel,
+    ReplyAfterCancelKind,
+)
 from .tracing import (
     CallerOutcome,
     HandlerOutcome,
@@ -221,12 +226,19 @@ class _InboundRequest:
     task: asyncio.Task[typing.Any]
     started: bool = False
     cancelled_before_start: bool = False
+    cancelled_by_connection_loss: bool = False
 
 
 class RequestCancelledError(asyncio.CancelledError):
-    def __init__(self, request_id: int | str) -> None:
+    def __init__(
+        self,
+        request_id: int | str,
+        *,
+        reply: ReplyAfterCancel | None = None,
+    ) -> None:
         super().__init__()
         self.request_id = request_id
+        self.reply = reply
 
 
 class ServerStoppedError(BaseRunnerRequestException):
@@ -296,6 +308,12 @@ class JsonRpcClient:
         self._stop_event: typing.Final = LoopAwareEvent()
         self._sync_request_futures: dict[str, concurrent.futures.Future] = {}
         self._async_request_futures: dict[str, asyncio.Future] = {}
+        # Ids of requests whose awaiting task was cancelled. A reply arriving
+        # for one of them was still sent by the peer, so it is dropped with a
+        # DEBUG log instead of the ERROR for ids that were never awaited.
+        # Entries are released when their reply arrives or when the channel
+        # fails, so the set cannot grow without bound across a connection.
+        self._cancelled_request_ids: set[str] = set()
         self._stderr_buffer: list[str] = []
         # The server writes its own diagnostics to stdout; before the RPC channel
         # exists (startup), er/logRecords forwarding cannot run, so we retain the
@@ -318,6 +336,11 @@ class JsonRpcClient:
         self._peer_cancel_hooks: dict[
             str, collections.abc.Callable[[asyncio.Task[typing.Any]], None]
         ] = {}
+        # Method-specific ``error.data`` for a request cancelled before its
+        # handler started (see feature).
+        self._not_started_cancel_data: dict[str, dict[str, object]] = {}
+        # Request methods cancelled once when the channel fails (see feature).
+        self._cancel_on_connection_loss: set[str] = set()
         # Incoming requests being served, by request id; removed when the
         # serving task finishes.
         self._inbound_requests: dict[str | int, _InboundRequest] = {}
@@ -342,6 +365,8 @@ class JsonRpcClient:
         on_peer_cancel: (
             collections.abc.Callable[[asyncio.Task[typing.Any]], None] | None
         ) = None,
+        not_started_cancel_data: collections.abc.Mapping[str, object] | None = None,
+        cancel_on_connection_loss: bool = False,
     ) -> None:
         """Register *impl* for incoming ``name`` requests or notifications.
 
@@ -350,6 +375,12 @@ class JsonRpcClient:
         serving the request, then the task is cancelled and the request is
         answered once with the cancelled error code. Without it, a peer cancel
         is ignored and the request keeps being served.
+
+        With *not_started_cancel_data*, a request cancelled before its handler
+        started is answered cancelled carrying that mapping as ``error.data``.
+
+        With *cancel_on_connection_loss*, the request is cancelled once when
+        the channel fails (inbound queue closed or server stopped).
         """
         # NOTE: registering a feature here is necessary but NOT sufficient. Incoming
         # requests and notifications are also gated and deserialized against the
@@ -364,6 +395,10 @@ class JsonRpcClient:
         self.feature_impls[name] = impl
         if on_peer_cancel is not None:
             self._peer_cancel_hooks[name] = on_peer_cancel
+        if not_started_cancel_data is not None:
+            self._not_started_cancel_data[name] = dict(not_started_cancel_data)
+        if cancel_on_connection_loss:
+            self._cancel_on_connection_loss.add(name)
 
     def feature_sync(self, name: str, impl: collections.abc.Callable[_P, None]) -> None:
         """Register an opt-in synchronous notification handler.
@@ -717,6 +752,22 @@ class JsonRpcClient:
         self.channel_failed = True
         self._async_request_hops.clear()
         self._sync_request_hops.clear()
+        for _request_id, inbound in list(self._inbound_requests.items()):
+            if inbound.cancelled_by_connection_loss:
+                continue
+            if inbound.method not in self._cancel_on_connection_loss:
+                continue
+            inbound.cancelled_by_connection_loss = True
+            hook = self._peer_cancel_hooks.get(inbound.method)
+            if hook is not None:
+                try:
+                    hook(inbound.task)
+                except Exception as hook_error:
+                    logger.warning(
+                        f"on_peer_cancel hook of {inbound.method} failed:"
+                        f" {hook_error} | {self.readable_id}"
+                    )
+            self._cancel_inbound_task(inbound)
         for msg_id, fut in list(self._sync_request_futures.items()) + list(
             self._async_request_futures.items()
         ):
@@ -726,6 +777,7 @@ class JsonRpcClient:
                 logger.debug(f"Cancelled pending request '{msg_id}': {reason}")
         # Completions are never run for EOF/timeout/cancellation: drop them.
         self._response_completions.clear()
+        self._cancelled_request_ids.clear()
         self._fail_all_drains(ServerStoppedError(reason))
 
     async def _server_process_stop_handler(self):
@@ -1069,6 +1121,7 @@ class JsonRpcClient:
         timeout: float | None = None,
         *,
         on_response: ResponseCompletion | None = None,
+        await_reply_after_cancel: AwaitReplyAfterCancel | None = None,
     ) -> typing.Any:
         if self.channel_failed:
             raise ServerStoppedError(
@@ -1161,6 +1214,11 @@ class JsonRpcClient:
                     f" runner {self.readable_id}"
                 ) from error
             except asyncio.CancelledError as error:
+                if await_reply_after_cancel is not None:
+                    raise await self._await_reply_after_cancel(
+                        msg_id, future, hop, await_reply_after_cancel
+                    ) from error
+                self._cancelled_request_ids.add(msg_id)
                 self._finish_caller(hop, "cancelled")
                 raise RequestCancelledError(request_id=msg_id) from error
             except ErrorOnRequest:
@@ -1179,6 +1237,127 @@ class JsonRpcClient:
                 _ = self._async_request_futures.pop(msg_id, None)
                 _ = self._expected_result_type_by_msg_id.pop(msg_id, None)
                 _ = self._response_completions.pop(msg_id, None)
+
+    def _send_cancel_request(self, msg_id: str) -> None:
+        """Write a ``$/cancelRequest`` frame for *msg_id* without suspending."""
+        cancel_dict: dict[str, typing.Any] = {
+            "method": "$/cancelRequest",
+            "params": {"id": msg_id},
+            "jsonrpc": self.VERSION,
+        }
+        if self._tracing is not None:
+            traceparent = self._tracing.get_traceparent()
+            if traceparent is not None:
+                cancel_dict["_meta"] = {"traceparent": traceparent}
+        try:
+            cancel_str = json.dumps(cancel_dict)
+        except (TypeError, ValueError):
+            return
+        self._send_data(cancel_str)
+
+    def _reply_from_settled_client(
+        self, future: asyncio.Future[typing.Any]
+    ) -> ReplyAfterCancel:
+        if future.cancelled():
+            return ReplyAfterCancel(kind=ReplyAfterCancelKind.DISCONNECTED)
+        exc = future.exception()
+        if exc is None:
+            return ReplyAfterCancel(
+                kind=ReplyAfterCancelKind.RESULT, result=future.result()
+            )
+        if isinstance(exc, ErrorOnRequest):
+            return ReplyAfterCancel(
+                kind=ReplyAfterCancelKind.ERROR,
+                error_code=exc.error.code,
+                error_data=exc.error.data,
+            )
+        if isinstance(exc, ServerStoppedError):
+            return ReplyAfterCancel(kind=ReplyAfterCancelKind.DISCONNECTED)
+        if isinstance(exc, InvalidResponse):
+            return ReplyAfterCancel(kind=ReplyAfterCancelKind.ERROR)
+        return ReplyAfterCancel(kind=ReplyAfterCancelKind.DISCONNECTED)
+
+    async def _await_reply_after_cancel(
+        self,
+        msg_id: str,
+        future: asyncio.Future[typing.Any],
+        hop: HopToken | None,
+        option: AwaitReplyAfterCancel,
+    ) -> RequestCancelledError:
+        current = asyncio.current_task()
+        if current is not None and current.cancelling() > 0:
+            current.uncancel()
+        if future.cancelled():
+            # The initial wait cancelled the future itself (asyncio.wait_for
+            # cancels what it waits on), so a later reply would be dropped.
+            # Swap in a fresh future under the same id so the post-cancel
+            # wait can still observe the reply.
+            future = asyncio.get_running_loop().create_future()
+            self._async_request_futures[msg_id] = future
+        if future.done() and not future.cancelled():
+            reply = self._reply_from_settled_client(future)
+            self._finish_caller(hop, "cancelled")
+            return RequestCancelledError(msg_id, reply=reply)
+        self._send_cancel_request(msg_id)
+        bound = option.timeout
+        deadline = None if bound is None else time.monotonic() + bound
+        while True:
+            remaining: float | None = None
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._cancelled_request_ids.add(msg_id)
+                    self._finish_caller(hop, "cancelled")
+                    return RequestCancelledError(
+                        msg_id,
+                        reply=ReplyAfterCancel(kind=ReplyAfterCancelKind.TIMEOUT),
+                    )
+            try:
+                if remaining is None:
+                    settled = await asyncio.shield(future)
+                else:
+                    settled = await asyncio.wait_for(
+                        asyncio.shield(future), remaining
+                    )
+            except TimeoutError:
+                self._cancelled_request_ids.add(msg_id)
+                self._finish_caller(hop, "cancelled")
+                return RequestCancelledError(
+                    msg_id,
+                    reply=ReplyAfterCancel(kind=ReplyAfterCancelKind.TIMEOUT),
+                )
+            except asyncio.CancelledError:
+                if current is not None and current.cancelling() > 0:
+                    current.uncancel()
+                if future.done() and not future.cancelled():
+                    reply = self._reply_from_settled_client(future)
+                    self._finish_caller(hop, "cancelled")
+                    return RequestCancelledError(msg_id, reply=reply)
+                continue
+            except ErrorOnRequest as exc:
+                self._finish_caller(hop, "cancelled")
+                return RequestCancelledError(
+                    msg_id,
+                    reply=ReplyAfterCancel(
+                        kind=ReplyAfterCancelKind.ERROR,
+                        error_code=exc.error.code,
+                        error_data=exc.error.data,
+                    ),
+                )
+            except (ServerStoppedError, InvalidResponse):
+                self._finish_caller(hop, "cancelled")
+                kind = ReplyAfterCancelKind.DISCONNECTED
+                return RequestCancelledError(
+                    msg_id, reply=ReplyAfterCancel(kind=kind)
+                )
+            else:
+                self._finish_caller(hop, "cancelled")
+                return RequestCancelledError(
+                    msg_id,
+                    reply=ReplyAfterCancel(
+                        kind=ReplyAfterCancelKind.RESULT, result=settled
+                    ),
+                )
 
     async def process_incoming_messages(self) -> None:
         logger.debug(f"Start processing messages from server {self.readable_id}")
@@ -1280,6 +1459,13 @@ class JsonRpcClient:
             if "error" in message:
                 # error as response
                 logger.trace(f"Processing message with error on request {message_id}")
+                if message_id in self._cancelled_request_ids:
+                    self._cancelled_request_ids.discard(message_id)
+                    _ = self._async_request_hops.pop(message_id, None)
+                    logger.debug(
+                        f"Dropping error response for cancelled request {message_id}"
+                    )
+                    return
                 # sync request futures are handled in another thread, handle only async
                 # here
                 if message_id not in self._async_request_futures:
@@ -1404,6 +1590,13 @@ class JsonRpcClient:
                 logger.trace(
                     f"Processing message with response to request {message_id}"
                 )
+                if message_id in self._cancelled_request_ids:
+                    self._cancelled_request_ids.discard(message_id)
+                    _ = self._async_request_hops.pop(message_id, None)
+                    logger.debug(
+                        f"Dropping response for cancelled request {message_id}"
+                    )
+                    return
                 if message_id not in self._async_request_futures:
                     logger.error(
                         f"Got response to {message_id}, but no response was expected"
@@ -1562,6 +1755,10 @@ class JsonRpcClient:
             logger.warning(
                 f"on_peer_cancel hook of {inbound.method} failed: {hook_error} | {self.readable_id}"
             )
+        self._cancel_inbound_task(inbound)
+
+    def _cancel_inbound_task(self, inbound: _InboundRequest) -> None:
+        """Cancel a started inbound task or flag a not-started one."""
         if inbound.started:
             inbound.task.cancel()
         else:
@@ -1586,7 +1783,16 @@ class JsonRpcClient:
                 if inbound.cancelled_before_start:
                     if inspect.iscoroutine(impl_coro):
                         impl_coro.close()
-                    raise asyncio.CancelledError
+                    self._hop_stage(hop, "handler_ended", capture_stage_time())
+                    self._record_handler_outcome(hop, "cancelled")
+                    self._send_error_response(
+                        request_id=message_id,
+                        code=self._request_cancelled_code,
+                        message="Request cancelled",
+                        data=self._not_started_cancel_data.get(inbound.method),
+                        hop=hop,
+                    )
+                    return
                 inbound.started = True
             if hop is not None and observer is not None:
                 with guarded_handler_scope(observer, hop):
@@ -1634,6 +1840,25 @@ class JsonRpcClient:
             # This task is healthy, so leave it in a completed state — marking
             # it cancelled would misreport it to done-callbacks and awaiters.
         except Exception as exception:  # noqa: BLE001
+            code_attr = getattr(exception, "code", None)
+            if isinstance(code_attr, int) and code_attr == self._request_cancelled_code:
+                message = getattr(exception, "message", None) or str(exception)
+                if not message:
+                    message = type(exception).__name__
+                logger.debug(
+                    f"Handler of message {message_id} ended cancelled"
+                    f" | {self.readable_id}: {message}"
+                )
+                self._hop_stage(hop, "handler_ended", capture_stage_time())
+                self._record_handler_outcome(hop, "cancelled")
+                self._send_error_response(
+                    request_id=message_id,
+                    code=code_attr,
+                    message=message,
+                    data=getattr(exception, "data", None),
+                    hop=hop,
+                )
+                return
             message = getattr(exception, "message", None) or str(exception)
             if not message:
                 message = type(exception).__name__

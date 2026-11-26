@@ -16,6 +16,8 @@ from finecode_extension_api.interfaces import (
 
 from finecode_extension_runner import (
     coverage_sink,
+    delegation_ledger,
+    er_errors,
     er_telemetry,
     run_context,
 )
@@ -43,6 +45,8 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
     ) -> dict[pathlib.Path, ResultT]:
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         traceparent = er_telemetry.get_current_traceparent()
+        ledger = delegation_ledger.current()
+        child_call = ledger.open_call() if ledger is not None else None
         try:
             raw = await self._send(
                 "finecode/runActionInWorkspace",
@@ -66,8 +70,23 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                 },
             )
         except iworkslots.WorkSlotScopeError:
+            if child_call is not None:
+                child_call.end(stopped=False)
             raise
+        except er_errors.WmCallAbandoned as exc:
+            # The handler's own await ended early: record the verdict and let
+            # the cancellation propagate as CancelledError itself.
+            if child_call is not None:
+                child_call.end(stopped=exc.subtree_stopped)
+            raise
+        except er_errors.WmCommunicationCancelled as exc:
+            # The WM cancelled: a cancellation, never a run failure.
+            if child_call is not None:
+                child_call.end(stopped=exc.subtree_stopped)
+            raise iprojectactionrunner.ActionRunCancelled(exc.message) from exc
         except Exception as e:
+            if child_call is not None:
+                child_call.end(stopped=getattr(e, "subtree_stopped", False) is True)
             project_str = (
                 ", ".join(str(p) for p in project_paths)
                 if project_paths is not None
@@ -76,6 +95,8 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
             raise iprojectactionrunner.ActionRunFailed(
                 f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
             ) from e
+        if child_call is not None:
+            child_call.end(stopped=delegation_ledger.subtree_stopped_of(raw))
         results = self._decode_results(action_type, raw)
         # Workspace fan-out return point: every per-project result
         # arrived with its coverage serialized inside it; carry it into the
@@ -93,6 +114,8 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
     ) -> dict[pathlib.Path, ResultT]:
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         traceparent = er_telemetry.get_current_traceparent()
+        ledger = delegation_ledger.current()
+        child_call = ledger.open_call() if ledger is not None else None
         try:
             raw = await self._send(
                 "finecode/runActionInWorkspace",
@@ -118,12 +141,29 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                 },
             )
         except iworkslots.WorkSlotScopeError:
+            if child_call is not None:
+                child_call.end(stopped=False)
             raise
+        except er_errors.WmCallAbandoned as exc:
+            # The handler's own await ended early: record the verdict and let
+            # the cancellation propagate as CancelledError itself.
+            if child_call is not None:
+                child_call.end(stopped=exc.subtree_stopped)
+            raise
+        except er_errors.WmCommunicationCancelled as exc:
+            # The WM cancelled: a cancellation, never a run failure.
+            if child_call is not None:
+                child_call.end(stopped=exc.subtree_stopped)
+            raise iprojectactionrunner.ActionRunCancelled(exc.message) from exc
         except Exception as e:
             project_str = ", ".join(str(p) for p in payload_by_project)
+            if child_call is not None:
+                child_call.end(stopped=getattr(e, "subtree_stopped", False) is True)
             raise iprojectactionrunner.ActionRunFailed(
                 f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
             ) from e
+        if child_call is not None:
+            child_call.end(stopped=delegation_ledger.subtree_stopped_of(raw))
         results = self._decode_results(action_type, raw)
         # Workspace per-project return point: same pick-up as
         # run_action_in_projects — coverage rode inside the serialized results.

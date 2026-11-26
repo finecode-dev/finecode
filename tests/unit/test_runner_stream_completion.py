@@ -74,8 +74,9 @@ class _GatedErClient(wm_testing.FakeErClient):
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
-        _ = timeout
+        _ = (timeout, await_reply_after_cancel)
         assert self._configured, "configure the fake before exercising send_request"
         self.sent_requests.append((method, params))
         self.seen_on_response.append(on_response)
@@ -104,8 +105,9 @@ class _BlockingErClient(wm_testing.FakeErClient):
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
-        _ = timeout
+        _ = (timeout, await_reply_after_cancel)
         self.sent_requests.append((method, params))
         self.seen_on_response.append(on_response)
         try:
@@ -304,6 +306,7 @@ async def test_run_action_subscribed_success_drains_before_response(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             )
             await asyncio.sleep(0)
@@ -339,6 +342,7 @@ async def test_run_action_subscribed_typed_error_drains_first(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert out == [{"n": 1}]
         finally:
@@ -365,6 +369,7 @@ async def test_run_action_subscribed_stopped_status(tmp_path: typing.Any) -> Non
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert out == [{"n": 1}]
         finally:
@@ -390,6 +395,7 @@ async def test_run_action_raw_rpc_error_drains_prefix_first(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert exc_info.value is original
             assert out == [{"n": 1}]
@@ -410,7 +416,8 @@ async def test_run_action_unsubscribed_uses_unchanged_path(
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
     task = asyncio.ensure_future(
         runner_client.run_action(
-            runner, action_name="a", params={}, options={"partialResultToken": "p1"}
+            runner, action_name="a", params={}, options={"partialResultToken": "p1"},
+            child_stops=None,
         )
     )
     await asyncio.sleep(0)
@@ -440,6 +447,7 @@ async def test_run_action_pre_response_fault_aborts_request(
                 action_name="a",
                 params={},
                 options={"partialResultToken": "p1"},
+                child_stops=None,
             )
         )
         await asyncio.sleep(0)
@@ -465,8 +473,9 @@ async def test_run_action_post_response_fault_surfaces_as_run_failed(
             params: typing.Any = None,
             timeout: float | None = None,
             on_response: typing.Any | None = None,
+            await_reply_after_cancel: typing.Any | None = None,
         ) -> typing.Any:
-            _ = timeout
+            _ = (timeout, await_reply_after_cancel)
             self.sent_requests.append((method, params))
             assert on_response is not None
             on_response.capture()
@@ -493,6 +502,7 @@ async def test_run_action_post_response_fault_surfaces_as_run_failed(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert out == [{"n": 1}]
         finally:
@@ -526,6 +536,7 @@ async def test_run_action_hook_fault_cannot_strand_wait(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 ),
                 timeout=5,
             )
@@ -559,6 +570,7 @@ async def test_run_handlers_subscribed_success(tmp_path: typing.Any) -> None:
                 action_name="a",
                 handler_names=["h1"],
                 options={"partialResultToken": "p1"},
+                child_stops=None,
             )
             assert response.return_code == 0
             assert out == [{"n": 1}]
@@ -580,8 +592,9 @@ class _AbortAfterCaptureClient(wm_testing.FakeErClient):
         params: typing.Any = None,
         timeout: float | None = None,
         on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
-        _ = timeout
+        _ = (timeout, await_reply_after_cancel)
         assert self._configured
         self.sent_requests.append((method, params))
         assert on_response is not None
@@ -620,6 +633,7 @@ async def _run_handlers_call(
         action_name="a",
         handler_names=["h1"],
         options={"partialResultToken": "p1"},
+        child_stops=None,
     )
 
 
@@ -646,6 +660,7 @@ async def test_run_action_typed_error_with_failed_fence_keeps_runner_error(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert out == [{"n": 1}]
             assert subscription.stream.fences[0].completion.result() is fault
@@ -681,6 +696,7 @@ async def test_run_action_stopped_with_failed_fence_keeps_stopped_mapping(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert out == [{"n": 1}]
             assert subscription.stream.fences[0].completion.result() is fault
@@ -713,6 +729,7 @@ async def test_run_action_raw_rpc_error_with_failed_fence_keeps_identity(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert exc_info.value is original
             assert out == [{"n": 1}]
@@ -748,6 +765,7 @@ async def test_run_action_success_with_failed_fence_propagates_drain(
                     action_name="a",
                     params={},
                     options={"partialResultToken": "p1"},
+                    child_stops=None,
                 )
             assert out == [{"n": 1}]
         finally:

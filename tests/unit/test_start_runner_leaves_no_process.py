@@ -29,13 +29,16 @@ class _FakeJsonRpcClient:
     instances: list[_FakeJsonRpcClient] = []
     wait_forever: bool = False
 
-    def __init__(self, *, message_types, readable_id, tracing=None) -> None:
+    def __init__(
+        self, *, message_types, readable_id, tracing=None, hop_observer=None, **_kwargs
+    ) -> None:
         self.readable_id = readable_id
         self.pid = None
         self.server_exit_callback = None
         self.force_kill_called = False
         self.start_entered = asyncio.Event()
         self.startup_timeline = finecode_jsonrpc.StartupTimeline()
+        self.sync_feature_impls: dict[str, object] = {}
         type(self).instances.append(self)
 
     async def start(self, **_kwargs) -> None:
@@ -46,7 +49,12 @@ class _FakeJsonRpcClient:
     def force_kill(self) -> None:
         self.force_kill_called = True
 
-    def feature(self, name, impl) -> None: ...
+    def feature(
+        self, name, impl, *, on_peer_cancel=None, **_kwargs: object
+    ) -> None: ...
+
+    def feature_sync(self, name: str, impl: object) -> None:
+        self.sync_feature_impls[name] = impl
 
 
 def _make_context(
@@ -130,7 +138,7 @@ async def test_init_failure_kills_process_and_preserves_the_exception_type(
     ws_context, project = _make_context(tmp_path)
     await _patch_start_environment(monkeypatch)
 
-    async def _fail_init(runner, project):
+    async def _fail_init(runner, project, ws_context=None):
         raise runner_manager.RunnerFailedToStart("initialize failed")
 
     monkeypatch.setattr(runner_manager, "_init_lsp_client", _fail_init)
@@ -245,7 +253,7 @@ async def _noop_project_changed(project) -> None: ...
 
 
 async def _patch_successful_init(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _ok_init(runner, project):
+    async def _ok_init(runner, project, ws_context=None):
         return None
 
     class _RunnerInfo:

@@ -132,8 +132,7 @@ class IProjectActionRunner(service.Service, typing.Protocol):
         and never changes its title, total or cancellable.
 
         Every report owed to an event is delivered in child order before the
-        iterator ends on success, error, ``aclose()`` or cancellation; the
-        child run itself is never cancelled by the close, and nothing is
+        iterator ends on success, error, ``aclose()`` or cancellation; nothing is
         delivered after the iterator's cleanup begins. On the WM path at most
         100 pending reports are held per call and the oldest pending report
         is discarded first.
@@ -147,8 +146,10 @@ class IProjectActionRunner(service.Service, typing.Protocol):
                     async for partial in stream:
                         ...
 
-        A WM-path call ended by ``aclose()`` or cancellation waits up to 2.0 s
-        for the release round-trip before the close returns.
+        A WM-path call ended by ``aclose()`` or cancellation cancels the child
+        run and waits up to 5.0 s for its stop; the 2.0 s release
+        round-trip runs inside that bound. The same-env path cancels its child
+        task the same way.
         """
         ...
 

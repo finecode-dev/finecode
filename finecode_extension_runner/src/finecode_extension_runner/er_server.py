@@ -45,6 +45,7 @@ from loguru import logger
 from finecode_extension_runner import (
     context,
     coverage_sink,
+    delegation_ledger,
     er_errors,
     er_lag_monitor,
     er_telemetry,
@@ -62,6 +63,9 @@ from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di import bootstrap as di_bootstrap
+from finecode_extension_runner.impls import (
+    _delegated_progress,
+)
 from finecode_extension_runner.impls import (
     project_action_runner as project_action_runner_module,
 )
@@ -318,12 +322,32 @@ class ErServer:
     async def send_request_to_wm(self, method: str, params: dict) -> typing.Any:
         """Send an arbitrary request to the WM (e.g. ``projects/getRawConfig``).
 
-        Only ``finecode/elicit`` is cancelled on the WM when the awaiting task is
-        cancelled; every other request keeps being served by the WM.
+        Cancellation send modes, by method:
+
+        - ``finecode/elicit`` is cancelled on the WM when the awaiting task is
+          cancelled (``cancel_on_abandon``); the WM answers at once.
+        - ``finecode/runActionInProject`` and ``finecode/runActionInWorkspace``
+          are cancelled on the WM too, but the ER keeps waiting up to
+          ``DELEGATED_STOP_WAIT_SECONDS`` for the child's reply, so the call
+          ends with the subtree verdict instead of abandoning it.
+        - every other request keeps being served by the WM.
         """
-        return await self._session.send_request(
-            method, params, cancel_on_abandon=method == "finecode/elicit"
-        )
+        if method == "finecode/elicit":
+            return await self._session.send_request(
+                method, params, cancel_on_abandon=True
+            )
+        if method in (
+            "finecode/runActionInProject",
+            "finecode/runActionInWorkspace",
+        ):
+            return await self._session.send_request(
+                method,
+                params,
+                await_reply_after_cancel=finecode_jsonrpc_module.AwaitReplyAfterCancel(
+                    timeout=_delegated_progress.DELEGATED_STOP_WAIT_SECONDS
+                ),
+            )
+        return await self._session.send_request(method, params)
 
     def shutdown(self) -> None:
         """Signal the transport read loop to stop."""
@@ -474,9 +498,7 @@ def _activate_er_diagnostics(server: ErServer, *, metrics_active: bool) -> None:
     except Exception:  # noqa: BLE001 - lookup failure degrades to inactive
         before = None
     try:
-        set_phase_timing_binding(
-            OtelPhaseTimingBinding(health=er_telemetry._health)
-        )
+        set_phase_timing_binding(OtelPhaseTimingBinding(health=er_telemetry._health))
     except Exception:  # noqa: BLE001 - activation must not fail startup
         er_telemetry._health.count("traces", "contained_failure")
         try:
@@ -507,7 +529,7 @@ def _activate_er_diagnostics(server: ErServer, *, metrics_active: bool) -> None:
 async def _on_initialize(_server: ErServer, params: dict | None) -> dict:
     if _server._telemetry_setup_result is not None:
         return _server._telemetry_setup_result
-    init_options = ((params or {}).get("initializationOptions") or {})
+    init_options = (params or {}).get("initializationOptions") or {}
     telemetry_options = init_options.get("telemetry")
     if not isinstance(telemetry_options, dict):
         telemetry_options = {}
@@ -786,10 +808,29 @@ def make_wm_request_sender(
         work_slots.ensure_outside_scope(f"WM request {method}")
         try:
             return await server.send_request_to_wm(method, req_params)
+        except finecode_jsonrpc_module.RequestCancelledError as exc:
+            reply = exc.reply
+            if reply is None:
+                stopped = False
+            elif reply.kind is finecode_jsonrpc_module.ReplyAfterCancelKind.RESULT:
+                stopped = delegation_ledger.subtree_stopped_of(reply.result)
+            elif reply.kind is finecode_jsonrpc_module.ReplyAfterCancelKind.ERROR:
+                stopped = delegation_ledger.subtree_stopped_of(reply.error_data)
+            else:
+                stopped = False
+            raise er_errors.WmCallAbandoned(
+                f"Abandoned WM request {method} after cancel",
+                subtree_stopped=stopped,
+            ) from exc
         except finecode_jsonrpc_module.JsonRpcError as exc:
+            stopped = delegation_ledger.subtree_stopped_of(exc.data)
             if exc.code == finecode_jsonrpc_module.REQUEST_CANCELLED:
-                raise er_errors.WmCommunicationCancelled(str(exc)) from exc
-            raise er_errors.WmCommunicationError(str(exc)) from exc
+                raise er_errors.WmCommunicationCancelled(
+                    str(exc), subtree_stopped=stopped
+                ) from exc
+            raise er_errors.WmCommunicationError(
+                str(exc), subtree_stopped=stopped
+            ) from exc
 
     return _send_request_to_wm
 
@@ -954,6 +995,25 @@ async def update_logging(server: ErServer, params: dict | None) -> dict:
     return {}
 
 
+def _subtree_stopped(ledger: delegation_ledger.DelegationLedger | None) -> bool:
+    """Whether the run behind *ledger* ended with every delegated call stopped.
+
+    No record (a reply sent before the run loop bound one) reads stopped,
+    as an empty record does.
+    """
+    return (
+        ledger is None
+        or ledger.outcome() is delegation_ledger.DelegatedCallsOutcome.STOPPED
+    )
+
+
+def _verdict_of(
+    ledgers: list[delegation_ledger.DelegationLedger],
+) -> bool:
+    """The top-level run's verdict at its close, or stopped when it bound none."""
+    return _subtree_stopped(ledgers[0] if ledgers else None)
+
+
 async def run_action(server: ErServer, params: dict | None) -> dict:
     """Handler for ``actions/run``."""
     assert params is not None
@@ -964,13 +1024,31 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     logger.trace(f"Run action: {action_name}")
     wal_run_id = (options or {}).get("runId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        return {"error": "Missing required runId in run options"}
+        return {
+            "error": "Missing required runId in run options",
+            "subtreeStopped": True,
+        }
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
     dev_env = meta.get("devEnv", "unknown")
     if server._runner_context is None:
-        return {"error": "Extension runner not initialized"}
+        return {"error": "Extension runner not initialized", "subtreeStopped": True}
+
+    project_path = server._runner_context.project.dir_path
+    er_wal.emit_run_event(
+        server._wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_ACCEPTED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_path,
+        trigger=trigger,
+        dev_env=dev_env,
+        payload={
+            "partial_result_token": (options or {}).get("partialResultToken"),
+            "progress_token": (options or {}).get("progressToken"),
+        },
+    )
     project_path = server._runner_context.project.dir_path
     er_wal.emit_run_event(
         server._wal_writer,
@@ -992,6 +1070,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     )
     status: str = "success"
 
+    top_ledgers: list[delegation_ledger.DelegationLedger] = []
     try:
         # Everything this run starts is marked as belonging to it, so a
         # back-channel call made deep inside a handler can name the run it
@@ -1001,7 +1080,14 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
                 request=request,
                 options=options_schema,
                 runner_context=server._runner_context,
+                ledger_out=top_ledgers,
             )
+    except asyncio.CancelledError as exc:
+        raise finecode_jsonrpc_module.JsonRpcHandlerError(
+            finecode_jsonrpc_module.REQUEST_CANCELLED,
+            "Request cancelled",
+            delegation_ledger.SubtreeStopData(subtreeStopped=_verdict_of(top_ledgers)),
+        ) from exc
     except Exception as exception:
         if isinstance(exception, services.StopWithResponse):
             status = "stopped"
@@ -1031,7 +1117,11 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
                     payload={"error": f"cancelled: {error_msg}"},
                 )
                 raise finecode_jsonrpc_module.JsonRpcHandlerError(
-                    finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+                    finecode_jsonrpc_module.REQUEST_CANCELLED,
+                    error_msg,
+                    delegation_ledger.SubtreeStopData(
+                        subtreeStopped=_verdict_of(top_ledgers)
+                    ),
                 ) from exception
             elif isinstance(exception, services.ActionFailedException):
                 logger.error(f"Run action failed: {exception.message}")
@@ -1050,7 +1140,10 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
                 dev_env=dev_env,
                 payload={"error": error_msg},
             )
-            return {"error": error_msg}
+            return {
+                "error": error_msg,
+                "subtreeStopped": _verdict_of(top_ledgers),
+            }
 
     result_by_format = response.to_dict()["result_by_format"]
     if not result_by_format and options_schema.partial_result_token is not None:
@@ -1073,6 +1166,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
         "status": status,
         "resultByFormat": converted_result_by_format,
         "returnCode": response.return_code,
+        "subtreeStopped": _verdict_of(top_ledgers),
     }
 
 
@@ -1094,13 +1188,16 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
 
     wal_run_id = (options or {}).get("runId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        return {"error": "Missing required runId in run options"}
+        return {
+            "error": "Missing required runId in run options",
+            "subtreeStopped": True,
+        }
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
     dev_env = meta.get("devEnv", "unknown")
     if server._runner_context is None:
-        return {"error": "Extension runner not initialized"}
+        return {"error": "Extension runner not initialized", "subtreeStopped": True}
     project_path = server._runner_context.project.dir_path
     er_wal.emit_run_event(
         server._wal_writer,
@@ -1126,13 +1223,21 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     )
     status: str = "success"
 
+    top_ledgers: list[delegation_ledger.DelegationLedger] = []
     try:
         with run_context.run(wal_run_id):
             response = await services.run_handlers_raw(
                 request=request,
                 options=options_schema,
                 runner_context=server._runner_context,
+                ledger_out=top_ledgers,
             )
+    except asyncio.CancelledError as exc:
+        raise finecode_jsonrpc_module.JsonRpcHandlerError(
+            finecode_jsonrpc_module.REQUEST_CANCELLED,
+            "Request cancelled",
+            delegation_ledger.SubtreeStopData(subtreeStopped=_verdict_of(top_ledgers)),
+        ) from exc
     except Exception as exception:
         if isinstance(exception, services.ActionCancelledException):
             error_msg = exception.message
@@ -1148,7 +1253,11 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
                 payload={"error": f"cancelled: {error_msg}"},
             )
             raise finecode_jsonrpc_module.JsonRpcHandlerError(
-                finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+                finecode_jsonrpc_module.REQUEST_CANCELLED,
+                error_msg,
+                delegation_ledger.SubtreeStopData(
+                    subtreeStopped=_verdict_of(top_ledgers)
+                ),
             ) from exception
         elif isinstance(exception, services.ActionFailedException):
             logger.error(f"Run handlers failed: {exception.message}")
@@ -1167,7 +1276,10 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
             dev_env=dev_env,
             payload={"error": error_msg},
         )
-        return {"error": error_msg}
+        return {
+            "error": error_msg,
+            "subtreeStopped": _verdict_of(top_ledgers),
+        }
 
     result_by_format = response.result_by_format
     if not result_by_format and options_schema.partial_result_token is not None:
@@ -1192,6 +1304,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         "resultByFormat": converted_result_by_format,
         "returnCode": response.return_code,
         "context": response.context,
+        "subtreeStopped": _verdict_of(top_ledgers),
     }
 
 
@@ -1359,8 +1472,16 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     session.on_request("finecodeRunner/updateConfig", _wrap(update_config))
     session.on_request("finecodeRunner/updateLogging", _wrap(update_logging))
     session.on_request("finecodeRunner/resolveActionMeta", _wrap(resolve_action_meta))
-    session.on_request("actions/run", _wrap(run_action))
-    session.on_request("actions/runHandlers", _wrap(run_handlers))
+    session.on_request(
+        "actions/run",
+        _wrap(run_action),
+        not_started_cancel_data={"subtreeStopped": True},
+    )
+    session.on_request(
+        "actions/runHandlers",
+        _wrap(run_handlers),
+        not_started_cancel_data={"subtreeStopped": True},
+    )
     session.on_request("actions/resolveSource", _wrap(resolve_source))
     session.on_request("actions/reload", _wrap(reload_action))
     session.on_request("packages/resolvePath", _wrap(resolve_package_path))

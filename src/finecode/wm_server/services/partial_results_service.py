@@ -571,10 +571,12 @@ async def run_action_with_partial_results(
         consumer_error = exc
     finalizer = asyncio.ensure_future(_finalize(coordinator))
     first_interruption: asyncio.CancelledError | None = None
-    while True:
+    # Loop on the finalizer's state, not `while True`: when the finalizer
+    # itself is cancelled (event-loop teardown cancels every task), shielding
+    # it again raises at once without yielding.
+    while not finalizer.done():
         try:
             await asyncio.shield(finalizer)
-            break
         except asyncio.CancelledError as exc:
             if first_interruption is None:
                 first_interruption = exc

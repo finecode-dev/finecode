@@ -85,7 +85,7 @@ class _FakeJsonRpcClient:
         self.force_kill_called = True
         self._kill_requested = True
 
-    def feature(self, name, impl, *, on_peer_cancel=None) -> None:
+    def feature(self, name, impl, *, on_peer_cancel=None, **_kwargs: object) -> None:
         self.feature_impls[name] = impl
 
     def feature_sync(self, name: str, impl: object) -> None:
