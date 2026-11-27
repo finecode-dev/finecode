@@ -23,8 +23,11 @@ class InProcClient:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         ws_context: context.WorkspaceContext,
+        port: int | None = None,
     ) -> None:
         self._reader, self._writer = reader, writer
+        # The WM's port, so a test can open a second connection to it.
+        self.port = port
         # The server-side state this connection dispatches against, so tests can
         # seed workspace state and read it back after a request.
         self.ws_context = ws_context
@@ -56,7 +59,9 @@ class InProcClient:
         ):
             pass
 
-    async def request(self, method: str, params: dict | None = None) -> object:
+    async def request(
+        self, method: str, params: dict | None = None, *, timeout: float = 5.0
+    ) -> object:
         req_id = str(uuid.uuid4())
         fut = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
@@ -65,7 +70,7 @@ class InProcClient:
             {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}},
         )
         await self._writer.drain()
-        msg = await asyncio.wait_for(fut, timeout=5.0)
+        msg = await asyncio.wait_for(fut, timeout=timeout)
         if "error" in msg:
             raise RuntimeError(msg["error"])
         return msg.get("result")
@@ -105,7 +110,7 @@ async def wm_client():
     )
     port = srv.sockets[0].getsockname()[1]
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    client = InProcClient(reader, writer, ctx)
+    client = InProcClient(reader, writer, ctx, port=port)
     try:
         yield client
     finally:

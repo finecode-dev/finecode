@@ -399,12 +399,12 @@ async def get_or_start_runners_with_presets(
     dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path][
         "dev_workspace"
     ]
-    if dev_workspace_runner.status == runner_client.RunnerStatus.RUNNING:
+    if dev_workspace_runner.status == domain.ExtensionRunnerStatus.RUNNING:
         return dev_workspace_runner
-    elif dev_workspace_runner.status == runner_client.RunnerStatus.INITIALIZING:
+    elif dev_workspace_runner.status == domain.ExtensionRunnerStatus.INITIALIZING:
         await dev_workspace_runner.initialized_event.wait()
         return dev_workspace_runner
-    elif dev_workspace_runner.status == runner_client.RunnerStatus.REPAIRING:
+    elif dev_workspace_runner.status == domain.ExtensionRunnerStatus.REPAIRING:
         if dev_workspace_runner.repair_complete_event is not None:
             await dev_workspace_runner.repair_complete_event.wait()
         dev_workspace_runner = ws_context.ws_projects_extension_runners[

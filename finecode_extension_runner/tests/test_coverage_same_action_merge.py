@@ -186,11 +186,10 @@ async def test_merge_results_service_keeps_coverage(tmp_path: Path) -> None:
             results=[with_miss, plain],
             runner_context=session._runner_context,
         )
-    assert merged["values"] == {"a": ["1"], "b": ["2"]}
-    assert merged["coverage"] == [
-        dataclasses.asdict(
-            ItemCoverage(status=CoverageStatus.NO_SUBACTIONS, item=_MISS_URI)
-        )
+    assert isinstance(merged, _MergeRunResult)
+    assert merged.values == {"a": ["1"], "b": ["2"]}
+    assert merged.unhandled == [
+        ItemCoverage(status=CoverageStatus.NO_SUBACTIONS, item=_MISS_URI)
     ]
 
 

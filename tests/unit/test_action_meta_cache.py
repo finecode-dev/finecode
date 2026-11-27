@@ -9,8 +9,10 @@ import time
 from pathlib import Path
 
 import pytest
+from resolution_fake import SwappingResolver
 
 from finecode.wm_server import context, domain
+from finecode.wm_server._api_handlers._workspace import _handle_list_actions
 from finecode.wm_server.runner import action_meta_dump
 from finecode.wm_server.services import action_meta_cache
 
@@ -185,6 +187,42 @@ async def test_hit_applies_without_spawning(
     assert action.canonical_source == _meta(SOURCE_A)["canonical_source"]
     assert action.meta_from_cache is True
     assert project_dir not in ws_context.ws_action_schemas
+
+
+async def test_cached_workspace_action_listing_resolves_only_root(
+    setup: tuple[Path, Path, Path, context.WorkspaceContext, list[list[str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir, stamped, venv, ws_context, calls = setup
+    site_packages = action_meta_cache._site_packages_dir(venv)
+    assert site_packages is not None
+    _write(site_packages / "editable.pth", str(project_dir))
+    project = _make_project(project_dir, [SOURCE_A])
+    project.actions[0].name = "workspace_action"
+
+    async def _workspace_dump(
+        _python_cmd: str, _project_dir: Path, sources: list[str], **_options: object
+    ) -> action_meta_dump.DumpOutcome:
+        calls.append(list(sources))
+        document = _document(project_dir, venv, [SOURCE_A], stamped)
+        document["entries"][SOURCE_A]["meta"]["scope"] = "workspace"
+        return action_meta_dump.DumpOutcome(kind="ok", document=document)
+
+    monkeypatch.setattr(action_meta_dump, "run_dump", _workspace_dump)
+    await action_meta_cache.lookup(project, ENV, [SOURCE_A], ws_context)
+    ws_context.ws_projects[project_dir] = project
+    sibling_dir = project_dir / "sibling"
+    ws_context.ws_projects[sibling_dir] = _make_project(sibling_dir, [SOURCE_B])
+    resolver = SwappingResolver(ws_context, monkeypatch)
+
+    listing = await _handle_list_actions({"names": ["workspace_action"]}, ws_context)
+
+    assert resolver.calls == [[project_dir]]
+    assert len(calls) == 1
+    assert listing["unresolvedProjects"] == []
+    assert len(listing["actions"]) == 1
+    assert listing["actions"][0]["scope"] == "workspace"
+    assert listing["actions"][0]["project"] == str(project_dir)
 
 
 async def test_invalidation_misses_then_dumps_once(setup) -> None:
