@@ -108,9 +108,19 @@ class _UvStandInRunner(CommandRunner):
 
 
 async def _run_create(tmp_path: pathlib.Path, runner: _UvStandInRunner) -> Any:
+    defs = tmp_path / "defs"
+    defs.mkdir(exist_ok=True)
+    dump_file = defs / "pyproject.toml"
+    _ = dump_file.write_text("[project]\n", encoding="utf-8")
+    from finecode_extension_api.resource_uri import path_to_resource_uri as _to_uri
+
     return await run_handler(
         create_env_handler.UvCreateEnvHandler,
-        create_env_action.CreateEnvRunPayload(env=_env_info(tmp_path), recreate=False),
+        create_env_action.CreateEnvRunPayload(
+            env=_env_info(tmp_path),
+            recreate=False,
+            resolved_project_def_path=_to_uri(dump_file),
+        ),
         action_cls=create_env_action.CreateEnvAction,
         project_dir=tmp_path,
         service_overrides=_service_overrides(cast(Any, runner)),
@@ -129,18 +139,6 @@ async def test_cancelled_create_reaps_uv_before_removing_its_input(
         "time.sleep(300)\n"
     )
     runner = _UvStandInRunner(script)
-    dump_scope_states: list[tuple[bool, bool]] = []
-    real_dump = create_env_handler.temp_project_config_dump
-
-    @contextlib.asynccontextmanager
-    async def observed_dump(**kwargs: Any) -> AsyncGenerator[pathlib.Path, None]:
-        async with real_dump(**kwargs) as dump_dir:
-            try:
-                yield dump_dir
-            finally:
-                dump_scope_states.append((dump_dir.exists(), runner.is_finished()))
-
-    monkeypatch.setattr(create_env_handler, "temp_project_config_dump", observed_dump)
     task = asyncio.create_task(_run_create(tmp_path, runner))
     try:
         await asyncio.wait_for(runner.spawned.wait(), timeout=10)
@@ -159,8 +157,9 @@ async def test_cancelled_create_reaps_uv_before_removing_its_input(
 
         assert not runner.process.is_alive(), "cancelled creation left uv running"
         assert runner.is_finished(), "process drain or work slot outlived creation"
-        assert dump_scope_states == [(True, True)]
-        assert not runner.cwd.exists()
+        assert runner.cwd is not None
+        assert (runner.cwd / "pyproject.toml").is_file()
+        assert runner.cwd.exists()
     finally:
         if not task.done():
             _ = task.cancel()
@@ -195,6 +194,8 @@ async def test_create_preserves_real_process_results(
         assert len(result.errors) == 1
         assert "Failed to create virtualenv" in result.errors[0]
         assert "uv result detail" in result.errors[0]
-        assert "dump-config" in result.errors[0]
+        assert "supplied project definition file" in result.errors[0]
+        assert "dump-config" not in result.errors[0]
     assert runner.is_finished()
-    assert runner.cwd is not None and not runner.cwd.exists()
+    assert runner.cwd is not None and runner.cwd.exists()
+    assert (runner.cwd / "pyproject.toml").is_file()

@@ -3,6 +3,7 @@ import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectinfoprovider
+from finecode_extension_api.phase_timing import synchronous_phase
 
 from fine_envs import dump_config_action
 from fine_envs.dump_config_render import render_config_dump
@@ -49,9 +50,20 @@ class DumpConfigHandler(
         active_selection = (
             await self.project_info_provider.get_workspace_extra_selection()
         )
-        run_context.config_dump_content = render_config_dump(
-            run_context.raw_config_dump, active_selection
-        )
+        raw_config_dump = run_context.raw_config_dump
+        with synchronous_phase(
+            "render_config_dump",
+            input_counts=lambda: {
+                "top_level_keys": len(raw_config_dump),
+                "selected_dependencies": len(active_selection),
+                "selected_extras": sum(
+                    len(extras) for extras in active_selection.values()
+                ),
+            },
+        ) as phase:
+            content = render_config_dump(raw_config_dump, active_selection)
+            phase.completion_counts(lambda: {"output_chars": len(content)})
+        run_context.config_dump_content = content
 
         return dump_config_action.DumpConfigRunResult(
             config_dump=run_context.raw_config_dump
