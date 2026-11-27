@@ -1390,8 +1390,8 @@ async def start_runners_with_presets(
 
     if len(projects) == 1:
         # Single-project callers (config recovery, install_env_for_project,
-        # get_or_start_runners_with_presets) see the same exception type as
-        # before
+        # runner_start_service.get_or_start_runners_with_presets) see the same
+        # exception type as before
         raise per_project_failures[projects[0].dir_path]
 
     failed_names = ", ".join(
@@ -1409,37 +1409,6 @@ async def start_runners_with_presets(
         message=f"Failed to start runner(s) for: {failed_names}. "
         + per_project_messages,
     )
-
-
-async def get_or_start_runners_with_presets(
-    project_dir_path: Path, ws_context: context.WorkspaceContext
-) -> runner_client.ExtensionRunnerInfo:
-    # project is expected to have status `ProjectStatus.CONFIG_VALID`
-    has_dev_workspace_runner = (
-        "dev_workspace" in ws_context.ws_projects_extension_runners[project_dir_path]
-    )
-    if not has_dev_workspace_runner:
-        project = ws_context.ws_projects[project_dir_path]
-        await start_runners_with_presets([project], ws_context)
-    dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path][
-        "dev_workspace"
-    ]
-    if dev_workspace_runner.status == runner_client.RunnerStatus.RUNNING:
-        return dev_workspace_runner
-    elif dev_workspace_runner.status == runner_client.RunnerStatus.INITIALIZING:
-        await dev_workspace_runner.initialized_event.wait()
-        return dev_workspace_runner
-    elif dev_workspace_runner.status == runner_client.RunnerStatus.REPAIRING:
-        if dev_workspace_runner.repair_complete_event is not None:
-            await dev_workspace_runner.repair_complete_event.wait()
-        dev_workspace_runner = ws_context.ws_projects_extension_runners[
-            project_dir_path
-        ]["dev_workspace"]
-        return dev_workspace_runner
-    else:
-        raise RunnerFailedToStart(
-            f"Status of dev_workspace runner: {dev_workspace_runner.status}, logs: {dev_workspace_runner.logs_path}"
-        )
 
 
 def _note_er_telemetry_setup(
