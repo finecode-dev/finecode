@@ -110,12 +110,18 @@ class _Observation(IPhaseObservation):
         self._set("finecode.phase.outcome", outcome)
         if elapsed_ns is None:
             # _elapsed pairs a missing reading with a reason; the fallback is unreachable.
-            self._set("finecode.phase.elapsed_unavailable_reason", elapsed_reason or "clock_error")
+            self._set(
+                "finecode.phase.elapsed_unavailable_reason",
+                elapsed_reason or "clock_error",
+            )
         else:
             self._set("finecode.phase.elapsed_ns", elapsed_ns)
         if cpu_ns is None:
             # _thread_cpu pairs a missing reading with a reason; the fallback is unreachable.
-            self._set("finecode.phase.thread_cpu_unavailable_reason", cpu_reason or "clock_error")
+            self._set(
+                "finecode.phase.thread_cpu_unavailable_reason",
+                cpu_reason or "clock_error",
+            )
         else:
             # A genuine zero stays: only unavailable is omitted.
             self._set("finecode.phase.thread_cpu_ns", cpu_ns)

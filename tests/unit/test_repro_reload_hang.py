@@ -40,7 +40,10 @@ class _UnresponsiveErClient:
         self.sent_requests: list[tuple[str, object]] = []
 
     async def send_request(
-        self, method: str, params: object = None, timeout: float | None = None,
+        self,
+        method: str,
+        params: object = None,
+        timeout: float | None = None,
         await_reply_after_cancel: object = None,
     ) -> object:
         _ = await_reply_after_cancel

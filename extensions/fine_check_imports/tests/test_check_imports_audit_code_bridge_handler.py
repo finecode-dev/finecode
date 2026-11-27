@@ -51,9 +51,7 @@ class _FakeWorkspaceInfoProvider:
 
 
 class _FakeWorkspaceActionRunner:
-    def __init__(
-        self, unhandled: tuple[code_action.ItemCoverage, ...] = ()
-    ) -> None:
+    def __init__(self, unhandled: tuple[code_action.ItemCoverage, ...] = ()) -> None:
         self.calls: list[CheckImportsRunPayload] = []
         self._unhandled = list(unhandled)
 
@@ -109,9 +107,7 @@ class _FakeRatchet:
         scope: RatchetScope,
         unhandled: list[code_action.ItemCoverage],
     ) -> RatchetOutcome:
-        self.calls.append(
-            _RatchetCall(contributor, checked_project, scope, unhandled)
-        )
+        self.calls.append(_RatchetCall(contributor, checked_project, scope, unhandled))
         return RatchetOutcome(
             messages=messages,
             stale=self.stale,
@@ -217,9 +213,7 @@ async def test_findings_pass_through_the_ratchet_once_per_project(
 
     assert [call.checked_project for call in ratchet.calls] == [project_a]
     call = ratchet.calls[0]
-    assert (
-        call.contributor == CheckImportsAuditCodeBridgeHandler.RATCHET_CONTRIBUTOR
-    )
+    assert call.contributor == CheckImportsAuditCodeBridgeHandler.RATCHET_CONTRIBUTOR
     assert call.scope == RatchetScope(
         target=RatchetTarget.FILES,
         files=(path_to_resource_uri(project_a / "mod.py"),),

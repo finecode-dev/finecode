@@ -75,7 +75,9 @@ class _RecordingClient:
     def on_request(self, name: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[name] = handler
 
-    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object) -> None:
+    def configure_reconnect(
+        self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object
+    ) -> None:
         self.configure_calls.append({"policy": policy, "on_reattach": on_reattach})
 
     async def connect(
@@ -882,7 +884,9 @@ async def test_core_declares_text_only_when_front_reports_it() -> None:
 
     service, client, _ = _make_service()
     service._dependencies = ToolDependencies(
-        connection_config=lambda: Cfg(client_id="m", can_answer_choices=True, can_answer_text=True),
+        connection_config=lambda: Cfg(
+            client_id="m", can_answer_choices=True, can_answer_text=True
+        ),
         current_client_label=lambda: "m",
     )
     await service.ensure_connected()
@@ -930,7 +934,9 @@ async def test_text_question_forwards_and_answers() -> None:
         catalog_changed=service._effects.catalog_changed,
     )
     service._dependencies = ToolDependencies(
-        connection_config=lambda: Cfg(client_id="m", can_answer_choices=True, can_answer_text=True),
+        connection_config=lambda: Cfg(
+            client_id="m", can_answer_choices=True, can_answer_text=True
+        ),
         current_client_label=lambda: "m",
     )
     await service.ensure_connected()

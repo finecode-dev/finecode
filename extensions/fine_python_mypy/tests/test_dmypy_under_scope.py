@@ -11,7 +11,6 @@ import pathlib
 import shutil
 
 import pytest
-
 from finecode_extension_runner.impls.command_runner import (
     CommandRunner,
     CommandRunnerConfig,
@@ -47,9 +46,7 @@ async def test_dmypy_daemon_survives_scope_and_stop_succeeds(
     target.write_text("x: int = 1\n", encoding="utf-8")
     runner = _runner()
 
-    async with runner.run(
-        ["dmypy", "run", "--", str(target)], cwd=tmp_path
-    ) as proc:
+    async with runner.run(["dmypy", "run", "--", str(target)], cwd=tmp_path) as proc:
         await proc.wait_for_end()
         assert proc.get_exit_code() == 0, proc.get_error_output()
 

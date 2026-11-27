@@ -22,8 +22,7 @@ class CheckFilesOnPyreflyHostAction(
     """
 
     DESCRIPTION = (
-        "Pyrefly host transport: check a chunk of files on the shared pyrefly"
-        " server."
+        "Pyrefly host transport: check a chunk of files on the shared pyrefly server."
     )
     SCOPE = code_action.ActionScope.PROJECT
     PAYLOAD_TYPE = CheckFilesOnPyreflyHostPayload

@@ -49,7 +49,9 @@ async def test_command_runner_and_process_executor_share_one_gate() -> None:
     )
     executor = ProcessExecutor(process_slots=gate)
 
-    async with runner.run([sys.executable, "-c", "import time; time.sleep(0.3)"]) as proc:
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(0.3)"]
+    ) as proc:
 
         async def _submit() -> int:
             with executor.activate():
@@ -70,7 +72,9 @@ async def test_command_runner_releases_slot_when_process_exits() -> None:
         logger=_NoopLogger(), config=CommandRunnerConfig(), process_slots=gate
     )
 
-    async with runner.run([sys.executable, "-c", "import time; time.sleep(0.1)"]) as proc:
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(0.1)"]
+    ) as proc:
         assert gate.in_flight == 1
 
         await proc.wait_for_end()

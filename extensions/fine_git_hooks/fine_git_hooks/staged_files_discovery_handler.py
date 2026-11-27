@@ -98,7 +98,9 @@ class StagedFilesDiscoveryHandler(
         return paths
 
     async def _get_repo_root(self) -> Path:
-        proc = await self.command_runner.run_to_completion(["git", "rev-parse", "--show-toplevel"])
+        proc = await self.command_runner.run_to_completion(
+            ["git", "rev-parse", "--show-toplevel"]
+        )
         exit_code = proc.get_exit_code()
         if exit_code != 0:
             raise code_action.ActionFailedException(

@@ -65,9 +65,7 @@ def _parses_as_int(code: str) -> bool:
     return True
 
 
-def identity_of(
-    diagnostic: Diagnostic, contributor: str, path: str
-) -> FindingIdentity:
+def identity_of(diagnostic: Diagnostic, contributor: str, path: str) -> FindingIdentity:
     source = (diagnostic.source or "").casefold()
     code = diagnostic.code or ""
     if source == "pyrefly" and _parses_as_int(code) and diagnostic.code_description:

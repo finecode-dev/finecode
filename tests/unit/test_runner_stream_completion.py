@@ -416,7 +416,10 @@ async def test_run_action_unsubscribed_uses_unchanged_path(
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
     task = asyncio.ensure_future(
         runner_client.run_action(
-            runner, action_name="a", params={}, options={"partialResultToken": "p1"},
+            runner,
+            action_name="a",
+            params={},
+            options={"partialResultToken": "p1"},
             child_stops=None,
         )
     )

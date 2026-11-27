@@ -63,7 +63,6 @@ async def test_lines_arrive_before_the_process_exits() -> None:
             "time.sleep(0.5)\n"
         )
     ) as process:
-
         received: list[str] = []
         async for line in process.stdout_lines():
             received.append(line)
@@ -84,8 +83,9 @@ async def test_line_longer_than_the_default_reader_limit_survives() -> None:
     spawn. Without that, this line would come back truncated or not at all.
     """
     payload_size = 512 * 1024
-    async with _runner().run(_python(f"print('x' * {payload_size}, flush=True)")) as process:
-
+    async with _runner().run(
+        _python(f"print('x' * {payload_size}, flush=True)")
+    ) as process:
         received = [line async for line in process.stdout_lines()]
         await process.wait_for_end()
 
@@ -108,7 +108,6 @@ async def test_unread_stderr_does_not_block_the_child() -> None:
             "print('done', flush=True)\n"
         )
     ) as process:
-
         received = [line async for line in process.stdout_lines()]
         await asyncio.wait_for(process.wait_for_end(), timeout=15)
 
@@ -152,7 +151,9 @@ async def test_buffered_output_is_unchanged_for_callers_that_never_subscribe() -
 
 async def test_output_without_a_trailing_newline_is_preserved() -> None:
     """Reassembling from lines must not invent a newline the child never wrote."""
-    async with _runner().run(_python("import sys\nsys.stdout.write('no-eol')")) as process:
+    async with _runner().run(
+        _python("import sys\nsys.stdout.write('no-eol')")
+    ) as process:
         await process.wait_for_end()
 
         assert process.get_output() == "no-eol"
@@ -215,7 +216,6 @@ async def test_undecodable_output_is_decoded_with_replacement_and_stays_complete
             "sys.stdout.buffer.flush()\n"
         )
     ) as process:
-
         received = [line async for line in process.stdout_lines()]
         await process.wait_for_end()
 
@@ -239,7 +239,6 @@ async def test_stderr_is_complete_when_a_stdout_failure_surfaces() -> None:
             "sys.stderr.buffer.flush()\n"
         )
     ) as process:
-
         with pytest.raises(RuntimeError, match="exceeded"):
             await asyncio.wait_for(process.wait_for_end(), timeout=60)
 
@@ -266,7 +265,6 @@ async def test_a_failed_stream_keeps_draining_so_the_child_still_exits() -> None
             "sys.exit(3)\n"
         )
     ) as process:
-
         with pytest.raises(RuntimeError, match="exceeded"):
             await asyncio.wait_for(process.wait_for_end(), timeout=60)
 
@@ -339,7 +337,6 @@ async def test_the_subscriber_and_the_drain_do_not_share_one_exception() -> None
             f"import sys\nsys.stdout.write('x' * {oversized})\nsys.stdout.flush()\n"
         )
     ) as process:
-
         with pytest.raises(RuntimeError) as from_subscriber:
             async for _ in process.stdout_lines():
                 pass
@@ -360,7 +357,6 @@ async def test_a_trailing_carriage_return_without_a_newline_is_data() -> None:
     async with _runner().run(
         _python("import sys\nsys.stdout.write('spin\\r')\nsys.stdout.flush()")
     ) as process:
-
         received = [line async for line in process.stdout_lines()]
         await process.wait_for_end()
 
@@ -377,7 +373,6 @@ async def test_crlf_line_endings_are_still_stripped() -> None:
             "sys.stdout.buffer.flush()"
         )
     ) as process:
-
         received = [line async for line in process.stdout_lines()]
         await process.wait_for_end()
 

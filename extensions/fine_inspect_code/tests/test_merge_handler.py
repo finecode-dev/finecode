@@ -256,11 +256,17 @@ async def test_merge_replaces_only_receipted_partition_and_platform(
 ) -> None:
     project = tmp_path / "proj"
     lint_identity = FindingIdentity(
-        contributor="lint", path="a.py", source="ruff", code="F401",
+        contributor="lint",
+        path="a.py",
+        source="ruff",
+        code="F401",
         message="unused import",
     )
     toolchains_identity = FindingIdentity(
-        contributor="type_check", path="b.py", source="pyrefly", code="x",
+        contributor="type_check",
+        path="b.py",
+        source="pyrefly",
+        code="x",
         message="m",
     )
     before = Snapshot(
@@ -290,9 +296,10 @@ async def test_merge_replaces_only_receipted_partition_and_platform(
     await _merge(tmp_path, [tmp_path, project], [uri])
 
     after = json.loads(_snapshot_path(project).read_text(encoding="utf-8"))
-    assert after["contributors"]["type_check"] == json.loads(
-        render_snapshot(before)
-    )["contributors"]["type_check"]
+    assert (
+        after["contributors"]["type_check"]
+        == json.loads(render_snapshot(before))["contributors"]["type_check"]
+    )
     assert after["contributors"]["lint"]["platforms"] == ["darwin", "linux"]
     assert after["contributors"]["lint"]["paths"]["a.py"] == [
         {
@@ -330,9 +337,7 @@ async def test_merge_leaves_absent_project_untouched(
     result = await _merge(tmp_path, [tmp_path, project, other], [uri])
 
     assert _snapshot_path(other).read_text(encoding="utf-8") == other_text
-    assert [row.project for row in result.snapshots] == [
-        path_to_resource_uri(project)
-    ]
+    assert [row.project for row in result.snapshots] == [path_to_resource_uri(project)]
 
 
 async def test_merge_twice_reports_unchanged(tmp_path: pathlib.Path) -> None:

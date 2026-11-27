@@ -132,7 +132,9 @@ def _token_count(info: object) -> dict[str, object]:
 
 def test_rollout_facts_report_provider_model_and_turns(tmp_path: pathlib.Path) -> None:
     path = _write_rollout(tmp_path, "thread-1", extra={"model_provider": "openai"})
-    _append(path, _turn("gpt-x"), _token_count(None), _token_count({}), _token_count({}))
+    _append(
+        path, _turn("gpt-x"), _token_count(None), _token_count({}), _token_count({})
+    )
 
     facts = read_rollout_facts(path)
 

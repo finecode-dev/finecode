@@ -35,9 +35,7 @@ def test_identity_parses_a_successful_state_response() -> None:
 
 def test_identity_ignores_unrelated_records() -> None:
     """Session events and other commands are not identity evidence."""
-    assert (
-        pi_rpc.parse_session_identity({"type": "agent_settled"}) is None
-    )
+    assert pi_rpc.parse_session_identity({"type": "agent_settled"}) is None
     assert (
         pi_rpc.parse_session_identity(
             {

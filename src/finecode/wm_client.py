@@ -42,8 +42,7 @@ def question_capability_allowed(*, client_label: str) -> bool:
     """
     if os.environ.get("CI"):
         logger.info(
-            f"{client_label} does not declare question support "
-            "because CI is set"
+            f"{client_label} does not declare question support because CI is set"
         )
         return False
     return True

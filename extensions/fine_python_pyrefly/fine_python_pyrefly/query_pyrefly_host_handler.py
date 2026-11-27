@@ -38,7 +38,9 @@ class QueryPyreflyHostHandler(
     FineCode conversion, so the host adds no second interpretation.
     """
 
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="QueryPyreflyHostHandler")
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="QueryPyreflyHostHandler"
+    )
 
     def __init__(
         self,
@@ -64,9 +66,7 @@ class QueryPyreflyHostHandler(
             f" {payload.identity.project_path}"
         )
         self.pyrefly_lsp_service.register_project(payload.identity)
-        root_uri = (
-            self.project_info_provider.get_current_project_dir_path().as_uri()
-        )
+        root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.pyrefly_lsp_service.ensure_started(root_uri)
         await self.pyrefly_lsp_service.ensure_forwarded(
             payload.identity, sweep_paths=[]
@@ -186,13 +186,9 @@ class QueryPyreflyHostHandler(
                 file_path, content, item
             )
         if kind == PyreflyQueryKind.TYPE_HIERARCHY_SUPERTYPES:
-            return await service.get_type_hierarchy_supertypes(
-                file_path, content, item
-            )
+            return await service.get_type_hierarchy_supertypes(file_path, content, item)
         if kind == PyreflyQueryKind.TYPE_HIERARCHY_SUBTYPES:
-            return await service.get_type_hierarchy_subtypes(
-                file_path, content, item
-            )
+            return await service.get_type_hierarchy_subtypes(file_path, content, item)
         raise code_action.ActionFailedException(
             f"Unsupported pyrefly item query kind: {kind}"
         )

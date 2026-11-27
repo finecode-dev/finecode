@@ -128,7 +128,10 @@ def _read_events(log_path: pathlib.Path) -> list[dict]:
 
 
 async def _wait_for(
-    predicate: typing.Callable[[], bool], *, timeout: float, interval: float = 0.05,
+    predicate: typing.Callable[[], bool],
+    *,
+    timeout: float,
+    interval: float = 0.05,
     on_timeout: typing.Callable[[], str] | None = None,
 ) -> None:
     loop = asyncio.get_running_loop()
@@ -218,9 +221,7 @@ async def test_top_level_cancel_stops_delegated_child(
     """
     from tests.integration.conftest import InProcClient
 
-    project_dir, log_path, outcome_path = await _setup_one_project(
-        wm_client, tmp_path
-    )
+    project_dir, log_path, outcome_path = await _setup_one_project(wm_client, tmp_path)
     ctx = wm_client.ws_context
     run_task: asyncio.Future | None = None
     reader: asyncio.StreamReader | None = None
@@ -239,7 +240,10 @@ async def test_top_level_cancel_stops_delegated_child(
             runner_client.request(
                 "actions/run",
                 _parent_params(
-                    project_dir, log_path, outcome_path, delegation=delegation,
+                    project_dir,
+                    log_path,
+                    outcome_path,
+                    delegation=delegation,
                     token=token,
                 ),
                 timeout=60.0,
@@ -303,17 +307,19 @@ async def test_sibling_failure_cancels_only_parent_await(
     catches the group and returns a result. The leaf is cancelled as in A1
     and the parent reads ``STOPPED``.
     """
-    project_dir, log_path, outcome_path = await _setup_one_project(
-        wm_client, tmp_path
-    )
+    project_dir, log_path, outcome_path = await _setup_one_project(wm_client, tmp_path)
     ctx = wm_client.ws_context
     try:
         token = f"deleg-sibling-{uuid.uuid4().hex}"
         result = await wm_client.request(
             "actions/run",
             _parent_params(
-                project_dir, log_path, outcome_path,
-                delegation="run_action", parent_behavior="sibling", token=token,
+                project_dir,
+                log_path,
+                outcome_path,
+                delegation="run_action",
+                parent_behavior="sibling",
+                token=token,
             ),
             timeout=60.0,
         )
@@ -367,8 +373,12 @@ async def test_workspace_cancel_stops_both_project_children(
         result = await wm_client.request(
             "actions/run",
             _parent_params(
-                project_dirs[0], log_path, outcome_path,
-                delegation="workspace", parent_behavior="sibling", token=token,
+                project_dirs[0],
+                log_path,
+                outcome_path,
+                delegation="workspace",
+                parent_behavior="sibling",
+                token=token,
             ),
             timeout=60.0,
         )
@@ -389,9 +399,7 @@ async def test_early_close_cancels_child_on_real_path(
     On the WM path the close cancels the child, completes within the bound,
     never raises, and the call counts in the read.
     """
-    project_dir, log_path, outcome_path = await _setup_one_project(
-        wm_client, tmp_path
-    )
+    project_dir, log_path, outcome_path = await _setup_one_project(wm_client, tmp_path)
     ctx = wm_client.ws_context
     try:
         token = f"deleg-close-{uuid.uuid4().hex}"
@@ -399,8 +407,11 @@ async def test_early_close_cancels_child_on_real_path(
         result = await wm_client.request(
             "actions/run",
             _parent_params(
-                project_dir, log_path, outcome_path,
-                delegation="early_close", token=token,
+                project_dir,
+                log_path,
+                outcome_path,
+                delegation="early_close",
+                token=token,
             ),
             timeout=60.0,
         )
@@ -425,9 +436,7 @@ async def test_stubborn_leaf_makes_parent_await_end_unconfirmed(
     """
     from tests.integration.conftest import InProcClient
 
-    project_dir, log_path, outcome_path = await _setup_one_project(
-        wm_client, tmp_path
-    )
+    project_dir, log_path, outcome_path = await _setup_one_project(wm_client, tmp_path)
     ctx = wm_client.ws_context
     run_task: asyncio.Future | None = None
     runner_client: InProcClient | None = None
@@ -444,8 +453,11 @@ async def test_stubborn_leaf_makes_parent_await_end_unconfirmed(
             runner_client.request(
                 "actions/run",
                 _parent_params(
-                    project_dir, log_path, outcome_path,
-                    delegation="run_action", leaf_mode="stubborn",
+                    project_dir,
+                    log_path,
+                    outcome_path,
+                    delegation="run_action",
+                    leaf_mode="stubborn",
                     token=token,
                 ),
                 timeout=60.0,
@@ -492,9 +504,7 @@ async def test_nested_stubborn_grandchild_reads_unconfirmed(
     """
     from tests.integration.conftest import InProcClient
 
-    project_dir, log_path, outcome_path = await _setup_one_project(
-        wm_client, tmp_path
-    )
+    project_dir, log_path, outcome_path = await _setup_one_project(wm_client, tmp_path)
     ctx = wm_client.ws_context
     run_task: asyncio.Future | None = None
     runner_client: InProcClient | None = None
@@ -511,9 +521,13 @@ async def test_nested_stubborn_grandchild_reads_unconfirmed(
             runner_client.request(
                 "actions/run",
                 _parent_params(
-                    project_dir, log_path, outcome_path,
-                    delegation="run_action", leaf_mode="stubborn",
-                    nest=2, token=token,
+                    project_dir,
+                    log_path,
+                    outcome_path,
+                    delegation="run_action",
+                    leaf_mode="stubborn",
+                    nest=2,
+                    token=token,
                 ),
                 timeout=60.0,
             )
@@ -540,7 +554,8 @@ async def test_nested_stubborn_grandchild_reads_unconfirmed(
         await _wait_for(outcome_path.exists, timeout=5.0)
         assert outcome_path.read_text(encoding="utf-8") == "unconfirmed"
         grandchild_ticks = [
-            e for e in _read_events(log_path)
+            e
+            for e in _read_events(log_path)
             if e.get("who") == "parent_tick" and e.get("what") == "stubborn_tick"
         ]
         assert grandchild_ticks, "stubborn grandchild kept ticking past the bound"
@@ -569,9 +584,7 @@ async def test_recovery_window_while_parent_unwinds(
     """
     from tests.integration.conftest import InProcClient
 
-    project_dir, log_path, outcome_path = await _setup_one_project(
-        wm_client, tmp_path
-    )
+    project_dir, log_path, outcome_path = await _setup_one_project(wm_client, tmp_path)
     ctx = wm_client.ws_context
 
     async def _start_run(
@@ -589,9 +602,13 @@ async def test_recovery_window_while_parent_unwinds(
             client.request(
                 "actions/run",
                 _parent_params(
-                    project_dir, log, outcome,
-                    delegation="run_action", leaf_mode="lender",
-                    lender_path=str(lender_path), token=token,
+                    project_dir,
+                    log,
+                    outcome,
+                    delegation="run_action",
+                    leaf_mode="lender",
+                    lender_path=str(lender_path),
+                    token=token,
                 ),
                 timeout=60.0,
             )
@@ -613,14 +630,15 @@ async def test_recovery_window_while_parent_unwinds(
         await runner_client.close()
         # (i) Ordinary reload right after the cancel is refused, naming child.
         refused = await wm_client.request(
-            "workspace/reloadConfig", {"project": str(project_dir)},
+            "workspace/reloadConfig",
+            {"project": str(project_dir)},
             timeout=60.0,
         )
         first = refused["projects"][0]
         assert first["status"] == "refused", first
-        assert any(
-            run.get("action") == "probe_leaf" for run in first["inFlight"]
-        ), first
+        assert any(run.get("action") == "probe_leaf" for run in first["inFlight"]), (
+            first
+        )
         # (ii) After the child replied but before the parent deleted the file:
         # the child is gone from flight and the reload is not refused.
         await _wait_for(
@@ -632,15 +650,18 @@ async def test_recovery_window_while_parent_unwinds(
             timeout=B + 2.0,
         )
         await _wait_for(
-            lambda: not any(
-                run.get("action") == "probe_leaf"
-                for run in in_flight_runs.runs_in_project(ctx, project_dir)
+            lambda: (
+                not any(
+                    run.get("action") == "probe_leaf"
+                    for run in in_flight_runs.runs_in_project(ctx, project_dir)
+                )
             ),
             timeout=10.0,
         )
         assert lender_a.exists(), "parent deleted the lent file too early"
         recovered = await wm_client.request(
-            "workspace/reloadConfig", {"project": str(project_dir)},
+            "workspace/reloadConfig",
+            {"project": str(project_dir)},
             timeout=60.0,
         )
         assert recovered["projects"][0]["status"] != "refused", recovered
@@ -648,9 +669,7 @@ async def test_recovery_window_while_parent_unwinds(
         # reaches its delayed delete; the file stays and the child never saw
         # it missing.
         assert lender_a.exists()
-        assert not any(
-            e.get("what") == "lender_missing" for e in _read_events(log_a)
-        )
+        assert not any(e.get("what") == "lender_missing" for e in _read_events(log_a))
     finally:
         with contextlib.suppress(Exception):
             await runner_client.close()
@@ -677,9 +696,7 @@ async def test_recovery_window_while_parent_unwinds(
         )
         assert not lender_c.exists()
         assert outcome_c.read_text(encoding="utf-8") == "stopped"
-        assert not any(
-            e.get("what") == "lender_missing" for e in _read_events(log_c)
-        )
+        assert not any(e.get("what") == "lender_missing" for e in _read_events(log_c))
     finally:
         with contextlib.suppress(Exception):
             await runner_client_c.close()
@@ -718,9 +735,7 @@ async def test_recovery_window_while_parent_unwinds(
             ).items()
         }
         assert before and after and before != after
-        assert not any(
-            e.get("what") == "lender_missing" for e in _read_events(log_b)
-        )
+        assert not any(e.get("what") == "lender_missing" for e in _read_events(log_b))
     finally:
         with contextlib.suppress(Exception):
             await runner_client_b.close()

@@ -221,9 +221,7 @@ def build_runner(spec: PackageSpec) -> FakeProjectActionRunner:
         runner.set_result(
             PUBLISH_AND_VERIFY_ARTIFACT_ACTION,
             _Raises(
-                RuntimeError(
-                    "VerifyArtifactPublishedToRegistryAction has no handlers"
-                )
+                RuntimeError("VerifyArtifactPublishedToRegistryAction has no handlers")
             ),
         )
     else:

@@ -43,7 +43,9 @@ async def test_second_scope_waits_until_first_scope_exits() -> None:
     loop = asyncio.get_running_loop()
 
     async def enter_second() -> None:
-        async with runner.run([sys.executable, "-c", "import time; time.sleep(0.01)"]) as proc2:
+        async with runner.run(
+            [sys.executable, "-c", "import time; time.sleep(0.01)"]
+        ) as proc2:
             await proc2.wait_for_end()
 
     start1 = loop.time()
@@ -225,7 +227,9 @@ async def test_run_cancelled_while_waiting_for_local_cap_releases_its_lease() ->
     assert runner._local_cap is not None
 
     # The first process holds the only local-cap permit.
-    async with runner.run([sys.executable, "-c", "import time; time.sleep(5)"]) as proc1:
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(5)"]
+    ) as proc1:
         in_flight_before = slots.in_flight
         permits_before = runner._local_cap._value
         leases_before = set(backend.outstanding)

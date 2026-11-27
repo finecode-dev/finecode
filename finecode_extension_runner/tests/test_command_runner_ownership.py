@@ -13,8 +13,8 @@ import os
 import sys
 
 import pytest
-
 from finecode_extension_api.interfaces import icommandrunner
+
 from finecode_extension_runner.impls.command_runner import (
     AsyncProcess,
     CommandRunner,
@@ -26,7 +26,9 @@ from finecode_extension_runner.process_slots import ProcessSlots
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only")
 
 
-async def _spawn(asyncio_subprocess_kwargs, *, owns_group: bool, strict: bool) -> AsyncProcess:
+async def _spawn(
+    asyncio_subprocess_kwargs, *, owns_group: bool, strict: bool
+) -> AsyncProcess:
     proc = await asyncio.create_subprocess_exec(*asyncio_subprocess_kwargs)
     return AsyncProcess(proc, owns_process_group=owns_group, strict_output=strict)
 
@@ -63,8 +65,11 @@ async def test_leader_exit_observed_before_pipe_close() -> None:
 async def test_zombie_only_group_counts_as_gone(monkeypatch) -> None:
     """A group whose members are all zombies needs no further signal."""
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "pass",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        sys.executable,
+        "-c",
+        "pass",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.PIPE,
     )
     wrapped = AsyncProcess(proc, owns_process_group=True)
@@ -76,8 +81,11 @@ async def test_zombie_only_group_counts_as_gone(monkeypatch) -> None:
 async def test_eperm_group_counts_as_live(monkeypatch) -> None:
     """A group we cannot signal still counts as alive, never as gone."""
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "import time; time.sleep(30)",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        sys.executable,
+        "-c",
+        "import time; time.sleep(30)",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.PIPE,
         start_new_session=True,
     )
@@ -103,8 +111,11 @@ async def test_eperm_group_counts_as_live(monkeypatch) -> None:
 async def test_gone_latch_never_probes_again(monkeypatch) -> None:
     """Once gone, the group id is never signalled again (pid reuse guard)."""
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "pass",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        sys.executable,
+        "-c",
+        "pass",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.PIPE,
         start_new_session=True,
     )
@@ -133,8 +144,11 @@ async def test_gone_latch_never_probes_again(monkeypatch) -> None:
 async def test_strict_output_raises_after_drain_failure() -> None:
     """An overlong line makes strict readers raise instead of serving a prefix."""
     strict_proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "import sys; sys.stdout.write('x' * (9 * 1024 * 1024))",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.write('x' * (9 * 1024 * 1024))",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.PIPE,
     )
     strict = AsyncProcess(strict_proc, strict_output=True)
@@ -144,8 +158,11 @@ async def test_strict_output_raises_after_drain_failure() -> None:
         strict.get_output()
 
     lax_proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "import sys; sys.stdout.write('x' * (9 * 1024 * 1024))",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.write('x' * (9 * 1024 * 1024))",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.PIPE,
     )
     lax = AsyncProcess(lax_proc, strict_output=False)
@@ -241,7 +258,9 @@ async def test_scope_exit_releases_everything_on_every_path(tmp_path) -> None:
     await check(proc)
 
     async def early() -> str:
-        async with runner.run(quick, cwd=None, env=None, new_process_group=True) as proc:
+        async with runner.run(
+            quick, cwd=None, env=None, new_process_group=True
+        ) as proc:
             early_proc["p"] = proc
             return "early"
 
@@ -260,7 +279,9 @@ async def test_scope_exit_releases_everything_on_every_path(tmp_path) -> None:
 
     async def under_timeout() -> None:
         async with asyncio.timeout(0.2):
-            async with runner.run(sleepy, cwd=None, env=None, new_process_group=True) as proc:
+            async with runner.run(
+                sleepy, cwd=None, env=None, new_process_group=True
+            ) as proc:
                 timeout_proc["p"] = proc
                 await asyncio.sleep(30)
 
@@ -274,7 +295,9 @@ async def test_scope_exit_releases_everything_on_every_path(tmp_path) -> None:
     await _assert_fully_released(runner, slots, backend, cap_before)
 
     async def holder() -> None:
-        async with runner.run(sleepy, cwd=None, env=None, new_process_group=True) as proc:
+        async with runner.run(
+            sleepy, cwd=None, env=None, new_process_group=True
+        ) as proc:
             cancelled_proc["p"] = proc
             await asyncio.sleep(30)
 
@@ -295,25 +318,42 @@ async def test_buffered_command_with_outputs_and_stdin() -> None:
 
     for code in (0, 1, 2):
         proc = await runner.run_to_completion(
-            [sys.executable, "-c", f"import sys; sys.stdout.write('o{code}'); sys.stderr.write('e{code}'); sys.exit({code})"]
+            [
+                sys.executable,
+                "-c",
+                f"import sys; sys.stdout.write('o{code}'); sys.stderr.write('e{code}'); sys.exit({code})",
+            ]
         )
         assert proc.get_exit_code() == code
         assert proc.get_output() == f"o{code}"
         assert proc.get_error_output() == f"e{code}"
 
-
-    async with runner.run([sys.executable, "-c", "print('l1'); print('l2')"], cwd=None, env=None, new_process_group=True) as proc:
+    async with runner.run(
+        [sys.executable, "-c", "print('l1'); print('l2')"],
+        cwd=None,
+        env=None,
+        new_process_group=True,
+    ) as proc:
         assert [line async for line in proc.stdout_lines()] == ["l1", "l2"]
     assert proc.get_exit_code() == 0
 
-    async with runner.run([sys.executable, "-c", "import time; time.sleep(5)"], cwd=None, env=None, new_process_group=True) as proc:
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(5)"],
+        cwd=None,
+        env=None,
+        new_process_group=True,
+    ) as proc:
         with pytest.raises(TimeoutError):
             await proc.wait_for_end(timeout=0.1)
         assert proc.is_alive()
     assert not proc.is_alive()
 
     echo = await runner.run_to_completion(
-        [sys.executable, "-c", "import sys; data = sys.stdin.read(); sys.stdout.write(data)"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; data = sys.stdin.read(); sys.stdout.write(data)",
+        ],
         input="x",
     )
     assert echo.get_output() == "x"
@@ -334,7 +374,6 @@ async def test_process_group_default_and_opt_out() -> None:
 
     proc = await runner.run_to_completion(child)
     assert proc.get_output().strip() == str(proc.async_subprocess.pid)
-
 
     async with runner.run(child, cwd=None, env=None, new_process_group=False) as plain:
         await plain.wait_for_end()
@@ -390,9 +429,7 @@ async def test_entry_refusals_on_windows_shape(monkeypatch) -> None:
     assert runner._local_cap is not None
     cap_before = runner._local_cap._value
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(
-        "shutil.which", lambda prog, path=None: "C:\\tools\\npm.cmd"
-    )
+    monkeypatch.setattr("shutil.which", lambda prog, path=None: "C:\\tools\\npm.cmd")
 
     async def attempt(cmd: list[str]) -> None:
         async with runner.run(cmd, cwd=None, env=None, new_process_group=True):
@@ -400,9 +437,7 @@ async def test_entry_refusals_on_windows_shape(monkeypatch) -> None:
 
     with pytest.raises(icommandrunner.UnsafeBatchArgumentError):
         await attempt(["npm", "a&b"])
-    monkeypatch.setattr(
-        "shutil.which", lambda prog, path=None: "C:\\tools\\prog.js"
-    )
+    monkeypatch.setattr("shutil.which", lambda prog, path=None: "C:\\tools\\prog.js")
     with pytest.raises(icommandrunner.UnlaunchableProgramError):
         await attempt(["prog", "x"])
     assert slots.in_flight == 0
@@ -419,7 +454,12 @@ async def test_entry_cancel_while_waiting_for_slot() -> None:
         assert slots.in_flight == 1
 
         async def entry() -> None:
-            async with runner.run([sys.executable, "-c", "pass"], cwd=None, env=None, new_process_group=True):
+            async with runner.run(
+                [sys.executable, "-c", "pass"],
+                cwd=None,
+                env=None,
+                new_process_group=True,
+            ):
                 pass  # pragma: no cover
 
         task = asyncio.ensure_future(entry())
@@ -445,7 +485,9 @@ async def test_entry_cancel_while_waiting_for_lease() -> None:
     cap_before = runner._local_cap._value
 
     async def entry() -> None:
-        async with runner.run([sys.executable, "-c", "pass"], cwd=None, env=None, new_process_group=True):
+        async with runner.run(
+            [sys.executable, "-c", "pass"], cwd=None, env=None, new_process_group=True
+        ):
             pass  # pragma: no cover
 
     task = asyncio.ensure_future(entry())
@@ -473,7 +515,12 @@ async def test_entry_cancel_while_waiting_for_local_cap() -> None:
         leases_before = set(backend.outstanding)
 
         async def entry() -> None:
-            async with runner.run([sys.executable, "-c", "pass"], cwd=None, env=None, new_process_group=True):
+            async with runner.run(
+                [sys.executable, "-c", "pass"],
+                cwd=None,
+                env=None,
+                new_process_group=True,
+            ):
                 pass  # pragma: no cover
 
         task = asyncio.ensure_future(entry())
@@ -496,6 +543,7 @@ async def test_entry_cancel_while_waiting_for_local_cap() -> None:
 async def test_scope_inside_work_slot_scope_is_refused() -> None:
     """Opening a scope inside IWorkSlots.acquire() raises WorkSlotScopeError."""
     from finecode_extension_api.interfaces.iworkslots import WorkSlotScopeError
+
     from finecode_extension_runner.work_slots import WorkSlots
 
     runner, slots, backend, _ = _make_runner()
@@ -503,7 +551,12 @@ async def test_scope_inside_work_slot_scope_is_refused() -> None:
     cap_before = runner._local_cap._value
     async with WorkSlots(slots).acquire():
         with pytest.raises(WorkSlotScopeError):
-            async with runner.run([sys.executable, "-c", "pass"], cwd=None, env=None, new_process_group=True):
+            async with runner.run(
+                [sys.executable, "-c", "pass"],
+                cwd=None,
+                env=None,
+                new_process_group=True,
+            ):
                 pass  # pragma: no cover
     assert slots.in_flight == 0
     assert runner._local_cap._value == cap_before
@@ -518,7 +571,12 @@ async def test_scope_from_foreign_loop_is_refused() -> None:
     try:
         registry.bind_loop(other)
         with pytest.raises(RuntimeError):
-            async with runner.run([sys.executable, "-c", "pass"], cwd=None, env=None, new_process_group=True):
+            async with runner.run(
+                [sys.executable, "-c", "pass"],
+                cwd=None,
+                env=None,
+                new_process_group=True,
+            ):
                 pass  # pragma: no cover
     finally:
         other.close()
@@ -569,7 +627,9 @@ async def test_cancel_during_spawn_sweep(tmp_path) -> None:
                     break
                 await asyncio.sleep(0.05)
             else:
-                raise AssertionError(f"grandchild {grandchild} survived (iteration {i})")
+                raise AssertionError(
+                    f"grandchild {grandchild} survived (iteration {i})"
+                )
 
     assert max(durations) < 4.5
     assert backend.outstanding == set()
@@ -577,7 +637,11 @@ async def test_cancel_during_spawn_sweep(tmp_path) -> None:
     results = tmp_path / "sweep.json"
     results.write_text(
         json.dumps(
-            {"iterations": iterations, "max": max(durations), "p50": sorted(durations)[len(durations) // 2]}
+            {
+                "iterations": iterations,
+                "max": max(durations),
+                "p50": sorted(durations)[len(durations) // 2],
+            }
         ),
         encoding="utf-8",
     )
@@ -658,7 +722,9 @@ async def test_overlong_line_is_strict_in_scope_but_prefix_for_long_running() ->
 
     runner, slots, _, _ = _make_runner()
     child = [
-        sys.executable, "-c", "import sys; sys.stdout.write('x' * (9 * 1024 * 1024))",
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.write('x' * (9 * 1024 * 1024))",
     ]
     async with runner.run(child, cwd=None, env=None, new_process_group=True) as proc:
         with pytest.raises(RuntimeError):
@@ -701,7 +767,12 @@ async def test_unstoppable_group_raises_and_holds_slot(monkeypatch) -> None:
 
     monkeypatch.setattr(os, "killpg", deny_all)
     with pytest.raises(icommandrunner.OwnedProcessNotStoppedError) as caught:
-        async with runner.run([sys.executable, "-c", "import time; time.sleep(30)"], cwd=None, env=None, new_process_group=True):
+        async with runner.run(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=None,
+            env=None,
+            new_process_group=True,
+        ):
             await asyncio.sleep(0.2)
     assert caught.value.pids != ()
     assert str(caught.value.pids[0]) in str(caught.value)
@@ -711,7 +782,12 @@ async def test_unstoppable_group_raises_and_holds_slot(monkeypatch) -> None:
 
     monkeypatch.setattr(os, "killpg", deny_all)
     try:
-        async with runner.run([sys.executable, "-c", "import time; time.sleep(30)"], cwd=None, env=None, new_process_group=True):
+        async with runner.run(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=None,
+            env=None,
+            new_process_group=True,
+        ):
             raise ValueError("original")
     except ValueError as error:
         assert any("still alive" in note for note in getattr(error, "__notes__", []))
@@ -763,9 +839,7 @@ async def test_unanswered_wm_release_bounds_exit_but_holds_slot() -> None:
     try:
         loop = asyncio.get_running_loop()
         start = loop.time()
-        proc = await runner.run_to_completion(
-            [sys.executable, "-c", "print('hi')"]
-        )
+        proc = await runner.run_to_completion([sys.executable, "-c", "print('hi')"])
         elapsed = loop.time() - start
         assert proc.get_output() == "hi\n"
         assert _RELEASE_WAIT_SEC <= elapsed <= _RELEASE_WAIT_SEC + 1.0
@@ -872,7 +946,9 @@ async def test_exited_leader_with_live_member_is_stopped() -> None:
     """A group whose leader already exited is still stopped and confirmed gone."""
 
     runner, slots, _, _ = _make_runner()
-    async with runner.run(["sh", "-c", "sleep 30 &"], cwd=None, env=None, new_process_group=True) as proc:
+    async with runner.run(
+        ["sh", "-c", "sleep 30 &"], cwd=None, env=None, new_process_group=True
+    ) as proc:
         await asyncio.sleep(0.3)
         assert proc.get_exit_code() is not None
         assert proc.is_alive()
@@ -888,7 +964,12 @@ async def test_cancellations_during_cleanup_are_neither_lost_nor_shortening() ->
     runner, slots, _, _ = _make_runner()
 
     async def holder() -> None:
-        async with runner.run(["sh", "-c", 'trap "" TERM; sleep 30 & wait'], cwd=None, env=None, new_process_group=True) as proc:
+        async with runner.run(
+            ["sh", "-c", 'trap "" TERM; sleep 30 & wait'],
+            cwd=None,
+            env=None,
+            new_process_group=True,
+        ) as proc:
             await _wait_for_group(proc, 2)
             raise ValueError("boom")
 
@@ -931,8 +1012,11 @@ async def test_registry_check_loop_only_when_bound_and_different() -> None:
 async def test_abandoned_wait_raises_incomplete_not_cancelled() -> None:
     """After abandonment, `wait_for_end` reports incompleteness, never cancellation."""
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "import time; time.sleep(30)",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        sys.executable,
+        "-c",
+        "import time; time.sleep(30)",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.PIPE,
     )
     wrapped = AsyncProcess(proc, strict_output=True)

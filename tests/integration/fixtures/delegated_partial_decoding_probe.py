@@ -61,9 +61,7 @@ class ProbeParentAction(code_action.Action[ProbePayload, ProbeContext, ParentRes
     DESCRIPTION = "Probe parent that decodes a delegated child's partials."
 
 
-class StreamingLeafAction(
-    code_action.Action[ProbePayload, ProbeContext, TypedResult]
-):
+class StreamingLeafAction(code_action.Action[ProbePayload, ProbeContext, TypedResult]):
     PAYLOAD_TYPE = ProbePayload
     RUN_CONTEXT_TYPE = ProbeContext
     RESULT_TYPE = TypedResult
@@ -126,9 +124,7 @@ class StreamingLeafHandler(
 
 
 class RequiredFieldLeafHandler(
-    code_action.ActionHandler[
-        RequiredFieldLeafAction, code_action.ActionHandlerConfig
-    ]
+    code_action.ActionHandler[RequiredFieldLeafAction, code_action.ActionHandlerConfig]
 ):
     async def run(self, payload: ProbePayload, run_context: ProbeContext):
         for idx in range(3):

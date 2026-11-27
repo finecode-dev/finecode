@@ -58,9 +58,7 @@ class _RecordedCall:
 
 
 class _FakeWorkspaceActionRunner:
-    def __init__(
-        self, unhandled: tuple[code_action.ItemCoverage, ...] = ()
-    ) -> None:
+    def __init__(self, unhandled: tuple[code_action.ItemCoverage, ...] = ()) -> None:
         self.calls: list[_RecordedCall] = []
         self._unhandled = list(unhandled)
 
@@ -115,9 +113,7 @@ class _FakeRatchet:
         scope: RatchetScope,
         unhandled: list[code_action.ItemCoverage],
     ) -> RatchetOutcome:
-        self.calls.append(
-            _RatchetCall(contributor, checked_project, scope, unhandled)
-        )
+        self.calls.append(_RatchetCall(contributor, checked_project, scope, unhandled))
         return RatchetOutcome(
             messages=messages,
             stale=self.stale,
@@ -166,9 +162,7 @@ async def _run(
     known_project_paths: list[pathlib.Path],
     unhandled: tuple[code_action.ItemCoverage, ...] = (),
     ratchet: _FakeRatchet | None = None,
-) -> tuple[
-    _FakeWorkspaceActionRunner, _CollectingPartialResultSender, _FakeRatchet
-]:
+) -> tuple[_FakeWorkspaceActionRunner, _CollectingPartialResultSender, _FakeRatchet]:
     action_runner = _FakeWorkspaceActionRunner(unhandled)
     fake_ratchet = ratchet if ratchet is not None else _FakeRatchet()
     handler = LintInspectCodeBridgeHandler(

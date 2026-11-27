@@ -206,9 +206,7 @@ async def _open_project(
         "client/initialize",
         {
             "clientId": f"question-withdrawal-{uuid.uuid4().hex}",
-            "capabilities": {
-                "elicitation": elicitation or {"choice": True}
-            },
+            "capabilities": {"elicitation": elicitation or {"choice": True}},
         },
         timeout=60.0,
     )

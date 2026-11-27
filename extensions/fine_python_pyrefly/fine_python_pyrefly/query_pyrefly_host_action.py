@@ -21,8 +21,7 @@ class QueryPyreflyHostAction(
     """
 
     DESCRIPTION = (
-        "Pyrefly host transport: answer an IDE query on the shared pyrefly"
-        " server."
+        "Pyrefly host transport: answer an IDE query on the shared pyrefly server."
     )
     SCOPE = code_action.ActionScope.PROJECT
     PAYLOAD_TYPE = QueryPyreflyHostPayload

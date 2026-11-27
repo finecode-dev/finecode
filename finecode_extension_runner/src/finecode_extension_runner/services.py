@@ -293,7 +293,9 @@ async def initialize_handlers(
                 )
 
 
-async def reload_action(action_name: str, runner_context: context.RunnerContext) -> None:
+async def reload_action(
+    action_name: str, runner_context: context.RunnerContext
+) -> None:
     project_def = runner_context.project
 
     try:

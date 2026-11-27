@@ -69,9 +69,7 @@ class LspDiagnosticsUnavailable(Exception):
         message = f"Language server diagnostics unavailable: {cause.value}."
         if detail is not None:
             message += f" {detail}."
-        message += (
-            " Retry the file; if this repeats, restart the workspace manager."
-        )
+        message += " Retry the file; if this repeats, restart the workspace manager."
         super().__init__(message)
 
 
@@ -1121,7 +1119,9 @@ class LspService(service.DisposableService):
             file_content = content
         else:
             async with (
-                self._file_editor.session(author=self._file_operation_author) as fe_session,
+                self._file_editor.session(
+                    author=self._file_operation_author
+                ) as fe_session,
                 fe_session.read_file(file_path) as file_info,
             ):
                 file_content = file_info.content
@@ -1880,9 +1880,7 @@ class LspService(service.DisposableService):
         items = (params or {}).get("items", [])
         if not items:
             return [self._resolve_configuration(None)]
-        return [
-            self._resolve_configuration(item.get("scopeUri")) for item in items
-        ]
+        return [self._resolve_configuration(item.get("scopeUri")) for item in items]
 
     def _resolve_configuration(self, scope_uri: str | None) -> dict[str, Any]:
         if self._configuration_resolver is not None:

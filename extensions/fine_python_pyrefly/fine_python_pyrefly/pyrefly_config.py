@@ -86,8 +86,7 @@ class PyreflyConfig(service.Service):
         exclude_dirs = [
             project.path
             for project in workspace_projects
-            if project.path != project_dir
-            and project.path.is_relative_to(project_dir)
+            if project.path != project_dir and project.path.is_relative_to(project_dir)
         ]
         config_path = (
             project_dir

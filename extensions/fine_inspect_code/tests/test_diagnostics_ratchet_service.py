@@ -100,9 +100,7 @@ class _FakeWorkspaceInfoProvider:
 def _projects(root: pathlib.Path) -> list[WorkspaceProject]:
     return [
         WorkspaceProject(path=root, config_status=ProjectConfigStatus.VALID),
-        WorkspaceProject(
-            path=root / "proj", config_status=ProjectConfigStatus.VALID
-        ),
+        WorkspaceProject(path=root / "proj", config_status=ProjectConfigStatus.VALID),
     ]
 
 
@@ -111,8 +109,10 @@ def _ratchet(
     file_manager: _CountingFileManager | None = None,
     settings: DiagnosticsRatchetSettings | None = None,
 ) -> tuple[DiagnosticsRatchet, _CountingFileManager]:
-    manager = file_manager if file_manager is not None else _CountingFileManager(
-        _FakeLogger()
+    manager = (
+        file_manager
+        if file_manager is not None
+        else _CountingFileManager(_FakeLogger())
     )
     ratchet = DiagnosticsRatchet(
         config=settings if settings is not None else DiagnosticsRatchetSettings(),

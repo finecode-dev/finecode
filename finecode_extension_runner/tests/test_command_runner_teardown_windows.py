@@ -35,9 +35,7 @@ async def test_cancelled_entry_tree_kills_on_windows() -> None:
     runner, slots, _, _ = _make_runner()
 
     async def entry() -> None:
-        async with runner.run(
-            [sys.executable, "-c", "import time; time.sleep(30)"]
-        ):
+        async with runner.run([sys.executable, "-c", "import time; time.sleep(30)"]):
             await asyncio.sleep(30)
 
     task: asyncio.Task[None] = asyncio.ensure_future(entry())

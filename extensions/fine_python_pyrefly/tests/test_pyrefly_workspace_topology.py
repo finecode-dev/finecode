@@ -149,9 +149,7 @@ class _FakeWorkspaceActionRunner:
             tuple[typing.Any, typing.Any, list[Path] | None, code_action.RunActionMeta]
         ] = []
         self.responses: dict[typing.Any, typing.Any] = {
-            AnnouncePyreflyProjectAction: AnnouncePyreflyProjectResult(
-                registered=True
-            )
+            AnnouncePyreflyProjectAction: AnnouncePyreflyProjectResult(registered=True)
         }
 
     async def run_action_in_projects(
@@ -431,9 +429,7 @@ async def test_first_forward_adds_the_folder_and_waits_for_the_pull(
     service, recorder, _ = await _service(root, root=root)
     identity = _identity(project)
 
-    task = asyncio.create_task(
-        service.ensure_forwarded(identity, sweep_paths=[])
-    )
+    task = asyncio.create_task(service.ensure_forwarded(identity, sweep_paths=[]))
     for _ in range(100):
         if recorder.added_folders:
             break
@@ -445,7 +441,9 @@ async def test_first_forward_adds_the_folder_and_waits_for_the_pull(
     recorder.resolver(project.as_uri())
     await asyncio.wait_for(task, timeout=5)
 
-    assert service._session_folder_fingerprints[project.as_uri()] == identity.fingerprint
+    assert (
+        service._session_folder_fingerprints[project.as_uri()] == identity.fingerprint
+    )
 
 
 async def test_an_unchanged_forward_completes_without_a_push(

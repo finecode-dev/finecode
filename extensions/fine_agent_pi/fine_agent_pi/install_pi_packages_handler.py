@@ -261,7 +261,9 @@ class InstallPiPackagesHandler(
 
         list_cmd = ["pi", "list", "--approve"]
         try:
-            list_process = await self.command_runner.run_to_completion(list_cmd, cwd=cwd, env=env)
+            list_process = await self.command_runner.run_to_completion(
+                list_cmd, cwd=cwd, env=env
+            )
         except icommandrunner.CommandStartError as error:
             for src in supported:
                 failed.append(

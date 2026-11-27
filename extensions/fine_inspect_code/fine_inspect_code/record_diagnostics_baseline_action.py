@@ -71,9 +71,7 @@ class RecordDiagnosticsBaselineRunResult(code_action.RunActionResult):
 
 
 class RecordDiagnosticsBaselineRunContext(
-    code_action.RunActionWithPartialResultsContext[
-        RecordDiagnosticsBaselineRunPayload
-    ]
+    code_action.RunActionWithPartialResultsContext[RecordDiagnosticsBaselineRunPayload]
 ): ...
 
 

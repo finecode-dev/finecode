@@ -192,7 +192,10 @@ def test_unmarked_output_is_unchanged() -> None:
         messages={
             _FILE: [
                 Diagnostic(
-                    range=_RANGE, message="msg", code="E", source="src",
+                    range=_RANGE,
+                    message="msg",
+                    code="E",
+                    source="src",
                 )
             ]
         }

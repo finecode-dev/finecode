@@ -23,12 +23,9 @@ def test_code_type_is_the_fallback_key() -> None:
 
 def test_a_name_not_in_diagnostic_severity_is_an_error() -> None:
     assert (
-        _get_severity("misc", "error", {"misc": "remark"})
-        is DiagnosticSeverity.ERROR
+        _get_severity("misc", "error", {"misc": "remark"}) is DiagnosticSeverity.ERROR
     )
 
 
 def test_no_entry_falls_back_to_error() -> None:
-    assert (
-        _get_severity("misc", "error", {}) is DiagnosticSeverity.ERROR
-    )
+    assert _get_severity("misc", "error", {}) is DiagnosticSeverity.ERROR

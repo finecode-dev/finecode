@@ -64,12 +64,13 @@ async def test_one_failed_start_does_not_cancel_siblings(
             await asyncio.sleep(0.1)
             completed.append(env_name)
 
-    with mock.patch.object(
-        runner_manager, "start_runner", side_effect=_fake_start_runner
-    ), pytest.raises(proxy_utils.StartingEnvironmentsFailed) as exc_info:
-        await proxy_utils.start_required_environments(
-            actions_by_projects, ws_context
-        )
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=_fake_start_runner
+        ),
+        pytest.raises(proxy_utils.StartingEnvironmentsFailed) as exc_info,
+    ):
+        await proxy_utils.start_required_environments(actions_by_projects, ws_context)
 
     message = str(exc_info.value)
     assert _env_name(projects[0]) in message

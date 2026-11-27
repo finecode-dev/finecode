@@ -28,9 +28,7 @@ from fine_agent_pi.pi_agent_handler import PiAgentHandler
 from fine_agent_pi.run_pi_agent_task_action import RunPiAgentTaskAction
 
 _FAKE_PI = pathlib.Path(__file__).parent / "fake_pi.py"
-_LEAF_SOURCE = (
-    f"{RunPiAgentTaskAction.__module__}.{RunPiAgentTaskAction.__qualname__}"
-)
+_LEAF_SOURCE = f"{RunPiAgentTaskAction.__module__}.{RunPiAgentTaskAction.__qualname__}"
 _RECORD_NAME = "driver-pi.jsonl"
 
 

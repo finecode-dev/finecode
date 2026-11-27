@@ -108,7 +108,12 @@ def test_found_counts_record_failing_findings(tmp_path: pathlib.Path) -> None:
     uri = _uri(project / "a.py")
 
     plan = plan_from_results(
-        [_result({uri: [_diagnostic("lint"), _diagnostic("lint")]}, [_receipt("lint", project)])],
+        [
+            _result(
+                {uri: [_diagnostic("lint"), _diagnostic("lint")]},
+                [_receipt("lint", project)],
+            )
+        ],
         [project],
         lambda _project: None,
     )
@@ -275,11 +280,14 @@ def test_lint_unhandled_does_not_keep_check_toolchains_entry(
     assert plan.counts[PartitionKey(project=project, contributor="lint")] == {
         lint_identity: 1
     }
-    assert plan.counts[PartitionKey(project=project, contributor="check_toolchains")] == {}
+    assert (
+        plan.counts[PartitionKey(project=project, contributor="check_toolchains")] == {}
+    )
     after = render_snapshot(apply_plan(plan, {project: existing})[project])
-    assert json.loads(after)["contributors"]["lint"] == json.loads(before)[
-        "contributors"
-    ]["lint"]
+    assert (
+        json.loads(after)["contributors"]["lint"]
+        == json.loads(before)["contributors"]["lint"]
+    )
     assert json.loads(after)["contributors"]["check_toolchains"]["paths"] == {}
 
 
@@ -318,9 +326,10 @@ def test_partitions_without_receipt_stay_untouched(
     )
     updated = apply_plan(plan, {project: existing})
 
-    assert updated[project].contributors["type_check"] is existing.contributors[
-        "type_check"
-    ]
+    assert (
+        updated[project].contributors["type_check"]
+        is existing.contributors["type_check"]
+    )
 
 
 def test_files_receipt_refuses(tmp_path: pathlib.Path) -> None:

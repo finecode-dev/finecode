@@ -150,9 +150,7 @@ class ProbeParentHandler(
     ) -> ProbeResult:
         child_depths: list[int] = []
         child_texts: list[str] = []
-        iterator = self._runner.run_action_iter(
-            ref, payload, meta, progress=progress
-        )
+        iterator = self._runner.run_action_iter(ref, payload, meta, progress=progress)
         if payload.parent_close == "immediate":
             # Close without ever pulling: drive the iterator in a task, let
             # the request get in flight, then cancel the pull. The cleanup
@@ -287,6 +285,7 @@ class ProbeLeafHandler(
             elif kind == "exit":
                 os._exit(1)
             elif kind == "background":
+
                 async def _late() -> None:
                     await asyncio.sleep(0.5)
                     for index in range(3):
@@ -308,15 +307,14 @@ class ProbeLeafHandler(
                 await progress.report(message="before-exit")
                 os._exit(1)
             if payload.scenario == "background":
+
                 async def _late() -> None:
                     await asyncio.sleep(0.5)
                     for index in range(3):
                         await progress.report(message=f"late-{index}")
 
                 _ = asyncio.ensure_future(_late())
-                return ProbeResult(
-                    depths=[run_context.meta.orchestration_depth]
-                )
+                return ProbeResult(depths=[run_context.meta.orchestration_depth])
             if payload.scenario == "big":
                 await progress.report(message="X" * _BIG_MESSAGE_SIZE)
             elif payload.scenario == "script":
@@ -339,9 +337,7 @@ class ProbeLeafHandler(
 
 
 class ProbeStreamingLeafHandler(
-    code_action.ActionHandler[
-        ProbeStreamingLeafAction, code_action.ActionHandlerConfig
-    ]
+    code_action.ActionHandler[ProbeStreamingLeafAction, code_action.ActionHandlerConfig]
 ):
     async def run(
         self, payload: ProbePayload, run_context: ProbeContext

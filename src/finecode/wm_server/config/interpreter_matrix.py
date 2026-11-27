@@ -212,9 +212,7 @@ def expand(envs: list[EnvSpec], handlers: list[HandlerRef]) -> ExpansionResult:
             concrete_names: list[str] = []
             for interpreter in env.interpreters:
                 concrete_name = concrete_env_name(env.name, interpreter)
-                concrete_envs.append(
-                    ConcreteEnv(concrete_name, interpreter, env.name)
-                )
+                concrete_envs.append(ConcreteEnv(concrete_name, interpreter, env.name))
                 concrete_names.append(concrete_name)
             env_names_by_base[env.name] = concrete_names
 

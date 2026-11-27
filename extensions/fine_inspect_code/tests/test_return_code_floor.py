@@ -62,7 +62,9 @@ def test_hint_does_not_fail_run() -> None:
 def test_empty_result_passes() -> None:
     assert DiagnosticFilesRunResult(messages={}).return_code is RunReturnCode.SUCCESS
     assert (
-        DiagnosticFilesRunResult(messages={ResourceUri("file:///ws/a.py"): []}).return_code
+        DiagnosticFilesRunResult(
+            messages={ResourceUri("file:///ws/a.py"): []}
+        ).return_code
         is RunReturnCode.SUCCESS
     )
 

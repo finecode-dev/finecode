@@ -223,13 +223,15 @@ def _er_side_routed_prompt() -> UserPrompt:
 
     import typing as _typing_guard
 
-    from finecode.wm_server.runner import _internal_client_types, runner_manager
     from finecode_jsonrpc._converter import converter
 
+    from finecode.wm_server.runner import _internal_client_types, runner_manager
+
     async def _send_request_to_wm(method: str, params: dict) -> dict:
+        from finecode_jsonrpc._converter import converter as _conv
+
         from finecode.wm_server.runner import _internal_client_types as _t_types
         from finecode.wm_server.runner import runner_manager as _rm
-        from finecode_jsonrpc._converter import converter as _conv
 
         installed = elicitation_bridge.handlers()
         assert installed is not None

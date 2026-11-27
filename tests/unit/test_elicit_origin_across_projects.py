@@ -74,7 +74,9 @@ class _DispatchingErClient(_AskingErClient):
         await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
         result = await super().send_request(
-            method, params, timeout,
+            method,
+            params,
+            timeout,
             await_reply_after_cancel=await_reply_after_cancel,
         )
         if self.dispatch_onward is not None:

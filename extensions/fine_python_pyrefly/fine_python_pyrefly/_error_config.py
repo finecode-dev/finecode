@@ -120,8 +120,7 @@ def render_lsp_config(
     ]
     if exclude_dirs:
         excluded_globs = [
-            json.dumps(f"{excluded.as_posix()}/**")
-            for excluded in sorted(exclude_dirs)
+            json.dumps(f"{excluded.as_posix()}/**") for excluded in sorted(exclude_dirs)
         ]
         lines.append(f"project-excludes = [{', '.join(excluded_globs)}]")
     lines.append("")

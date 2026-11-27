@@ -123,9 +123,7 @@ class _FakeWorkspaceInfoProvider:
         ]
 
 
-def _generated_config_path(
-    project_dir: Path, env_name: str = "dev_no_runtime"
-) -> Path:
+def _generated_config_path(project_dir: Path, env_name: str = "dev_no_runtime") -> Path:
     return project_dir / ".finecode" / "pyrefly" / env_name / "pyrefly.toml"
 
 
@@ -308,9 +306,7 @@ async def test_an_intervening_ignore_file_fails_init(
     own directory silently changes which files the project owns; init must
     refuse rather than translate or skip it.
     """
-    ignore_file = (
-        _generated_config_path(tmp_path).parent / ignore_relative_path
-    )
+    ignore_file = _generated_config_path(tmp_path).parent / ignore_relative_path
     ignore_file.parent.mkdir(parents=True)
     ignore_file.write_text("*.py\n", encoding="utf-8")
     config, runner = _service(tmp_path)
@@ -412,9 +408,7 @@ async def test_workspace_read_failure_fails_init(tmp_path: Path) -> None:
     claims them."""
     workspace_info_provider = _FakeWorkspaceInfoProvider()
     workspace_info_provider.error = RuntimeError("no WM")
-    config, runner = _service(
-        tmp_path, workspace_info_provider=workspace_info_provider
-    )
+    config, runner = _service(tmp_path, workspace_info_provider=workspace_info_provider)
 
     with pytest.raises(RuntimeError, match="no WM"):
         await config.init()

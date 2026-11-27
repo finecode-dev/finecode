@@ -188,7 +188,8 @@ async def test_generated_config_is_in_the_settings_before_the_first_start() -> N
     ]
 
     assert any(
-        settings.get("pyrefly") == {
+        settings.get("pyrefly")
+        == {
             "configPath": str(config_path),
             "extraPaths": expected_extra_paths,
         }

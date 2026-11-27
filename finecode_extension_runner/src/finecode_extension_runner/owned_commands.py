@@ -51,7 +51,9 @@ class OwnedCommandRegistry:
         except RuntimeError:
             return
         if running is not self._loop:
-            raise RuntimeError("Owned command scopes may only open on the ER event loop")
+            raise RuntimeError(
+                "Owned command scopes may only open on the ER event loop"
+            )
 
     def register(self, holder: asyncio.Task[object]) -> OwnedCommandEntry:
         entry = OwnedCommandEntry(holder=holder, done=holder.get_loop().create_future())

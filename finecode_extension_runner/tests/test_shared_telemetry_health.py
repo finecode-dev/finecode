@@ -37,8 +37,7 @@ def test_counts_saturate_at_2_pow_63_minus_1() -> None:
     tracker.count("logs", "queue_overflow", n=10)
 
     assert (
-        tracker.snapshot()["signals"]["logs"]["counts"]["queue_overflow"]
-        == 2**63 - 1
+        tracker.snapshot()["signals"]["logs"]["counts"]["queue_overflow"] == 2**63 - 1
     )
 
 

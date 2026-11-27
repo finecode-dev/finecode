@@ -472,9 +472,7 @@ async def test_unexpected_exit_reclaims_granted_leases(tmp_path) -> None:
     lease = await ws_context.process_budget.lease(runner.readable_id, 2)
     assert lease.granted == 2
 
-    client = jc.JsonRpcClient(
-        message_types={}, readable_id=runner.readable_id
-    )
+    client = jc.JsonRpcClient(message_types={}, readable_id=runner.readable_id)
 
     async def on_exit() -> None:
         await ws_context.process_budget.reclaim_for_runner(runner.readable_id)

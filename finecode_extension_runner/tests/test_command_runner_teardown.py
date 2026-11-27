@@ -156,7 +156,9 @@ async def test_is_alive_tracks_the_group_after_a_forking_launcher_exits() -> Non
     """
     async with _runner().run(_python(_LAUNCHER), new_process_group=True) as process:
         lines = process.stdout_lines()
-        launcher_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
+        launcher_pid, child_pid = (
+            int(part) for part in (await lines.__anext__()).split()
+        )
 
         process.terminate()
 
@@ -165,7 +167,8 @@ async def test_is_alive_tracks_the_group_after_a_forking_launcher_exits() -> Non
         # instead -- it is set the moment the launcher itself dies.
         deadline = asyncio.get_running_loop().time() + 5.0
         while (
-            process.get_exit_code() is None and asyncio.get_running_loop().time() < deadline
+            process.get_exit_code() is None
+            and asyncio.get_running_loop().time() < deadline
         ):
             await asyncio.sleep(0.05)
 

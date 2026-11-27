@@ -109,9 +109,7 @@ def _contributor_id(module_path: pathlib.Path, class_name: str) -> str:
                     and statement.value is not None
                 ):
                     return str(ast.literal_eval(statement.value))
-    raise AssertionError(
-        f"{class_name} in {module_path} has no RATCHET_CONTRIBUTOR"
-    )
+    raise AssertionError(f"{class_name} in {module_path} has no RATCHET_CONTRIBUTOR")
 
 
 def _calls_apply(module_path: pathlib.Path) -> bool:
@@ -139,9 +137,7 @@ def test_every_umbrella_handler_applies_the_ratchet() -> None:
     ]
     assert set(found) >= _EXEMPT
     assert set(found) >= _EXPECTED_PUBLIC
-    contributors = [
-        _check(source) for source in sorted(set(found) - _EXEMPT)
-    ]
+    contributors = [_check(source) for source in sorted(set(found) - _EXEMPT)]
     assert len(set(contributors)) == len(contributors)
 
 

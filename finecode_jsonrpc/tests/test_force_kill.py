@@ -128,8 +128,6 @@ async def test_spawn_records_pid_without_killing(
     assert client.pid == 4242
 
 
-
-
 def _session_sleeper_script() -> str:
     return "import time; time.sleep(300)"
 
@@ -196,9 +194,7 @@ def test_force_kill_with_descendant_groups_kills_owned_children() -> None:
         time.sleep(0.5)
         descendants = proc_kill._snapshot_descendant_groups(server.pid)
         assert len(descendants) == 2
-        proc_kill.force_kill_process_group(
-            server.pid, "test", descendant_groups=True
-        )
+        proc_kill.force_kill_process_group(server.pid, "test", descendant_groups=True)
         assert server.wait(timeout=10) == -signal.SIGKILL
         for pgid in descendants:
             deadline = time.monotonic() + 10.0
@@ -288,9 +284,7 @@ def test_force_kill_reaped_leader_orphan_survives(tmp_path) -> None:
             time.sleep(0.05)
         assert orphan_pid is not None
         _wait_alive(orphan_pid)
-        proc_kill.force_kill_process_group(
-            server.pid, "test", descendant_groups=True
-        )
+        proc_kill.force_kill_process_group(server.pid, "test", descendant_groups=True)
         time.sleep(0.3)
         os.kill(orphan_pid, 0)
         psutil = pytest.importorskip("psutil")
@@ -365,9 +359,7 @@ def test_force_kill_group_spawned_after_snapshot_survives(
         monkeypatch.setattr(
             proc_kill, "_snapshot_descendant_groups", _snapshot_then_fork
         )
-        proc_kill.force_kill_process_group(
-            server.pid, "test", descendant_groups=True
-        )
+        proc_kill.force_kill_process_group(server.pid, "test", descendant_groups=True)
         assert late is not None
         _wait_alive(late.pid)
     finally:

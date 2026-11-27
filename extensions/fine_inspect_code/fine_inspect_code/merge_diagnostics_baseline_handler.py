@@ -102,13 +102,11 @@ class MergeDiagnosticsBaselineHandler(
                 if known is None:
                     by_umbrella[umbrella] = (set(), set())
                     known = by_umbrella[umbrella]
-                known[0].update(
-                    receipt.contributor for receipt in result.receipts
-                )
+                known[0].update(receipt.contributor for receipt in result.receipts)
                 known[1].update(
-                    resource_uri_to_path(receipt.project)
-                    for receipt in result.receipts
+                    resource_uri_to_path(receipt.project) for receipt in result.receipts
                 )
+
         def _receipted(project: pathlib.Path) -> bool:
             return any(
                 project in receipt_projects
@@ -123,9 +121,7 @@ class MergeDiagnosticsBaselineHandler(
                 if project in wanted and _receipted(project)
             ]
         else:
-            targeted = [
-                project for project in local_projects if _receipted(project)
-            ]
+            targeted = [project for project in local_projects if _receipted(project)]
         snapshot_paths = {
             project: self.ratchet.snapshot_path(project) for project in targeted
         }
@@ -185,9 +181,7 @@ class MergeDiagnosticsBaselineHandler(
         local_projects: list[pathlib.Path],
     ) -> list[tuple[Umbrella, DiagnosticFilesRunResult]]:
         try:
-            raw = await asyncio.to_thread(
-                resource_uri_to_path(uri).read_bytes
-            )
+            raw = await asyncio.to_thread(resource_uri_to_path(uri).read_bytes)
         except (OSError, ValueError) as error:
             raise RecordRefusedError(
                 f"cannot merge diagnostics baseline from {uri}: {error}"
@@ -200,8 +194,7 @@ class MergeDiagnosticsBaselineHandler(
             ) from error
         if not isinstance(data, dict):
             raise RecordRefusedError(
-                f"cannot merge diagnostics baseline from {uri}: "
-                "not a results file"
+                f"cannot merge diagnostics baseline from {uri}: not a results file"
             )
         actions = data.get("actions")
         if not isinstance(actions, dict) or not actions:

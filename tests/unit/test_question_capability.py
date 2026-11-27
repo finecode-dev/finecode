@@ -246,7 +246,9 @@ class _RecordingMcpClient:
     def on_request(self, name: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[name] = handler
 
-    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object) -> None:
+    def configure_reconnect(
+        self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object
+    ) -> None:
         pass
 
     async def connect(

@@ -254,15 +254,15 @@ def _make_client() -> tuple[jc.JsonRpcClient, list[str]]:
 
 
 def _cancel_frames_client(sent: list[str]) -> list[dict[str, typing.Any]]:
-    return [json.loads(s) for s in sent if json.loads(s).get("method") == "$/cancelRequest"]
+    return [
+        json.loads(s) for s in sent if json.loads(s).get("method") == "$/cancelRequest"
+    ]
 
 
 async def _start_client(
     client: jc.JsonRpcClient, **kwargs: typing.Any
 ) -> tuple[asyncio.Task[typing.Any], str]:
-    task = asyncio.ensure_future(
-        client.send_request(_METHOD, _Params(), **kwargs)
-    )
+    task = asyncio.ensure_future(client.send_request(_METHOD, _Params(), **kwargs))
     await asyncio.sleep(0)
     assert len(client._async_request_futures) == 1
     return task, next(iter(client._async_request_futures))
@@ -340,7 +340,11 @@ async def test_client_error_reply_carries_code_and_data() -> None:
         {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {"code": -32800, "message": "Request cancelled", "data": {"s": False}},
+            "error": {
+                "code": -32800,
+                "message": "Request cancelled",
+                "data": {"s": False},
+            },
         }
     )
     with pytest.raises(RequestCancelledError) as exc_info:

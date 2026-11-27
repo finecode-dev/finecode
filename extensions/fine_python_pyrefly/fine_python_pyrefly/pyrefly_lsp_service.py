@@ -634,9 +634,7 @@ class PyreflyLspService(service.DisposableService):
                         start.get("character") if start is not None else None
                     ),
                     end_line=end.get("line") if end is not None else None,
-                    end_character=(
-                        end.get("character") if end is not None else None
-                    ),
+                    end_character=(end.get("character") if end is not None else None),
                 )
             )
             return raw if isinstance(raw, dict) else None
@@ -818,9 +816,9 @@ class PyreflyLspService(service.DisposableService):
                 f" {self._topology.value}. Already heard from: {heard}. Use one"
                 " topology for the workspace."
             )
-        if self._root_dir is not None and not Path(identity.project_path).is_relative_to(
-            self._root_dir
-        ):
+        if self._root_dir is not None and not Path(
+            identity.project_path
+        ).is_relative_to(self._root_dir):
             raise code_action.ActionFailedException(
                 f"Project {identity.project_path} is outside the workspace root"
                 f" {self._root_dir}. Move it under the root, or set topology ="
@@ -942,9 +940,7 @@ class PyreflyLspService(service.DisposableService):
 
             async def wait_for_pull(folder_uri: str, event: RearmableLoopEvent) -> None:
                 try:
-                    await asyncio.wait_for(
-                        event.wait_async(), _FOLDER_PULL_TIMEOUT_SEC
-                    )
+                    await asyncio.wait_for(event.wait_async(), _FOLDER_PULL_TIMEOUT_SEC)
                 except TimeoutError:
                     errors.append(
                         "The pyrefly host did not answer"

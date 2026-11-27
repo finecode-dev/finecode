@@ -27,9 +27,7 @@ class MergeDiagnosticsBaselineRunResult(RecordDiagnosticsBaselineRunResult): ...
 
 
 class MergeDiagnosticsBaselineRunContext(
-    code_action.RunActionWithPartialResultsContext[
-        MergeDiagnosticsBaselineRunPayload
-    ]
+    code_action.RunActionWithPartialResultsContext[MergeDiagnosticsBaselineRunPayload]
 ): ...
 
 

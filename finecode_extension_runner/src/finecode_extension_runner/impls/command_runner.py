@@ -189,7 +189,9 @@ class _LineStream:
             reason = self._failure_message
         else:
             reason = "the drain was abandoned before the stream ended"
-        name = self._stream_name if self._stream_name in ("stdout", "stderr") else "stdout"
+        name = (
+            self._stream_name if self._stream_name in ("stdout", "stderr") else "stdout"
+        )
         return icommandrunner.ProcessOutputIncompleteError(name, reason)
 
     async def pump(self) -> None:
@@ -411,13 +413,19 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
                     try:
                         if proc.status() == psutil.STATUS_ZOMBIE:
                             continue
-                    except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
+                    except (
+                        psutil.NoSuchProcess,
+                        psutil.ZombieProcess,
+                        psutil.AccessDenied,
+                    ):
                         continue
                     survivors.append(proc.pid)
                 if survivors:
                     return tuple(survivors)
             except (OSError, psutil.Error) as error:
-                logger.debug(f"Group scan failed; falling back to killpg probe: {error}")
+                logger.debug(
+                    f"Group scan failed; falling back to killpg probe: {error}"
+                )
         try:
             os.killpg(self._process_group_id, 0)
         except ProcessLookupError:
@@ -706,9 +714,7 @@ class _OwnedCommandScope:
             if runner._local_cap is not None:
                 await runner._local_cap.acquire()
                 holds_cap = True
-            process, cancelled = await self._spawn_guarded(
-                argv, self._cwd, self._env
-            )
+            process, cancelled = await self._spawn_guarded(argv, self._cwd, self._env)
         except BaseException:
             if holds_cap:
                 assert runner._local_cap is not None
@@ -776,10 +782,14 @@ class _OwnedCommandScope:
             watcher: asyncio.Task[None] = asyncio.get_running_loop().create_task(
                 self._watch_and_release(process, lease_id, runner=runner)
             )
-            runner._owned_commands.keep(watcher, f"entry-failure watcher pid={entry.pid}")
+            runner._owned_commands.keep(
+                watcher, f"entry-failure watcher pid={entry.pid}"
+            )
         runner._owned_commands.complete(entry)
 
-    async def __aexit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+    async def __aexit__(
+        self, exc_type: object, exc: BaseException | None, tb: object
+    ) -> bool:
         runner = self._runner
         entry = self._entry
         assert entry is not None
@@ -824,7 +834,9 @@ class _OwnedCommandScope:
             raise exit_error
         return False
 
-    async def _cleanup(self, process: AsyncProcess) -> tuple[OwnedProcessNotStoppedError | None, list[str]]:
+    async def _cleanup(
+        self, process: AsyncProcess
+    ) -> tuple[OwnedProcessNotStoppedError | None, list[str]]:
         """Stop the process, drain and release; absorb cancellations, stay bounded."""
         runner = self._runner
         await self._stop_process(process)
@@ -838,7 +850,9 @@ class _OwnedCommandScope:
             watcher: asyncio.Task[None] = asyncio.get_running_loop().create_task(
                 self._watch_and_release(process, self._lease_id, runner=runner)
             )
-            runner._owned_commands.keep(watcher, f"group watcher pid={process.async_subprocess.pid}")
+            runner._owned_commands.keep(
+                watcher, f"group watcher pid={process.async_subprocess.pid}"
+            )
             return self._not_gone_result(process, notes)
         release_task: asyncio.Task[None] = asyncio.get_running_loop().create_task(
             runner._process_slots.release(self._lease_id)
@@ -960,6 +974,7 @@ class CommandRunner(icommandrunner.ICommandRunner):
             self._local_cap = asyncio.Semaphore(decision.value)
         else:
             self._local_cap = None
+
     def run(
         self,
         cmd: icommandrunner.Argv,
@@ -1014,7 +1029,9 @@ class CommandRunner(icommandrunner.ICommandRunner):
         timeout: float | None = None,
     ) -> icommandrunner.IAsyncProcess:
         """Run a command as one unit of work and return its finished process."""
-        async with self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group) as process:
+        async with self.run(
+            cmd, cwd=cwd, env=env, new_process_group=new_process_group
+        ) as process:
             if input is not None:
                 process.write_to_stdin(input)
             process.close_stdin()

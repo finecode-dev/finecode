@@ -1,5 +1,8 @@
 [tool.finecode]
-presets = [{ source = "fine_semantic_tokens" }, { source = "fine_python_pyrefly" }]
+presets = [
+  { source = "fine_semantic_tokens" },
+  { source = "fine_python_pyrefly" }
+]
 
 [tool.finecode.action.text_document_semantic_tokens_python]
 source = "fine_python_lang.TextDocumentSemanticTokensPythonAction"

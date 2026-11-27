@@ -164,6 +164,7 @@ def test_dump_covers_named_constants_and_alias_reexports(fixtures_on_path) -> No
 def test_dump_fails_closed_to_every_loaded_file(fixtures_on_path) -> None:
     """An unrecognised construct stamps everything, so the cache cannot go stale silently."""
     import action_meta_fixtures.simple  # noqa: F401 - ensures an unrelated file is loaded
+
     from finecode_extension_runner import action_meta
 
     project_dir = FIXTURES_DIR
@@ -195,6 +196,7 @@ def test_dump_fails_closed_to_every_loaded_file(fixtures_on_path) -> None:
 def test_dump_plain_literal_action_stays_narrow(fixtures_on_path) -> None:
     """A plain literal action stamps only its own chain, not the whole environment."""
     import action_meta_fixtures.call_rhs  # noqa: F401 - loaded but must stay out of the narrow set
+
     from finecode_extension_runner import action_meta
 
     doc = action_meta.dump(

@@ -212,6 +212,7 @@ async def test_spawned_task_inherits_the_scope() -> None:
     gate, scopes = _slots()
     runner = _runner(gate)
     async with scopes.acquire():
+
         async def open_scope() -> None:
             async with runner.run([sys.executable, "-c", "pass"]):
                 pass  # pragma: no cover
@@ -280,7 +281,9 @@ async def test_run_holds_slot_until_exit() -> None:
     """A bounded job keeps its slot for the scope's lifetime."""
     gate = ProcessSlots(target=8)
     runner = _runner(gate)
-    async with runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"]) as proc:
+    async with runner.run(
+        [sys.executable, "-c", "import time; time.sleep(0.2)"]
+    ) as proc:
         assert gate.in_flight == 1
         await proc.wait_for_end()
     assert gate.in_flight == 0

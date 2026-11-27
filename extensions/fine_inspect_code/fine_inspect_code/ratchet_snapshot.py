@@ -64,7 +64,9 @@ class BaselineSnapshotInvalidError(code_action.ActionFailedException):
     """
 
 
-def _invalid(snapshot_path: pathlib.Path, detail: object) -> BaselineSnapshotInvalidError:
+def _invalid(
+    snapshot_path: pathlib.Path, detail: object
+) -> BaselineSnapshotInvalidError:
     return BaselineSnapshotInvalidError(
         f"invalid diagnostics baseline snapshot {snapshot_path}: {detail}"
     )
@@ -75,9 +77,7 @@ def _require(condition: bool, snapshot_path: pathlib.Path, detail: object) -> No
         raise _invalid(snapshot_path, detail)
 
 
-def _parse_snapshot(
-    text: str | bytes, snapshot_path: pathlib.Path
-) -> Snapshot:
+def _parse_snapshot(text: str | bytes, snapshot_path: pathlib.Path) -> Snapshot:
     if isinstance(text, bytes):
         text = text.decode("utf-8")
     data = json.loads(text)
@@ -91,7 +91,9 @@ def _parse_snapshot(
     )
     contributors_raw = data.get("contributors")
     _require(
-        isinstance(contributors_raw, dict), snapshot_path, "'contributors' must be an object"
+        isinstance(contributors_raw, dict),
+        snapshot_path,
+        "'contributors' must be an object",
     )
     assert isinstance(contributors_raw, dict)
     contributors: dict[str, PartitionSnapshot] = {}
@@ -127,7 +129,9 @@ def _parse_snapshot(
             )
             assert isinstance(entries, list)
             for entry in entries:
-                _require(isinstance(entry, dict), snapshot_path, "entry must be an object")
+                _require(
+                    isinstance(entry, dict), snapshot_path, "entry must be an object"
+                )
                 assert isinstance(entry, dict)
                 source = entry.get("source")
                 code = entry.get("code")

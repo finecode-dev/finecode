@@ -47,8 +47,7 @@ def force_kill_process_group(
         # macOS reports EPERM for a group whose only members are zombies;
         # either way nothing left in it is ours to signal.
         logger.debug(
-            f"Process group {pid} of {readable_id} could not be signalled"
-            " (EPERM)"
+            f"Process group {pid} of {readable_id} could not be signalled (EPERM)"
         )
     own_pg = os.getpgrp()
     for pgid in descendant_pgids:

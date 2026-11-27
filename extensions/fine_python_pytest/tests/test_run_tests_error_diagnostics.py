@@ -38,7 +38,9 @@ class _FakeScope:
     async def __aenter__(self):
         return self._process
 
-    async def __aexit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+    async def __aexit__(
+        self, exc_type: object, exc: BaseException | None, tb: object
+    ) -> bool:
         return False
 
 
@@ -149,9 +151,7 @@ async def test_collection_error_is_returned_as_error_result(
     """Exit 2 caused by a failed collector is a test outcome, not an action
     failure: the module appears as an ERROR result carrying the traceback."""
     (tmp_path / "tests").mkdir()
-    handler = _handler(
-        tmp_path, _Process(2, "", _STDERR), _COLLECTION_ERROR_REPORT
-    )
+    handler = _handler(tmp_path, _Process(2, "", _STDERR), _COLLECTION_ERROR_REPORT)
 
     result = await handler.run(RunTestsRunPayload(), _context(RunTestsRunPayload()))
 

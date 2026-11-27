@@ -139,7 +139,9 @@ def test_replace_partitions_touches_only_the_named_platform() -> None:
             ),
             "type_check": PartitionSnapshot(
                 platforms=("linux",),
-                counts_by_platform={"linux": {_identity("b.py", "pyrefly", "x", "m", "type_check"): 1}},
+                counts_by_platform={
+                    "linux": {_identity("b.py", "pyrefly", "x", "m", "type_check"): 1}
+                },
             ),
         }
     )
@@ -148,9 +150,7 @@ def test_replace_partitions_touches_only_the_named_platform() -> None:
 
     assert replaced.contributors["type_check"] is snapshot.contributors["type_check"]
     assert replaced.contributors["lint"].platforms == ("darwin", "linux")
-    assert replaced.contributors["lint"].counts_by_platform["linux"] == {
-        _identity(): 2
-    }
+    assert replaced.contributors["lint"].counts_by_platform["linux"] == {_identity(): 2}
     assert replaced.contributors["lint"].counts_by_platform["darwin"] == {
         _identity(): 5
     }
@@ -211,15 +211,19 @@ def test_parse_accepts_paths_as_posix_strings() -> None:
             {
                 "version": 1,
                 "contributors": {
-                    "lint": {"platforms": ["linux"], "paths": {"a.py": [{"source": "ruff", "code": "F", "message": 3, "count": 1}]}}
-                },
-            }
-        ),
-        json.dumps(
-            {
-                "version": 1,
-                "contributors": {
-                    "lint": {"platforms": ["linux"], "paths": {"a.py": [{"source": "ruff", "code": "F", "message": "m", "count": "x"}]}}
+                    "lint": {
+                        "platforms": ["linux"],
+                        "paths": {
+                            "a.py": [
+                                {
+                                    "source": "ruff",
+                                    "code": "F",
+                                    "message": 3,
+                                    "count": 1,
+                                }
+                            ]
+                        },
+                    }
                 },
             }
         ),
@@ -229,7 +233,16 @@ def test_parse_accepts_paths_as_posix_strings() -> None:
                 "contributors": {
                     "lint": {
                         "platforms": ["linux"],
-                        "paths": {"a.py": [{"source": "r", "code": "c", "message": "m", "count": 1, "counts": {"linux": 1}}]},
+                        "paths": {
+                            "a.py": [
+                                {
+                                    "source": "ruff",
+                                    "code": "F",
+                                    "message": "m",
+                                    "count": "x",
+                                }
+                            ]
+                        },
                     }
                 },
             }
@@ -238,7 +251,20 @@ def test_parse_accepts_paths_as_posix_strings() -> None:
             {
                 "version": 1,
                 "contributors": {
-                    "lint": {"platforms": ["linux"], "paths": {"a.py": [{"source": "r", "code": "c", "message": "m"}]}}
+                    "lint": {
+                        "platforms": ["linux"],
+                        "paths": {
+                            "a.py": [
+                                {
+                                    "source": "r",
+                                    "code": "c",
+                                    "message": "m",
+                                    "count": 1,
+                                    "counts": {"linux": 1},
+                                }
+                            ]
+                        },
+                    }
                 },
             }
         ),
@@ -246,7 +272,32 @@ def test_parse_accepts_paths_as_posix_strings() -> None:
             {
                 "version": 1,
                 "contributors": {
-                    "lint": {"platforms": ["linux"], "paths": {"a.py": [{"source": "r", "code": "c", "message": "m", "counts": {"darwin": 1}}]}}
+                    "lint": {
+                        "platforms": ["linux"],
+                        "paths": {
+                            "a.py": [{"source": "r", "code": "c", "message": "m"}]
+                        },
+                    }
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "version": 1,
+                "contributors": {
+                    "lint": {
+                        "platforms": ["linux"],
+                        "paths": {
+                            "a.py": [
+                                {
+                                    "source": "r",
+                                    "code": "c",
+                                    "message": "m",
+                                    "counts": {"darwin": 1},
+                                }
+                            ]
+                        },
+                    }
                 },
             }
         ),

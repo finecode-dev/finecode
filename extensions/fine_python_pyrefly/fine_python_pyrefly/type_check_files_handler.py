@@ -134,7 +134,10 @@ class PyreflyTypeCheckFilesHandler(
                     {uri: contents[uri] for uri in chunk},
                     sweep=start == 0,
                 )
-            except (LspDiagnosticsUnavailable, code_action.ActionFailedException) as exc:
+            except (
+                LspDiagnosticsUnavailable,
+                code_action.ActionFailedException,
+            ) as exc:
                 outcomes = [
                     FileCheckOutcome(
                         uri=uri,

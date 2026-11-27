@@ -171,7 +171,9 @@ class JsonRpcServerSession:
         # Incoming requests whose task exists but has not run its first step,
         # keyed by request id. A $/cancelRequest for one of them is honoured
         # without ever running the handler (see _builtin_cancel_request).
-        self._pending_request_by_id: dict[int | str, tuple[asyncio.Task[None], str]] = {}
+        self._pending_request_by_id: dict[
+            int | str, tuple[asyncio.Task[None], str]
+        ] = {}
         # Request ids cancelled before their task ran its first step, mapped
         # to the request method. _execute_request answers them cancelled
         # with that method's not-started data instead of running the handler.
@@ -266,13 +268,16 @@ class JsonRpcServerSession:
         ``timeout`` seconds after the first cancellation. It then raises
         ``RequestCancelledError`` carrying what the wait observed.
         """
-        if sum(
-            [
-                cancel_on_abandon,
-                cancel_notice is not None,
-                await_reply_after_cancel is not None,
-            ]
-        ) > 1:
+        if (
+            sum(
+                [
+                    cancel_on_abandon,
+                    cancel_notice is not None,
+                    await_reply_after_cancel is not None,
+                ]
+            )
+            > 1
+        ):
             raise ValueError(
                 "cancel_on_abandon, cancel_notice and await_reply_after_cancel"
                 " are exclusive"
@@ -428,9 +433,7 @@ class JsonRpcServerSession:
                 if remaining is None:
                     settled = await asyncio.shield(future)
                 else:
-                    settled = await asyncio.wait_for(
-                        asyncio.shield(future), remaining
-                    )
+                    settled = await asyncio.wait_for(asyncio.shield(future), remaining)
             except TimeoutError:
                 self._request_futures.pop(msg_id, None)
                 self._caller_hops.pop(msg_id, None)
@@ -468,9 +471,7 @@ class JsonRpcServerSession:
                 self._finish_caller(hop, "cancelled")
                 return RequestCancelledError(
                     msg_id,
-                    reply=ReplyAfterCancel(
-                        kind=ReplyAfterCancelKind.DISCONNECTED
-                    ),
+                    reply=ReplyAfterCancel(kind=ReplyAfterCancelKind.DISCONNECTED),
                 )
             else:
                 self._request_futures.pop(msg_id, None)

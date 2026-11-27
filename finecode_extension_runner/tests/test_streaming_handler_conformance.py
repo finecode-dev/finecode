@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
+
 from finecode_extension_runner import partial_result_sender
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session
@@ -146,7 +147,10 @@ def _action_config(
         action_name: {
             "source": f"{action.__module__}.{action.__qualname__}",
             "handlers": [
-                {"name": "handler", "source": f"{handler.__module__}.{handler.__qualname__}"}
+                {
+                    "name": "handler",
+                    "source": f"{handler.__module__}.{handler.__qualname__}",
+                }
             ],
         }
     }

@@ -560,9 +560,7 @@ def run_startup_row(
         wm_proc_env = wm_env(endpoint)
         if "PYTHONPATH" in env:
             wm_proc_env["PYTHONPATH"] = env["PYTHONPATH"]
-        proc, port = start_wm(
-            workspace, tmp, wm_proc_env, f"startup-{mode}-{label}"
-        )
+        proc, port = start_wm(workspace, tmp, wm_proc_env, f"startup-{mode}-{label}")
         try:
             with socket.create_connection(("127.0.0.1", port)) as sock:
                 _send(sock, "workspace/addDir", {"dirPath": str(workspace)}, 1)
@@ -1291,7 +1289,7 @@ def main() -> None:
                 {
                     "id": f"transport/ceiling-check/{args.mode}",
                     "failures": check_transport_ceiling(record["rows"], args.mode),
-                }
+                },
             )
             record_row(
                 record,
@@ -1309,7 +1307,7 @@ def main() -> None:
                 {
                     "id": f"startup/ceiling-check/{args.mode}",
                     "failures": check_startup_ceiling(record["rows"], args.mode),
-                }
+                },
             )
             save_record(Path(args.record), record)
         if "phase" in only:

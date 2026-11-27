@@ -58,9 +58,7 @@ class CheckFilesOnPyreflyHostHandler(
             f" {payload.identity.project_path}"
         )
         self.pyrefly_lsp_service.register_project(payload.identity)
-        root_uri = (
-            self.project_info_provider.get_current_project_dir_path().as_uri()
-        )
+        root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.pyrefly_lsp_service.ensure_started(root_uri)
         sweep_paths = (
             [resource_uri_to_path(uri) for uri in payload.files]

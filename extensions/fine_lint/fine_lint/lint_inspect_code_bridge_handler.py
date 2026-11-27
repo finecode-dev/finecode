@@ -86,7 +86,9 @@ class LintInspectCodeBridgeHandler(
                 contributor=self.RATCHET_CONTRIBUTOR,
                 checked_project=proj_path,
                 messages=result.messages,
-                scope=RatchetScope.for_payload(payload.target.value, payload.file_paths),
+                scope=RatchetScope.for_payload(
+                    payload.target.value, payload.file_paths
+                ),
                 unhandled=result.unhandled,
             )
             await partial_result_sender.send(

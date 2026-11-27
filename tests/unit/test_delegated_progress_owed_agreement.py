@@ -11,6 +11,7 @@ from __future__ import annotations
 import typing
 
 from finecode_extension_runner.impls import _delegated_progress as er_mapping
+
 from finecode.wm_server import domain
 from finecode.wm_server.services.run_service import delegated_progress as wm_owed
 
@@ -45,15 +46,14 @@ def test_owed_agrees_with_mapping_on_every_row() -> None:
     """Owed is exactly mapped-to-a-report, on every P4 row."""
     for row in _rows():
         message = er_mapping.delegated_progress_message(dict(row))
-        owed = wm_owed.is_owed_progress_value(
-            typing.cast(domain.ProgressRawValue, row)
-        )
+        owed = wm_owed.is_owed_progress_value(typing.cast(domain.ProgressRawValue, row))
         assert owed == (message is not None), row
 
 
 def test_non_dict_values_owe_nothing() -> None:
     """Values that are not dicts cannot name a report, on either side."""
     for raw in (None, "report", 42, ["type", "report"]):
-        assert wm_owed.is_owed_progress_value(
-            typing.cast(domain.ProgressRawValue, raw)
-        ) is False
+        assert (
+            wm_owed.is_owed_progress_value(typing.cast(domain.ProgressRawValue, raw))
+            is False
+        )

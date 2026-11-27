@@ -510,9 +510,7 @@ class TestOldChildFormIsUnknown:
         assert selection.selected_env_names == {"testing-cpython-3.11"}
 
     def test_at_all_selects_every_child_and_base_selects_default_subset(self) -> None:
-        env_table = _matrix_base(
-            "testing", ["3.11", "3.12"], {"local": "newest"}
-        )
+        env_table = _matrix_base("testing", ["3.11", "3.12"], {"local": "newest"})
         assert resolve_env_selection(
             env_table, ["testing@all"], "cli"
         ).selected_env_names == {"testing-cpython-3.11", "testing-cpython-3.12"}

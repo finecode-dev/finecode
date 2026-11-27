@@ -65,7 +65,9 @@ async def _wait_for_open(count: int, timeout: float = 10.0) -> None:
         await asyncio.sleep(0.05)
 
 
-async def _scopes(body_wait: float = 30.0) -> tuple[asyncio.Task[None], asyncio.Task[None], list[int]]:
+async def _scopes(
+    body_wait: float = 30.0,
+) -> tuple[asyncio.Task[None], asyncio.Task[None], list[int]]:
     """Open one request-task scope and one detached-task scope; return pids."""
     slots = ProcessSlots(target=4)
     runner = CommandRunner(
@@ -224,12 +226,16 @@ async def test_scope_cleanup_survives_loop_close(tmp_path) -> None:
         encoding="utf-8",
     )
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(script),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        sys.executable,
+        str(script),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
     assert proc.returncode == 0
-    pid = int([line for line in out.decode().splitlines() if line.startswith("PID=")][0][4:])
+    pid = int(
+        [line for line in out.decode().splitlines() if line.startswith("PID=")][0][4:]
+    )
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -258,7 +264,11 @@ async def test_retire_runner_context_keeps_open_scope() -> None:
 
     async def holder() -> None:
         async with _OwnedCommandScope(
-            runner, [sys.executable, "-c", "import time; time.sleep(0.5); print('ok')"], None, None, True
+            runner,
+            [sys.executable, "-c", "import time; time.sleep(0.5); print('ok')"],
+            None,
+            None,
+            True,
         ) as proc:
             await proc.wait_for_end()
             if not done.done():

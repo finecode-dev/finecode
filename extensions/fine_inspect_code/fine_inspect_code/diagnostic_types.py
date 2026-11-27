@@ -202,9 +202,7 @@ class DiagnosticFilesRunResult(code_action.RunActionResult):
                             " [fixable]", foreground=textstyler.Color.BRIGHT_BLACK
                         )
                     if message.baseline is BaselineStatus.NEW:
-                        text.append_styled(
-                            " [new]", foreground=textstyler.Color.YELLOW
-                        )
+                        text.append_styled(" [new]", foreground=textstyler.Color.YELLOW)
                     elif message.baseline is BaselineStatus.KNOWN:
                         text.append_styled(
                             " [known]", foreground=textstyler.Color.BRIGHT_BLACK

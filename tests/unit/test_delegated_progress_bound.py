@@ -19,7 +19,8 @@ import pathlib
 import typing
 from unittest import mock
 
-from finecode.wm_server import domain, testing as wm_testing
+from finecode.wm_server import domain
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import _internal_client_types, elicitation_bridge
 from finecode.wm_server.services.run_service import delegated_progress, er_dispatch
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
@@ -376,9 +377,7 @@ async def test_flood_from_two_runners_shares_one_bound(
     feed_a = [_report(f"a{i}") for i in range(1000)]
     feed_b = [_report(f"b{i}") for i in range(1000)] + [_end("done")]
     params = _params(partial_token=32, progress_token=parent_token)
-    async with _bounded_delegated_call(
-        runner, params, [feed_a, feed_b], [_response()]
-    ):
+    async with _bounded_delegated_call(runner, params, [feed_a, feed_b], [_response()]):
         task = await _run_until_progress_stalled(runner, ws_context, params, client)
         client.gate.set()
         result = await asyncio.wait_for(task, timeout=10.0)
@@ -416,9 +415,7 @@ async def test_message_less_flood_without_end_forwards_tail(
     runner, ws_context = _make_runner_and_context(tmp_path, client)
     values = [_report(None) for _ in range(1000)]
     params = _params(partial_token=34, progress_token=parent_token)
-    async with _bounded_delegated_call(
-        runner, params, [values], [_response()]
-    ):
+    async with _bounded_delegated_call(runner, params, [values], [_response()]):
         task = await _run_until_progress_stalled(runner, ws_context, params, client)
         client.gate.set()
         result = await asyncio.wait_for(task, timeout=10.0)

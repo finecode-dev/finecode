@@ -29,9 +29,7 @@ def _project(tmp_path: pathlib.Path) -> domain.ResolvedProject:
 
 
 def _exited_runner(tmp_path: pathlib.Path) -> runner_client.ExtensionRunnerInfo:
-    runner = wm_testing.make_running_runner(
-        working_dir_path=tmp_path, env_name=_ENV
-    )
+    runner = wm_testing.make_running_runner(working_dir_path=tmp_path, env_name=_ENV)
     runner.status = domain.ExtensionRunnerStatus.EXITED
     return runner
 
@@ -99,9 +97,7 @@ def test_exits_older_than_the_window_do_not_count(tmp_path: pathlib.Path) -> Non
     stale = time.monotonic() - runner_manager._UNEXPECTED_EXIT_BUDGET_WINDOW_SEC - 1
     ws_context.unexpected_runner_exits[(tmp_path, _ENV)] = [stale, stale, stale]
 
-    exits = runner_manager._unexpected_exits_within_budget(
-        ws_context, tmp_path, _ENV
-    )
+    exits = runner_manager._unexpected_exits_within_budget(ws_context, tmp_path, _ENV)
 
     assert exits == []
     assert (tmp_path, _ENV) not in ws_context.unexpected_runner_exits

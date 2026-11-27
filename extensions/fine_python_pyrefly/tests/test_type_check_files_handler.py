@@ -679,9 +679,7 @@ async def test_lsp_mode_validates_the_generated_config_once_across_runs(
     handler instance: two runs must pay the validation once. Rewriting or
     revalidating on every run would pay a subprocess for a file whose content
     is already pinned by the service config."""
-    config_path = (
-        tmp_path / ".finecode" / "pyrefly" / "dev_no_runtime" / "pyrefly.toml"
-    )
+    config_path = tmp_path / ".finecode" / "pyrefly" / "dev_no_runtime" / "pyrefly.toml"
     file_path = (tmp_path / "a.py").resolve()
     lsp = _StubPyreflyLspService()
     runner = _FakeCommandRunner()
@@ -716,9 +714,7 @@ async def test_lsp_mode_invalid_generated_config_fails_before_start(
     """pyrefly's LSP ignores an invalid config file wholesale and reports no
     error, so a config it would reject has to fail the run instead: otherwise
     every configured kind silently stops applying."""
-    config_path = (
-        tmp_path / ".finecode" / "pyrefly" / "dev_no_runtime" / "pyrefly.toml"
-    )
+    config_path = tmp_path / ".finecode" / "pyrefly" / "dev_no_runtime" / "pyrefly.toml"
     file_path = (tmp_path / "a.py").resolve()
     lsp = _StubPyreflyLspService()
     runner = _FakeCommandRunner(

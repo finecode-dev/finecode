@@ -69,9 +69,7 @@ def plan_from_results(
     projects: collections.abc.Sequence[pathlib.Path],
     existing: collections.abc.Callable[[pathlib.Path], Snapshot | None],
 ) -> RecordPlan:
-    receipts = [
-        receipt for result in results for receipt in result.receipts
-    ]
+    receipts = [receipt for result in results for receipt in result.receipts]
     if not receipts:
         raise RecordRefusedError(
             "cannot record a diagnostics baseline: no partition receipt found; "

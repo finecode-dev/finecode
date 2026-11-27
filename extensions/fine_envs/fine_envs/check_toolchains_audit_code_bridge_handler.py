@@ -191,7 +191,9 @@ class CheckToolchainsAuditCodeBridgeHandler(
                 contributor=self.RATCHET_CONTRIBUTOR,
                 checked_project=result_project_path,
                 messages=self._to_messages(result_project_path, result),
-                scope=RatchetScope.for_payload(payload.target.value, payload.file_paths),
+                scope=RatchetScope.for_payload(
+                    payload.target.value, payload.file_paths
+                ),
                 unhandled=result.unhandled,
             )
             await partial_result_sender.send(

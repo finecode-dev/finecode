@@ -1316,9 +1316,7 @@ class JsonRpcClient:
                 if remaining is None:
                     settled = await asyncio.shield(future)
                 else:
-                    settled = await asyncio.wait_for(
-                        asyncio.shield(future), remaining
-                    )
+                    settled = await asyncio.wait_for(asyncio.shield(future), remaining)
             except TimeoutError:
                 self._cancelled_request_ids.add(msg_id)
                 self._finish_caller(hop, "cancelled")
@@ -1347,9 +1345,7 @@ class JsonRpcClient:
             except (ServerStoppedError, InvalidResponse):
                 self._finish_caller(hop, "cancelled")
                 kind = ReplyAfterCancelKind.DISCONNECTED
-                return RequestCancelledError(
-                    msg_id, reply=ReplyAfterCancel(kind=kind)
-                )
+                return RequestCancelledError(msg_id, reply=ReplyAfterCancel(kind=kind))
             else:
                 self._finish_caller(hop, "cancelled")
                 return RequestCancelledError(

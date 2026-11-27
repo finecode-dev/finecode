@@ -148,7 +148,9 @@ def _marks(outcome: RatchetOutcome) -> list[BaselineStatus | None]:
 def test_recorded_findings_are_known_and_nothing_is_stale(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
     outcome = _run(ws, {uri: [_diagnostic()]}, snapshot=snapshot)
@@ -161,7 +163,9 @@ def test_recorded_findings_are_known_and_nothing_is_stale(ws: _Ws) -> None:
 def test_duplicate_identical_finding_is_new_in_source_order(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
     outcome = _run(
@@ -179,7 +183,9 @@ def test_duplicate_identical_finding_is_new_in_source_order(ws: _Ws) -> None:
 def test_fixed_finding_is_stale(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 2}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 2}},
     )
 
     outcome = _run(ws, {uri: [_diagnostic()]}, snapshot=snapshot)
@@ -200,7 +206,9 @@ def test_fixed_finding_is_stale(ws: _Ws) -> None:
 def test_line_shift_does_not_make_findings_new(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
     outcome = _run(ws, {uri: [_diagnostic(line=50)]}, snapshot=snapshot)
@@ -249,10 +257,14 @@ def test_files_scope_limits_staleness_to_requested_files(ws: _Ws) -> None:
 def test_mark_only_marks_but_judges_nothing(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
-    outcome = _run(ws, {uri: [_diagnostic()]}, snapshot=snapshot, scope=RatchetScope.mark_only())
+    outcome = _run(
+        ws, {uri: [_diagnostic()]}, snapshot=snapshot, scope=RatchetScope.mark_only()
+    )
 
     assert _marks(outcome) == [BaselineStatus.KNOWN]
     assert outcome.stale == []
@@ -262,7 +274,9 @@ def test_mark_only_marks_but_judges_nothing(ws: _Ws) -> None:
 def test_unknown_platform_marks_everything_new(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
     outcome = _run(ws, {uri: [_diagnostic()]}, snapshot=snapshot, platform="plan9")
@@ -274,7 +288,9 @@ def test_unknown_platform_marks_everything_new(ws: _Ws) -> None:
 def test_info_and_hint_are_stamped_but_never_marked(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 5}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 5}},
     )
 
     outcome = _run(
@@ -295,7 +311,9 @@ def test_info_and_hint_are_stamped_but_never_marked(ws: _Ws) -> None:
 def test_source_casing_is_folded(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
     outcome = _run(ws, {uri: [_diagnostic(source="Ruff")]}, snapshot=snapshot)
@@ -314,13 +332,7 @@ def test_pyrefly_message_uses_first_line(ws: _Ws) -> None:
 
     outcome = _run(
         ws,
-        {
-            uri: [
-                _diagnostic(
-                    message=full, code="unannotated-return", source="Pyrefly"
-                )
-            ]
-        },
+        {uri: [_diagnostic(message=full, code="unannotated-return", source="Pyrefly")]},
         contributor="type_check",
         snapshot=snapshot,
     )
@@ -332,9 +344,7 @@ def test_pyrefly_cli_code_matches_lsp_code() -> None:
     cli_shaped = _diagnostic(
         message="x", code="-2", code_description="unannotated-return", source="pyrefly"
     )
-    lsp_shaped = _diagnostic(
-        message="x", code="unannotated-return", source="Pyrefly"
-    )
+    lsp_shaped = _diagnostic(message="x", code="unannotated-return", source="Pyrefly")
 
     assert identity_of(cli_shaped, "type_check", "a.py") == identity_of(
         lsp_shaped, "type_check", "a.py"
@@ -342,7 +352,9 @@ def test_pyrefly_cli_code_matches_lsp_code() -> None:
 
 
 def test_f811_line_reference_is_stripped() -> None:
-    diagnostic = _diagnostic(message="redefinition of unused `x` from line 3", code="F811")
+    diagnostic = _diagnostic(
+        message="redefinition of unused `x` from line 3", code="F811"
+    )
 
     assert (
         identity_of(diagnostic, _CONTRIBUTOR, "a.py").message
@@ -370,7 +382,9 @@ def test_outside_finding_fails_and_is_never_matched(ws: _Ws) -> None:
 def test_nested_project_owns_its_files(ws: _Ws) -> None:
     uri = _uri(ws.nested / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
     outer = _run(ws, {uri: [_diagnostic()]}, snapshot=snapshot)
@@ -388,7 +402,9 @@ def test_nested_project_owns_its_files(ws: _Ws) -> None:
 def test_whole_call_unhandled_yields_no_receipt_or_stale(ws: _Ws) -> None:
     uri = _uri(ws.proj / "a.py")
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 1}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 1}},
     )
 
     outcome = _run(
@@ -421,9 +437,7 @@ def test_per_item_unhandled_keeps_only_its_path_unjudged(ws: _Ws) -> None:
         contributor="lint",
         snapshot=lint_snapshot,
         unhandled=[
-            ItemCoverage(
-                status=CoverageStatus.NO_SUBACTION_FOR_LANGUAGE, item=uri_toml
-            )
+            ItemCoverage(status=CoverageStatus.NO_SUBACTION_FOR_LANGUAGE, item=uri_toml)
         ],
     )
     assert [entry.file for entry in lint_outcome.stale] == [uri_py]
@@ -445,7 +459,9 @@ def test_per_item_unhandled_keeps_only_its_path_unjudged(ws: _Ws) -> None:
 
 def test_ownerless_findings_are_never_marked(ws: _Ws) -> None:
     snapshot = _snap(
-        _CONTRIBUTOR, ["linux"], {("a.py", "ruff", "F401", "unused import"): {"linux": 9}}
+        _CONTRIBUTOR,
+        ["linux"],
+        {("a.py", "ruff", "F401", "unused import"): {"linux": 9}},
     )
 
     outcome = _run(

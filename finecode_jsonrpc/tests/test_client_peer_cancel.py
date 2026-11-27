@@ -362,7 +362,9 @@ async def test_connection_loss_cancels_only_flagged_requests_once(
     sent: list[dict[str, typing.Any]] = []
     client._send_data = lambda data: sent.append(json.loads(data))  # type: ignore[method-assign]
     client.feature(
-        _METHOD, flagged_impl, on_peer_cancel=hooked.append,
+        _METHOD,
+        flagged_impl,
+        on_peer_cancel=hooked.append,
         cancel_on_connection_loss=True,
     )
     client.feature(_PLAIN_METHOD, plain_impl)

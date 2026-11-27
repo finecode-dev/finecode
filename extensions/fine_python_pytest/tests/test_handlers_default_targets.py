@@ -44,7 +44,9 @@ class _FakeScope:
     async def __aenter__(self):
         return self._process
 
-    async def __aexit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+    async def __aexit__(
+        self, exc_type: object, exc: BaseException | None, tb: object
+    ) -> bool:
         return False
 
 

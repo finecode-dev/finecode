@@ -200,7 +200,9 @@ class _RecordingCommandRunner:
         input: str | None = None,
         timeout: float | None = None,
     ) -> Any:
-        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+        return await self.run(
+            cmd, cwd=cwd, env=env, new_process_group=new_process_group
+        )
 
     async def start_long_running(
         self,
@@ -440,7 +442,9 @@ class _SpawnMethodRunner:
         input: str | None = None,
         timeout: float | None = None,
     ) -> Any:
-        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+        return await self.run(
+            cmd, cwd=cwd, env=env, new_process_group=new_process_group
+        )
 
     async def start_long_running(
         self,
@@ -1297,7 +1301,9 @@ class _StubRunner:
         input: str | None = None,
         timeout: float | None = None,
     ) -> Any:
-        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+        return await self.run(
+            cmd, cwd=cwd, env=env, new_process_group=new_process_group
+        )
 
     def run_sync(
         self,
@@ -2010,7 +2016,9 @@ class _NoProbeRunner(_StubRunner):
         input: str | None = None,
         timeout: float | None = None,
     ) -> Any:
-        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+        return await self.run(
+            cmd, cwd=cwd, env=env, new_process_group=new_process_group
+        )
 
 
 class _BrokenPipeProcess(_ScriptedProcess):

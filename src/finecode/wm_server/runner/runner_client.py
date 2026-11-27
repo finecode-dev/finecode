@@ -465,9 +465,7 @@ async def run_action(
             raise
         except jsonrpc_client.ErrorOnRequest as error:
             if child_stops is not None:
-                child_stops.child_finished(
-                    stopped=subtree_stopped_of(error.error.data)
-                )
+                child_stops.child_finished(stopped=subtree_stopped_of(error.error.data))
             raise
         if child_stops is not None:
             child_stops.child_finished(stopped=_stopped_of_result(response))
@@ -599,9 +597,7 @@ async def run_handlers(
             raise
         except jsonrpc_client.ErrorOnRequest as error:
             if child_stops is not None:
-                child_stops.child_finished(
-                    stopped=subtree_stopped_of(error.error.data)
-                )
+                child_stops.child_finished(stopped=subtree_stopped_of(error.error.data))
             raise
         if child_stops is not None:
             child_stops.child_finished(stopped=_stopped_of_result(response))

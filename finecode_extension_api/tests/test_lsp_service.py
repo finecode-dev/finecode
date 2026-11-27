@@ -359,10 +359,9 @@ async def test_diagnostics_and_hover_on_unchanged_file_share_one_sync(
     content = "x = 1\n"
 
     async with _running_service(file_path, content) as (service, session, _):
+
         async def publish(uri: str) -> None:
-            await service._handle_diagnostics(
-                {"uri": uri, "diagnostics": [_F401]}
-            )
+            await service._handle_diagnostics({"uri": uri, "diagnostics": [_F401]})
 
         session.on_document_synced = publish
         await service.check_file(file_path, timeout=0.05)

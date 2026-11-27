@@ -989,7 +989,9 @@ class _RecordingCommandRunner:
         input: str | None = None,
         timeout: float | None = None,
     ) -> Any:
-        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+        return await self.run(
+            cmd, cwd=cwd, env=env, new_process_group=new_process_group
+        )
 
     async def start_long_running(
         self,
@@ -1028,7 +1030,9 @@ class _RaisingCommandRunner:
         input: str | None = None,
         timeout: float | None = None,
     ) -> Any:
-        return await self.run(cmd, cwd=cwd, env=env, new_process_group=new_process_group)
+        return await self.run(
+            cmd, cwd=cwd, env=env, new_process_group=new_process_group
+        )
 
     async def start_long_running(
         self,

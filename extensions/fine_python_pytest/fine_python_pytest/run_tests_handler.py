@@ -115,7 +115,9 @@ class PytestRunTestsHandler(
             self.logger.debug(f"Running pytest: {cmd_parts!r}")
 
             async with run_context.progress("Running tests") as progress:
-                async with self.command_runner.run(cmd_parts, cwd=project_dir) as process:
+                async with self.command_runner.run(
+                    cmd_parts, cwd=project_dir
+                ) as process:
                     await progress.report("Tests running")
                     await process.wait_for_end()
 

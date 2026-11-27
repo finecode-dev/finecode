@@ -120,9 +120,7 @@ class _FakeRatchet:
         scope: RatchetScope,
         unhandled: list[code_action.ItemCoverage],
     ) -> RatchetOutcome:
-        self.calls.append(
-            _RatchetCall(contributor, checked_project, scope, unhandled)
-        )
+        self.calls.append(_RatchetCall(contributor, checked_project, scope, unhandled))
         return RatchetOutcome(
             messages=messages,
             stale=self.stale,
@@ -424,10 +422,7 @@ async def test_findings_pass_through_the_ratchet_with_own_coverage(
 
     assert [call.checked_project for call in ratchet.calls] == [project]
     call = ratchet.calls[0]
-    assert (
-        call.contributor
-        == CheckToolchainsAuditCodeBridgeHandler.RATCHET_CONTRIBUTOR
-    )
+    assert call.contributor == CheckToolchainsAuditCodeBridgeHandler.RATCHET_CONTRIBUTOR
     assert call.scope == RatchetScope(target=RatchetTarget.PROJECT, files=())
     assert call.unhandled == [miss]
     assert len(sender.results) == 1

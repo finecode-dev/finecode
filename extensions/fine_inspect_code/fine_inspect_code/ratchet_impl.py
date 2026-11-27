@@ -120,14 +120,18 @@ def _broken_snapshot_outcome(
 ) -> RatchetOutcome:
     stamped: dict[ResourceUri, list[Diagnostic]] = {
         uri: [
-            dataclasses.replace(diagnostic, origin=FindingOrigin(contributor=contributor))
+            dataclasses.replace(
+                diagnostic, origin=FindingOrigin(contributor=contributor)
+            )
             for diagnostic in diagnostics
         ]
         for uri, diagnostics in messages.items()
     }
     snapshot_uri = ResourceUri(path.as_uri())
     broken = Diagnostic(
-        range=Range(start=Position(line=0, character=0), end=Position(line=0, character=0)),
+        range=Range(
+            start=Position(line=0, character=0), end=Position(line=0, character=0)
+        ),
         message=(
             f"invalid diagnostics baseline snapshot: {error}. Resolve the conflict "
             "by hand or take one side with git "

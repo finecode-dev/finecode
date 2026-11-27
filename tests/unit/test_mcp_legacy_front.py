@@ -97,7 +97,9 @@ class _RecordingClient:
     def on_request(self, name: str, handler: typing.Any, **_kwargs: object) -> None:
         self.request_handlers[name] = handler
 
-    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object) -> None:
+    def configure_reconnect(
+        self, policy: typing.Any, on_reattach: typing.Any, **_kwargs: object
+    ) -> None:
         self.configure_calls.append({"policy": policy, "on_reattach": on_reattach})
 
     async def connect(
@@ -362,7 +364,9 @@ async def test_replacing_the_session_moves_later_questions() -> None:
     }
 
     front._session = typing.cast(typing.Any, second)
-    assert await elicit(1, {"message": "m?", "options": ["a"]}) == {"outcome": "declined"}
+    assert await elicit(1, {"message": "m?", "options": ["a"]}) == {
+        "outcome": "declined"
+    }
     assert len(first.requests_sent) == 1
     assert len(second.requests_sent) == 1
 
@@ -624,7 +628,9 @@ async def test_text_schema_and_replies() -> None:
     from finecode.mcp_server.contracts import Question as Q
 
     session.request_result = {"action": "accept", "content": {"answer": ""}}
-    result = await front.ask_question(Q(message="Name?", options=(), timeout_seconds=5.0, kind="text"))
+    result = await front.ask_question(
+        Q(message="Name?", options=(), timeout_seconds=5.0, kind="text")
+    )
     assert result.outcome.value == "answered"
     assert result.value == ""
     sent = session.requests_sent[-1]
@@ -647,14 +653,26 @@ async def test_text_schema_and_replies() -> None:
         {"capabilities": {"elicitation": True}, "clientInfo": {"name": "e"}}
     )
     result2 = await front.ask_question(
-        Q(message="Name?", options=(), timeout_seconds=5.0, kind="text", placeholder="Ada")
+        Q(
+            message="Name?",
+            options=(),
+            timeout_seconds=5.0,
+            kind="text",
+            placeholder="Ada",
+        )
     )
     assert result2.value == "x"
-    assert session.requests_sent[-1]["params"]["requestedSchema"]["properties"]["answer"][
-        "description"
-    ] == "Ada"
+    assert (
+        session.requests_sent[-1]["params"]["requestedSchema"]["properties"]["answer"][
+            "description"
+        ]
+        == "Ada"
+    )
 
-    for bad in [{"action": "accept", "content": {}}, {"action": "accept", "content": {"answer": 3}}]:
+    for bad in [
+        {"action": "accept", "content": {}},
+        {"action": "accept", "content": {"answer": 3}},
+    ]:
         session.request_result = bad
         result_bad = await front.ask_question(
             Q(message="Name?", options=(), timeout_seconds=5.0, kind="text")
