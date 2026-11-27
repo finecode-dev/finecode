@@ -192,7 +192,10 @@ class RunTestsRunResult(code_action.RunActionResult):
                 if result.line is not None:
                     location += f":{result.line + 1}"
                 text.append(f" ({location})")
-            text.append("\n")
+            if result.message:
+                text.append(f"\n{result.message}\n")
+            else:
+                text.append("\n")
 
         return text
 

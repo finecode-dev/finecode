@@ -113,9 +113,7 @@ def with_session(
             return result
         if reported_id is None or session_id_error(reported_id) is not None:
             return result
-        if expected is not None and not _uuid_equals(
-            reported_id, expected.session_id
-        ):
+        if expected is not None and not _uuid_equals(reported_id, expected.session_id):
             return result
         return _attach_session(result, backend, project_dir, reported_id)
     if reported_id is None or session_id_error(reported_id) is not None:
