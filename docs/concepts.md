@@ -13,7 +13,7 @@ class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResul
     RESULT_TYPE = LintRunResult
 ```
 
-Actions are identified by their **import path** (e.g. `finecode_extension_api.actions.lint.LintAction`), not by the name used in config. The config name is just a human-readable alias.
+Actions are identified by their **import path** (e.g. `fine_lint.lint_action.LintAction`), not by the name used in config. The config name is just a human-readable alias.
 
 ## Action Handler
 

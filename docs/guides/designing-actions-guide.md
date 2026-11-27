@@ -186,8 +186,10 @@ and return the action result type.
 
 ## 7. Export and register it
 
-Export the action and handler from the package entry points used by your
-extension or preset.
+Export the action class with its payload and result types on the owning
+feature package's facade, and the handler class on the handler package's
+facade. Do not export the handler config record; it stays in its defining
+module. See [Package Exports](package-exports.md) for the rule.
 
 Then register the handler in the preset or project configuration:
 

@@ -55,7 +55,7 @@ Type checking via [Mypy](https://mypy-lang.org/).
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_mypy.MypyLintFilesHandler` | `lint_python_files` | Type-check Python files |
+| `fine_python_mypy.MypyTypeCheckFilesHandler` | `type_check_python_files` | Type-check Python files |
 
 ---
 
@@ -65,7 +65,7 @@ Architecture validation via [import-linter](https://import-linter.readthedocs.io
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_import_linter.ImportLinterHandler` | `lint` | Validate import contracts |
+| `fine_python_import_linter.ImportLinterCheckPythonImportsHandler` | `check_python_imports` | Validate import contracts |
 
 Reads contract definitions from `[tool.importlinter]` in `pyproject.toml`.
 
@@ -140,9 +140,9 @@ config.errors = { implicit-any-type-argument = "warn" }
 
 AST-based analysis for Python source files.
 
-| Handler | Action | Description |
+| Service interface | Implemented by | Description |
 |---|---|---|
-| `fine_python_ast.AstHandler` | Various | AST traversal and analysis |
+| `fine_python_ast.iast_provider.IPythonSingleAstProvider` | `fine_python_ast.ast_provider.PythonSingleAstProvider` | AST traversal and analysis |
 
 ---
 
@@ -154,7 +154,7 @@ Code formatting via [Black](https://black.readthedocs.io/).
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_black.BlackFormatFilesHandler` | `format_files` | Format Python files with Black |
+| `fine_python_black.BlackFormatFileHandler` | `format_python_file` | Format Python files with Black |
 
 ---
 
@@ -205,7 +205,7 @@ Virtual environment creation.
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_virtualenv.VirtualenvPrepareEnvHandler` | `prepare_envs` | Create virtualenvs |
+| `fine_python_virtualenv.VirtualenvCreateEnvHandler` | `create_env` | Create virtualenvs |
 
 ---
 

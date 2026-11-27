@@ -403,7 +403,7 @@ All fields optional. If `project` is omitted, returns actions from all projects.
   "actions": [
     {
       "name": "lint",
-      "source": "finecode_extension_api.actions.LintAction",
+      "source": "fine_lint.LintAction",
       "project": "/abs/path/to/project",
       "handlers": [
         {"name": "ruff", "source": "fine_python_ruff.RuffLintFilesHandler", "env": "runtime"}
@@ -430,7 +430,7 @@ server to build accurate `inputSchema` entries for each tool.
 **Params:**
 
 ```json
-{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction", "fine_format.FormatAction"], "startRunners": false}
+{"project": "/abs/path/to/project", "actionSources": ["fine_lint.LintAction", "fine_format.FormatAction"], "startRunners": false}
 ```
 
 `startRunners` (optional, default `false`): when `true`, the WM starts the
@@ -453,7 +453,7 @@ bad selectors a moment later.
 ```json
 {
   "schemas": {
-    "finecode_extension_api.actions.LintAction": {
+    "fine_lint.LintAction": {
       "properties": {
         "file_paths": {"type": "array", "items": {"type": "string"}},
         "target": {"type": "string", "enum": ["project", "files"]}
@@ -512,9 +512,9 @@ Get the hierarchical action tree for IDE sidebar display.
               "status": "",
               "subnodes": [
                 {
-                  "nodeId": "/path/to/my_project::finecode_extension_api.actions.LintAction",
+                  "nodeId": "/path/to/my_project::fine_lint.LintAction",
                   "name": "lint",
-                  "source": "finecode_extension_api.actions.LintAction",
+                  "source": "fine_lint.LintAction",
                   "nodeType": 2,
                   "status": "",
                   "subnodes": []
@@ -551,7 +551,7 @@ Node ID format:
 
 - Directory/project: absolute path string (e.g. `"/path/to/project"`)
 - Action group: `"<project_path>::actions"`
-- Action: `"<project_path>::<actionSource>"` (e.g. `"/path/to/project::finecode_extension_api.actions.LintAction"`)
+- Action: `"<project_path>::<actionSource>"` (e.g. `"/path/to/project::fine_lint.LintAction"`)
 - Handler: `"<project_path>::<actionSource>::<handlerName>"`
 - Env group: `"<project_path>::envs"`
 - Env: `"<project_path>::envs::<envName>"`
@@ -570,7 +570,7 @@ Execute a single action on a project.
 
 ```json
 {
-  "actionSource": "finecode_extension_api.actions.LintAction",
+  "actionSource": "fine_lint.LintAction",
   "project": "/abs/path/to/project",
   "params": {"file_paths": ["/path/to/file.py"]},
   "options": {
@@ -585,8 +585,8 @@ Required: `actionSource`, `project`. All other fields optional.
 
 `actionSource` is an import-path alias identifying the action class (ADR-0019).
 Any valid import path resolving to the same registered action class is accepted
-(e.g. the short alias `"finecode_extension_api.actions.LintAction"` or the canonical
-`"finecode_extension_api.actions.code_quality.lint_action.LintAction"` both work).
+(e.g. the short alias `"fine_lint.LintAction"` or the canonical
+`"fine_lint.lint_action.LintAction"` both work).
 
 `trigger` values: `"user"`, `"system"`, `"unknown"` (default: `"unknown"`)
 
@@ -639,7 +639,7 @@ Execute multiple actions across multiple projects. Used for batch operations.
 ```json
 {
   "actionSources": [
-    "finecode_extension_api.actions.LintAction",
+    "fine_lint.LintAction",
     "fine_format.FormatAction"
   ],
   "projects": ["/abs/path/to/project_a", "/abs/path/to/project_b"],
@@ -678,7 +678,7 @@ requested actions.
 {
   "results": {
     "/abs/path/to/project_a": {
-      "finecode_extension_api.actions.LintAction": {"resultByFormat": {"...": "..."}, "returnCode": 0},
+      "fine_lint.LintAction": {"resultByFormat": {"...": "..."}, "returnCode": 0},
       "fine_format.FormatAction": {"resultByFormat": {"...": "..."}, "returnCode": 0}
     }
   },
@@ -696,7 +696,7 @@ request's resolved project and action order, even when slots finish in a differe
 {
   "results": {
     "/abs/path/to/project_a": {
-      "finecode_extension_api.actions.LintAction": {
+      "fine_lint.LintAction": {
         "resultByFormat": {"json": {"messages": {"file.py": []}}, "string": "All checks passed."},
         "returnCode": 0
       }
@@ -726,7 +726,7 @@ Hot-reload handler code for an action without restarting runners.
 **Params:**
 
 ```json
-{"action": "finecode_extension_api.actions.LintAction", "project": "/abs/path/to/project"}
+{"action": "fine_lint.LintAction", "project": "/abs/path/to/project"}
 ```
 
 `action` is an import-path alias (ADR-0019), the `<actionSource>` half of the node
@@ -1188,7 +1188,7 @@ project each belongs to, allowing clients to group results by project.
   "value": {
     "project": "/abs/path/to/project_a",
     "results": {
-      "finecode_extension_api.actions.LintAction": {
+      "fine_lint.LintAction": {
         "resultByFormat": {"json": {}, "string": "..."},
         "returnCode": 0
       }

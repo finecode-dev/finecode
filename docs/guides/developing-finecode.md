@@ -1037,8 +1037,12 @@ The same applies to `try/except`: only catch an exception if you have a specific
   
 ### Exports
 
-- explicitly export public module members using `__all__`
--- it may not contain dynamic elements, only literal strings
+FineCode's own packages follow the
+[general rules](package-exports.md#general-rules) in Package Exports.
+Extension and preset packages in this repo follow the whole page.
+
+Many existing package initializers export every member. They are legacy, are
+being cleaned up, and are not a pattern to copy.
 
 ### Exception naming
 

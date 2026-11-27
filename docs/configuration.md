@@ -42,10 +42,10 @@ You can declare or extend actions directly in your project:
 
 ```toml
 [tool.finecode.action.lint]
-source = "finecode_extension_api.actions.lint.LintAction"
+source = "fine_lint.LintAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_ruff~=0.2.0"] },
-    { name = "mypy", source = "fine_python_mypy.MypyLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_mypy~=0.3.0"] },
+    { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_flake8~=0.3.0"] },
 ]
 ```
 
@@ -55,10 +55,10 @@ To completely replace the handlers from presets for an action:
 
 ```toml
 [tool.finecode.action.lint]
-source = "finecode_extension_api.actions.lint.LintAction"
+source = "fine_lint.LintAction"
 handlers_mode = "replace"
 handlers = [
-    { name = "mypy", source = "fine_python_mypy.MypyLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_mypy~=0.3.0"] },
+    { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_flake8~=0.3.0"] },
 ]
 ```
 
@@ -188,7 +188,7 @@ Env var overrides (highest priority):
 presets = [{ source = "fine_python_recommended" }]
 
 [finecode.action.lint]
-source = "finecode_extension_api.actions.lint.LintAction"
+source = "fine_lint.LintAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_ruff~=0.2.0"] },
 ]
@@ -223,14 +223,14 @@ There are two optional locations, following a **uniform sibling rule**: every pr
 
 ### Schema
 
-`finecode-user.toml` uses the same fields as `finecode.toml` but with **no `[finecode]` wrapper** — tables are written at the top level:
+`finecode-user.toml` uses the same fields as `finecode.toml` but with **no `[finecode]` wrapper** — tables are written at the top level. The `my_dev_tools` package below is the team's own illustrative extension:
 
 ```toml
 presets = [{ source = "my_personal_preset" }]
 
 [action.setup_dev_tools]
 handlers = [
-    { name = "copilot", source = "fine_vscode_ext.InstallExtHandler", config.ext_id = "GitHub.copilot" },
+    { name = "copilot", source = "my_dev_tools.InstallExtHandler", config.ext_id = "GitHub.copilot" },
 ]
 
 [action.lint.handlers.ruff]
@@ -328,7 +328,7 @@ Nothing creates this file; a developer with the private clones but no file simpl
 
 ```toml
 [tool.finecode.action.setup_dev_tools]
-source = "finecode_extension_api.actions.setup_dev_tools.SetupDevToolsAction"
+source = "my_dev_tools.SetupDevToolsAction"
 handlers = []
 ```
 
@@ -339,7 +339,7 @@ presets = [{ source = "my_personal_preset" }]
 
 [action.setup_dev_tools]
 handlers = [
-    { name = "copilot", source = "fine_vscode_ext.InstallExtHandler", config.ext_id = "GitHub.copilot" },
+    { name = "copilot", source = "my_dev_tools.InstallExtHandler", config.ext_id = "GitHub.copilot" },
 ]
 
 [dependency-groups]
@@ -351,7 +351,7 @@ dev_workspace = ["my_personal_preset>=1.0"]
 ```toml
 [action.setup_dev_tools]
 handlers = [
-    { name = "codeium", source = "fine_vscode_ext.InstallExtHandler", config.ext_id = "Codeium.codeium" },
+    { name = "codeium", source = "my_dev_tools.InstallExtHandler", config.ext_id = "Codeium.codeium" },
 ]
 ```
 

@@ -41,35 +41,31 @@ Import the action you want to handle and subclass `ActionHandler`:
 ```python
 # my_linter/handler.py
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.lint_files_action import (
+from finecode_extension_api.resource_uri import ResourceUri
+from fine_inspect_code import Diagnostic
+from fine_lint.lint_files_action import (
     LintFilesAction,
-    LintFilesRunPayload,
     LintFilesRunContext,
+    LintFilesRunPayload,
     LintFilesRunResult,
-    LintMessage,
 )
 
 
 class MyLinterHandler(
-    code_action.ActionHandler[
-        LintFilesRunPayload,
-        LintFilesRunContext,
-        LintFilesRunResult,
-    ]
+    code_action.ActionHandler[LintFilesAction, code_action.ActionHandlerConfig]
 ):
     action = LintFilesAction
 
     async def run(
-        self, payload: LintFilesRunPayload, context: LintFilesRunContext
+        self, payload: LintFilesRunPayload, run_context: LintFilesRunContext
     ) -> LintFilesRunResult:
-        diagnostics: list[LintMessage] = []
+        messages: dict[ResourceUri, list[Diagnostic]] = {}
 
         for file_path in payload.file_paths:
             # run your tool and collect results
-            messages = run_my_tool(file_path)
-            diagnostics.extend(messages)
+            messages[file_path] = run_my_tool(file_path)
 
-        return LintFilesRunResult(diagnostics=diagnostics)
+        return LintFilesRunResult(messages=messages)
 ```
 
 ## 3. Export from `__init__.py`
@@ -81,13 +77,16 @@ from my_linter.handler import MyLinterHandler
 __all__ = ["MyLinterHandler"]
 ```
 
+The handler class is public; its config record stays in its defining module
+and is not exported. See [Package Exports](package-exports.md).
+
 ## 4. Register the handler in a project
 
 Add the handler to the target action in `pyproject.toml`:
 
 ```toml
 [tool.finecode.action.lint]
-source = "finecode_extension_api.actions.LintAction"
+source = "fine_lint.LintAction"
 handlers = [
     {
         name = "my_linter",
@@ -104,10 +103,11 @@ Then run `python -m finecode prepare-envs` to install your handler into the venv
 
 Every `source =` value in TOML config is resolved at runtime as import path.
 
-**Built-in action classes** are all re-exported from `finecode_extension_api.actions`, so
-their source strings take the short form `finecode_extension_api.actions.<ClassName>` — you
-do not need to know which subgroup (`code_quality/`, `environments/`, etc.) a class lives in.
-See the [Built-in Actions reference](../reference/actions.md) for the full list.
+Action classes live in the extension that owns them, and their `source` uses
+that package's facade (for example `fine_lint.LintAction`). See the
+[Built-in Actions reference](../reference/actions.md) for each action's source.
+How the runner resolves a `source` value is described in
+[Package Exports](package-exports.md#extension-and-preset-rules), rule 10.
 
 **Handler classes** are referenced by their full import path:
 `my_linter.MyLinterHandler` (module `my_linter`, member `MyLinterHandler`).
@@ -119,33 +119,36 @@ To make your handler configurable, define a config model and declare `CONFIG_TYP
 ```python
 import dataclasses
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.lint_files_action import (
-    LintFilesAction, LintFilesRunPayload, LintFilesRunContext, LintFilesRunResult,
+from finecode_extension_api.resource_uri import ResourceUri
+from fine_inspect_code import Diagnostic
+from fine_lint.lint_files_action import (
+    LintFilesAction,
+    LintFilesRunContext,
+    LintFilesRunPayload,
+    LintFilesRunResult,
 )
 
 
 @dataclasses.dataclass
-class MyLinterConfig:
+class MyLinterConfig(code_action.ActionHandlerConfig):
     line_length: int = 88
     extend_ignore: list[str] = dataclasses.field(default_factory=list)
 
 
-class MyLinterHandler(
-    code_action.ActionHandler[
-        LintFilesRunPayload,
-        LintFilesRunContext,
-        LintFilesRunResult,
-    ]
-):
+class MyLinterHandler(code_action.ActionHandler[LintFilesAction, MyLinterConfig]):
     action = LintFilesAction
-    CONFIG_TYPE = MyLinterConfig
+
+    def __init__(self, config: MyLinterConfig) -> None:
+        self.config = config
 
     async def run(
-        self, payload: LintFilesRunPayload, context: LintFilesRunContext
+        self, payload: LintFilesRunPayload, run_context: LintFilesRunContext
     ) -> LintFilesRunResult:
-        config: MyLinterConfig = context.handler_config
-        # use config.line_length, config.extend_ignore, ...
-        ...
+        messages: dict[ResourceUri, list[Diagnostic]] = {}
+        for file_path in payload.file_paths:
+            # use self.config.line_length, self.config.extend_ignore, ...
+            messages[file_path] = run_my_tool(file_path)
+        return LintFilesRunResult(messages=messages)
 ```
 
 Users can then configure it in `pyproject.toml`:

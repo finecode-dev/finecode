@@ -513,7 +513,7 @@ The two actions (`create_envs`, `install_envs`) are standard FineCode actions an
 
 | Action | Source |
 | --- | --- |
-| `create_envs` | `finecode_extension_api.actions.create_envs.CreateEnvsAction` |
-| `install_envs` | `finecode_extension_api.actions.install_envs.InstallEnvsAction` |
+| `create_envs` | `fine_envs.CreateEnvsAction` |
+| `install_envs` | `fine_envs.InstallEnvsAction` |
 
 See [Built-in Actions reference](../reference/actions.md) for payload fields and result types.

@@ -10,6 +10,7 @@ Open a doc only when its trigger matches your task. Skills and agent definitions
 - **Designing actions rules** — `guides/designing-actions-rules.md`. Read when designing or reviewing an action, handler or preset against the normative rules.
 - **Designing actions guide** — `guides/designing-actions-guide.md`. Read when an action spans languages, needs language-specific subactions, or its specificity level is unclear.
 - **Designing services rules** — `guides/designing-services.md`. Read when adding or changing a service, or choosing between an init action and service config.
+- **Package exports** — `guides/package-exports.md`. Read when deciding what a package or module exports in `__all__` or its `__init__.py` facade.
 - **Creating a preset** — `guides/creating-preset.md`. Read when creating or changing a preset.
 - **Preparing environments** — `guides/preparing-environments.md`. Read when changing environment preparation, the `dev_workspace` bootstrap, or environment filtering.
 - **Developing FineCode** — `guides/developing-finecode.md`. Read when implementing changes in this repo: structure, setup, checks, logging policy, lock files, code style.

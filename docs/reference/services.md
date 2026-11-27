@@ -25,6 +25,8 @@ These services are registered by the Extension Runner at startup and are availab
 | `finecode_extension_api.interfaces.iknowledgestore.IKnowledgeStore` | `finecode_extension_runner.impls.knowledge_store.KnowledgeStoreImpl` | Query the workspace's knowledge store, which the WM owns. See [Querying the knowledge store](#querying-the-knowledge-store-with-iknowledgestore). |
 | `finecode_extension_api.interfaces.iuserprompt.IUserPrompt` | `finecode_extension_runner.impls.user_prompt.UserPrompt` | Ask the person who started the run a question. See [Asking the user](#asking-the-user-with-iuserprompt). |
 
+A curated `finecode_extension_api.interfaces` facade re-exporting these interfaces is upcoming, so that `finecode_extension_api.interfaces.IFileEditor` will also be importable. Until then, examples and `interface` keys use the per-module path above, and `interface` keys keep the long form even after #104: a shorter Python alias is not an interchangeable merge key.
+
 ## Provisioning `IRepositoryCredentialsProvider`
 
 The default implementation, `ConfigRepositoryCredentialsProvider`, is seeded from
@@ -295,7 +297,7 @@ for action in actions:
 
 Two properties of this data decide whether your code is correct:
 
-**`source` is an alias; `canonical_source` is the identity.** `source` is the string as written in the definition file. For handlers it is almost always a package-level re-export (`fine_python_ruff.RuffLintFilesHandler`), not the module the class is defined in (`fine_python_ruff.lint_handler.RuffLintFilesHandler`). The same class can be re-exported under several aliases, so **two different `source` values may name one real handler**. `canonical_source` is `cls.__module__ + "." + cls.__qualname__` as the runner that hosts the class resolved it, and it is the same string no matter which alias was used. Key by `canonical_source`; treat `source` as a display/config label.
+**`source` is an alias; `canonical_source` is the identity.** `source` is the string as written in the definition file. For handlers it is almost always a package-level re-export (`fine_python_ruff.RuffLintFilesHandler`), not the module the class is defined in (`fine_python_ruff.lint_files_handler.RuffLintFilesHandler`). The same class can be re-exported under several aliases, so **two different `source` values may name one real handler**. `canonical_source` is `cls.__module__ + "." + cls.__qualname__` as the runner that hosts the class resolved it, and it is the same string no matter which alias was used. Key by `canonical_source`; treat `source` as a display/config label.
 
 **Fields are resolved lazily, so `canonical_source` may be `None`.** It is populated per env by that env's own runner, and it stays `None` until that runner has started, or permanently if the class cannot be imported there. A newly written action or handler that the running instance has not picked up yet is `None` for the same reason — it exists in source and in config, but no runner has resolved it.
 
@@ -322,7 +324,7 @@ Extensions can register services via the `finecode.activator` entry point using 
 | `finecode_httpclient` | `finecode_extension_api.interfaces.ihttpclient.IHttpClient` | `finecode_httpclient.client.HttpClient` |
 | `fine_python_ast` | `fine_python_ast.iast_provider.IPythonSingleAstProvider` | `fine_python_ast.ast_provider.PythonSingleAstProvider` |
 | `fine_python_mypy` | `fine_python_mypy.iast_provider.IMypySingleAstProvider` | `fine_python_mypy.ast_provider.MypySingleAstProvider` |
-| `fine_python_package_info` | `fine_python_package_info.ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider` | `fine_python_package_info.py_package_layout_info_provider.PyPackageLayoutInfoProvider` |
+| `fine_python_package_info` | `fine_python_lang.ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider` | `fine_python_package_info.py_package_layout_info_provider.PyPackageLayoutInfoProvider` |
 | `fine_python_package_info` | `finecode_extension_api.interfaces.isrcartifactfileclassifier.ISrcArtifactFileClassifier` | `fine_python_package_info.py_src_artifact_file_classifier.PySrcArtifactFileClassifier` |
 | `fine_python_ruff` | `fine_python_ruff.ruff_lsp_service.RuffLspService` | `fine_python_ruff.ruff_lsp_service.RuffLspService` |
 | `fine_python_pyrefly` | `fine_python_pyrefly.pyrefly_lsp_service.PyreflyLspService` | `fine_python_pyrefly.pyrefly_lsp_service.PyreflyLspService` |

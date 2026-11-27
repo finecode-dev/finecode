@@ -84,20 +84,20 @@ lock_dependencies                    ← generic: src_artifact_def_path, output_
        └─ uv handler config          ← tool: resolution strategy
 ```
 
-**Switching from pip-compile to uv** means changing the handler and its config. The ecosystem parameters (`target_python_version`, `target_platform`) stay exactly where they are — they are properties of the *target environment*, not the *tool*. One line in `pyproject.toml` changes:
+**Switching from pip-compile to uv** means changing the handler and its config. The `my_lock_tools` handlers below are illustrative and are not shipped by FineCode. The ecosystem parameters (`target_python_version`, `target_platform`) stay exactly where they are — they are properties of the *target environment*, not the *tool*. One line in `pyproject.toml` changes:
 
 ```toml
 # Before
 [[tool.finecode.action.lock_python_dependencies.handlers]]
 name = "pip_compile"
-source = "fine_python_pip.PipCompileLockHandler"
+source = "my_lock_tools.PipCompileLockHandler"
 env = "dev_workspace"
 config.generate_hashes = true
 
 # After
 [[tool.finecode.action.lock_python_dependencies.handlers]]
 name = "uv"
-source = "fine_python_uv.UvLockHandler"
+source = "my_lock_tools.UvLockHandler"
 env = "dev_workspace"
 config.resolution = "highest"
 ```

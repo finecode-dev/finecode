@@ -43,7 +43,7 @@ A preset package contains:
 - A `preset.toml` declaring action and handler registrations.
 - For **cross-language feature presets** (e.g. `fine_format`, `fine_lint`): the definitions of the inter-language action contracts they register. The action class and its canonical registration ship and version together. See [ADR-0036](../adr/0036-feature-presets-own-their-action-contracts.md).
 - **Orchestration handlers** — handler implementations that coordinate or dispatch work to language-specific handlers (e.g. `FormatHandler`, `LintFilesDispatchHandler`). These handlers naturally belong in the preset that defines the action they implement. See [Handlers in presets](#handlers-in-presets) below.
-- Optionally, an `__init__.py` re-exporting action classes and handler classes for convenient imports.
+- Optionally, an `__init__.py` re-exporting action classes and handler classes for convenient imports (see [Package Exports](package-exports.md)).
 
 Preset packages keep their base configuration lightweight: only `finecode_extension_api` (for base classes) and other feature presets (when an action contract references types defined elsewhere) belong in the base runtime dependencies. Execution-specific heavy tool dependencies are carried by an execution extra and pulled in through dependency groups when handlers are activated.
 
@@ -55,18 +55,18 @@ The `preset.toml` file lives inside the package directory (next to `__init__.py`
 # my_preset/my_preset/preset.toml
 
 [tool.finecode.action.lint]
-source = "finecode_extension_api.actions.lint.LintAction"
+source = "fine_lint.LintAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff~=0.2.0",
     ] },
-    { name = "mypy", source = "fine_python_mypy.MypyLintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_mypy~=0.3.0",
+    { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_flake8~=0.3.0",
     ] },
 ]
 
 [tool.finecode.action.format_python_file]
-source = "finecode_extension_api.actions.FormatPythonFileAction"
+source = "fine_python_lang.FormatPythonFileAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff~=0.2.0",

@@ -968,13 +968,15 @@ env = "dev_workspace"
 
 [[tool.finecode.action.lock_python_dependencies.handlers]]
 name = "uv"
-source = "fine_python_uv.UvLockHandler"
+source = "my_lock_tools.UvLockHandler"
 env = "dev_workspace"
 ```
 
+The `my_lock_tools` handlers in this example are illustrative and are not shipped by FineCode.
+
 ### Multi-lock setup (per-platform locks, e.g. pip-compile)
 
-A Python project needs separate lock files per Python version and platform. The user activates `LockAllPythonTargetsHandler` — a different handler for the same `lock_dependencies` action. It calls `lock_python_dependencies` once per configured target combination and collects all generated paths.
+A Python project needs separate lock files per Python version and platform. The user activates `my_lock_tools.LockAllPythonTargetsHandler` — a different handler for the same `lock_dependencies` action. It calls `lock_python_dependencies` once per configured target combination and collects all generated paths. These `my_lock_tools` handlers are illustrative and are not shipped by FineCode.
 
 ```mermaid
 flowchart TD
@@ -988,14 +990,14 @@ flowchart TD
 ```toml
 [[tool.finecode.action.lock_dependencies.handlers]]
 name = "all_python_targets"
-source = "fine_python_pip.LockAllPythonTargetsHandler"
+source = "my_lock_tools.LockAllPythonTargetsHandler"
 env = "dev_workspace"
 config.python_versions = ["3.11", "3.12"]
 config.platforms = ["linux_x86_64", "win_amd64"]
 
 [[tool.finecode.action.lock_python_dependencies.handlers]]
 name = "pip_compile"
-source = "fine_python_pip.PipCompileLockHandler"
+source = "my_lock_tools.PipCompileLockHandler"
 env = "dev_workspace"
 ```
 
