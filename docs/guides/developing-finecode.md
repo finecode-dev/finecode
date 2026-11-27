@@ -13,6 +13,7 @@ finecode/                          # Main package (Workspace Manager)
 finecode_extension_api/            # Public API for extension authors
 finecode_extension_runner/         # Extension execution engine
 finecode_jsonrpc/                  # JSON-RPC client/transport layer
+finecode_common/                   # Shared leaf (host readers, lag mechanics); stdlib + psutil only
 finecode_httpclient/               # HTTP client for extensions
 finecode_knowledge/                # Knowledge model engine (schema-free; see below)
 extensions/                        # Extension packages (capabilities incl. presets)
@@ -142,6 +143,11 @@ python -m finecode run --shared-server check_formatting
 python -m finecode run --shared-server run_tests
 python -m finecode run --shared-server audit_code        # checkpoint checks — before a commit or a PR
 ```
+
+**Run tests through the `run_tests` action, never by invoking pytest directly.** This
+applies to agents, probes and plan verification as well. Narrow a run with the scoping
+options below (`--project`, `--file_paths`). If the action fails, or cannot run the
+tests you need, report that failure with its output. Do not fall back to pytest.
 
 **Always pass `--shared-server` when developing FineCode.** The devcontainer's
 `postStartCommand` already runs `start-wm-server --detach --keep-alive`
@@ -318,6 +324,13 @@ WM log groups are configured under `[workspace.wm.logging]` in `finecode-workspa
 [workspace.wm.logging.log_groups]
 "finecode.wm_server.runner.runner_manager" = "DEBUG"
 "finecode_jsonrpc.client" = "TRACE"
+
+Telemetry adds three log groups of its own (hop spans are spans, not logs):
+late-stage records log under
+`"finecode_extension_runner.shared_telemetry.rpc_hops"`, ER lag records under
+`"finecode_extension_runner.er_lag_monitor"` (WM lag records under
+`"finecode.wm_server.services.event_loop_lag_monitor"`), and health
+summaries under `"finecode_extension_runner.shared_telemetry.health"`.
 ```
 
 Env var overrides (uppercase group name, `.` → `_`):
@@ -594,6 +607,16 @@ An upper bound is a packaging anti-pattern for published packages: a resolver th
 The cap also has no remaining job now that the interpreter matrix exists. The set of Python versions an action is tested against is **derived from `requires-python` and bounded by what the provisioning toolchain (uv) can actually obtain** (ADR-0053, part 5), not by a hand-written ceiling. So removing the upper bound does not widen the test matrix to unreleased versions — the obtainable-versions ceiling does that job, on the developer's clock and in a reviewable diff.
 
 If a genuinely newer Python breaks a package, fix it when that version exists — do not pre-emptively cap. New packages must follow this: declare `requires-python = ">=<min>"` with no upper component.
+
+## Version specifiers on SCM-versioned packages: keep the `a0` suffix
+
+`finecode` and `finecode_extension_runner` use `dynamic = ["version"]` via setuptools-scm — their version comes from git tags, not from `pyproject.toml`. Between releases the checkout reports a pre-release (e.g. `0.4.0a2.dev378+…` after tag `v0.4.0a1`), which sorts **below** the stable `0.4.0`.
+
+A `~=0.4.0` requirement means `>=0.4.0, ==0.4.*` and therefore excludes that pre-release, so `prepare-envs` fails with `unsatisfiable` even though every package is present as an editable. `~=0.4.0a0` means `>=0.4.0a0, ==0.4.*`: it accepts both the pre-release during development and the stable release after the tag is cut, so no specifier change is needed at release time.
+
+Rule: references to SCM-versioned packages (`finecode`, `finecode_extension_runner`) must keep the `a0` suffix (`~=0.4.0a0`). References to statically versioned packages (`finecode_extension_api~=0.5.0`, `fine_envs~=0.2.0`, …) use the plain stable specifier — their `pyproject.toml` version already satisfies it.
+
+This recurs before every release: bumping declared versions to stable without cutting the stable tag leaves the dynamic versions pre-release. Do not "stabilize" the specifiers on dynamic packages until the tag exists; the `a0` form works in both states.
 
 ## Text file IO: explicit UTF-8
 

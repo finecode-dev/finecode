@@ -63,7 +63,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` and `FINECODE_SERVICE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
 | `--results-file=<path>` | Also write *this run's* results to `<path>`, unmerged, on every exit path, and report the path on stderr. See [Per-run results file](#per-run-results-file) |
-| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
+| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `git_hook` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
 | `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s). Repeatable; a bare version means `cpython`; `all` means the full axis, ignoring `default_interpreters`. |
 | `--resource-usage[=SEC]` | Print one `[resources]` stderr line per interval plus a peaks summary at the end (see [Resource usage in CI](#resource-usage-in-ci)). Accepted range `0 < SEC ≤ 600`; bare flag polls every 15 s. |
 | `--no-resource-usage` | Disable the reporter, including its CI default. |
@@ -170,7 +170,12 @@ See [Configuration](configuration.md) for full details on config precedence.
 
 - With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root and runs the action in each project that defines it. For operations intended to cover the whole checkout, use the checkout root.
 - With `--project`: the action must exist in every specified project.
+- When stderr is a terminal, partial action output appears on stderr as previews while the run is active. A `-- preview: <action> (<project>) --` label heads a run of previews from the same project, action and interpreter; it is printed again when that source changes. A preview that extends the previous one from the same source prints only its new text; a preview that does not is printed whole under a new label. After the batch completes, stdout contains one final block per project and action with the merged result; stdout never contains preview snapshots.
+- When stderr is not a terminal (a pipe, a file, or an AI agent's shell tool), no previews are printed. Only the final blocks on stdout remain. An agent's shell tool captures stderr together with stdout into the model's context, so stderr is not a channel that agents ignore. Previews there would put the whole agent transcript, for example of `run_agent_task`, into the calling agent's context.
 - Action results are saved to `<venv>/cache/finecode/results/<action>.json` (one entry per project path).
+- Outside CI, a terminal lets an action ask a question: `run` from a TTY declares question support for its connection. With a non-empty `CI` (`CI=false` included) the CLI declares no question support and every question is answered "unavailable" at once.
+- A question at the terminal ends when you answer it, decline it (Ctrl-D), or the WM stops waiting for it: its deadline passes, the action no longer needs an answer, the run is cancelled, or the connection to the WM is lost. The question then leaves the screen and one line on stderr says why, for example `Question expired; no answer was sent.` Questions that arrive while another is shown wait their turn and are dropped without a line if they end before being shown. Anything you typed for a question that has ended, or while no question was shown, is discarded, so it cannot answer the next question. Ctrl-C ends the run, as everywhere else in the CLI. If the WM never withdraws a question, the CLI stops showing it 5 seconds after the question's deadline.
+- A text question submits one line with Enter, or several lines with Esc then Enter when it says so; Ctrl-D on an empty answer declines. An editable prefill is placed in the field and a placeholder is shown as `Example: …` outside it. A multi-select question takes option numbers separated by spaces or commas (`-` submits none, Enter keeps the pre-selection, Ctrl-D declines).
 - WAL options on `run` apply only when FineCode starts a dedicated WM server (default mode). In `--shared-server` mode, configure WAL on the shared WM server process.
 
 ### Examples
@@ -222,12 +227,12 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | Option | Description |
 |---|---|
 | `--recreate` | Delete and recreate the venvs this run covers (all, or the `--env` selection) |
-| `--env=<name>` | Restrict `create_envs` and `install_envs` to the named env(s): a name, a matrix base (its default interpreters), `<base>@<impl>-<version>`, or `<base>@all`. Repeatable. See note below. |
+| `--env=<name>` | Restrict `create_envs` and `install_envs` to the named env(s): a name, a matrix base (its default interpreters), a matrix child by its concrete name (`<base>-<impl>-<version>`), or `<base>@all`. Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
-| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
+| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `git_hook` (default: auto-detected) |
 | `--workspace-packages=editable\|wheel` | Override how [workspace packages](glossary.md#workspace-package) are installed in every env for this run. `editable` installs from source; `wheel` builds one wheel per package and installs it (see [Preparing Environments — workspace packages](guides/preparing-environments.md#workspace-packages)). Default: resolved from `[workspace.workspace_packages_install]` for the active dev-env. |
 | `--resource-usage[=SEC]` | As for `run`: one `[resources]` line per interval plus a peaks summary. A non-numeric value is rejected with click's exit 2. |
 | `--no-resource-usage` | Disable the reporter, including its CI default. |
@@ -261,7 +266,7 @@ dump unformatted.
 | `--no-format` | Write the dump unformatted, bypassing the project's formatter |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 |
-| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
+| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `git_hook` (default: auto-detected) |
 
 ---
 
@@ -349,11 +354,11 @@ Use `--dev-env=<value>` on any command to override the detected value explicitly
 # Force CI/CD mode locally
 python -m finecode run --dev-env=ci lint
 
-# Mark as a pre-commit run
-python -m finecode run --dev-env=precommit lint
+# Mark as a git hook run
+python -m finecode run --dev-env=git_hook lint
 ```
 
-Valid values: `ai`, `ci`, `cli`, `ide`, `precommit`.
+Valid values: `ai`, `ci`, `cli`, `ide`, `git_hook`.
 
 ---
 

@@ -70,6 +70,8 @@ class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResul
     ...
 ```
 
+The same routing applies when a handler dispatches an action through `IWorkspaceActionRunner.run_action_in_projects` with `project_paths=None`: a workspace-scoped action runs once in the workspace root, and a project-scoped one in every declaring project. Explicit `project_paths` are honoured as given for either scope — the `inspect_code` bridges use this to run the workspace-scoped `lint` in each project, narrowed to that project.
+
 ## Service
 
 A **Service** is a long-lived dependency that handlers (and other services) can request via dependency injection. The Extension Runner resolves services by type annotation and injects them into handler constructors.

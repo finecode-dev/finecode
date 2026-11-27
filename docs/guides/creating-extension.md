@@ -198,6 +198,28 @@ class MyToolHandler(code_action.ActionHandler[...]):
 
 The framework logs the full action payload at `TRACE` level before calling your handler. Enable it with `"finecode_extension_runner" = "TRACE"` in your ER log groups config. Do not repeat this in the handler — it creates noise without adding value (R-504).
 
+### Timing synchronous work
+
+A handler can time one synchronous phase of its work with
+`synchronous_phase` from `finecode_extension_api.phase_timing`:
+
+```python
+from finecode_extension_api.phase_timing import synchronous_phase
+
+with synchronous_phase("render", input_counts=lambda: {"items": len(items)}) as phase:
+    content = render(items)
+    phase.completion_counts(lambda: {"output_chars": len(content)})
+```
+
+The contract: the scope runs synchronously on one thread -- no `await`, no
+suspension, no thread hop inside. The runtime records one span per phase with
+elapsed and thread-CPU time separately; thread CPU covers only the calling
+thread, so worker threads and subprocesses are unattributed elapsed time, and
+nested scopes each measure their own span. Count names match
+`^[a-z][a-z0-9_]{0,63}$` with values >= 0; a count the provider cannot
+produce is recorded as unavailable, never zero. The body's result, exception
+and cancellation pass through unchanged.
+
 ### What handlers should log
 
 For handlers that spawn an external process, log the following at `DEBUG`:
@@ -210,8 +232,7 @@ Emit a `WARNING` when the handler's primary job is to produce results but return
 
 ```python
 cmd = ["my_tool", "--format", "json"]
-process = await self.command_runner.run(cmd, cwd=project_dir)
-await process.wait_for_end()
+process = await self.command_runner.run_to_completion(cmd, cwd=project_dir)
 
 exit_code = process.get_exit_code()
 stdout = process.get_output()

@@ -121,10 +121,10 @@ Each service module is a collection of related functions (not classes).  They re
 | `document_sync.py` | Syncs open-document state to ERs on restart. |
 | `partial_results_service.py` | Manages partial-result token subscriptions for streaming responses. |
 | `prepare_envs_service.py` | Creates and installs execution environments. Provides `install_env_for_project` for targeted auto-repair of a single env. |
-| `in_flight_runs.py` | Register of runs dispatched and not yet finished, per project.  Maintained in memory regardless of WAL configuration, because recovery consults it to refuse replacing runners that are executing something (ADR-0079). |
+| `in_flight_runs.py` | Register of runs dispatched and not yet finished, per project.  Maintained in memory regardless of WAL configuration, because recovery consults it to refuse replacing runners that are executing something (ADR-0079). A cancelled delegated child stays in flight until its reply (ADR-0179). |
 | `config_reload_service.py` | Configuration recovery (`workspace/reloadConfig`): re-reads a project's config from disk, resolves its presets, then replaces its runners.  The order is load-bearing — preset resolution needs a running `dev_workspace` ER (ADR-0073). |
 | `shutdown_service.py` | Cleans up runners and resources on server shutdown. |
-| `event_loop_lag_monitor.py` | Samples the WM's own event-loop lag; logs a rate-limited warning carrying runner, process-budget and in-flight-run context when the loop is starved.  Diagnostic only. |
+| `event_loop_lag_monitor.py` | Samples the WM's own event-loop lag; logs a rate-limited warning carrying runner, process-budget and in-flight-run context when the loop is starved. Diagnostic only. Sampling mechanics are shared with the ER monitor through `finecode_common.lag`. |
 | `resource_usage.py` | Builds the read-only `server/getResourceUsage` snapshot from runner counts, budget, in-flight runs, host readers and the lag window. Never waits. |
 
 #### Run service
@@ -148,7 +148,9 @@ execution_scopes.py   — route to project or workspace executor based on Action
 - forwarding `PartialResult` and `ProgressNotification` streams from ERs to clients
 
 When an action is *matrixed* (its handlers bind to concrete per-interpreter
-envs produced by interpreter-matrix config expansion, ADR-0047), it fans out
+envs produced by interpreter-matrix config expansion, ADR-0047, recognised by
+their `matrix_env` key; a plain `interpreter` pin does not make an env a matrix
+child), it fans out
 per interpreter and returns ONE variant-keyed result (results nested by
 interpreter, return codes OR'd) instead of a single un-keyed run — on BOTH
 dispatch paths:
@@ -163,6 +165,22 @@ dispatch paths:
   responses with the same `matrix_runner._combine_variant_responses`.
 Non-matrix actions use the existing single/multi-env dispatch path unchanged
 on both paths.
+
+#### Stream-prefix completion and abort
+
+A runner invocation's received notification prefix completes through
+listeners, aggregation and local output handoff before its received
+success/error response is exposed. Ordering: response capture freezes each
+subscribed prefix before future resolution; intermediate relays forward
+fences without acknowledging, and only the final sink acknowledges after
+its local writer handoff. Received runner errors therefore wait for their
+prefix; stream faults stay in cause/diagnostics and never become synthetic
+success. Aborts settle pending fences with their cause, retire
+subscriptions, and join owned tasks through one shielded finalizer;
+caller cancellation stays the primary outcome. A consumer that leaves the
+run context, or stops reading one of its streams, aborts that stream, so
+fences a later runner reply inserts settle at once. No new wire field, token
+policy, deadline or queue bound is introduced.
 
 A matrixed action's fan-out can be restricted to a subset of its declared
 interpreter axis (ADR-0103): `run`'s `--interpreter` selectors
@@ -189,7 +207,7 @@ runs the full axis, unchanged.
 | `run_dispatch_bridge.py` | Slot filled by `services/run_service` — see [ER→WM callback slots](#erwm-callback-slots). |
 | `knowledge_bridge.py` | Slot filled by `services/knowledge_service`. |
 | `wm_bridge.py` | Slot filled by `wm_server.py`, for broadcasting to clients and ER log forwarding. |
-| `elicitation_bridge.py` | Slot filled by `wm_server.py`, for putting a question to the client that started the run (ADR-0082).  Also owns the registry mapping a streaming run to its originating connection. |
+| `elicitation_bridge.py` | Slot filled by `wm_server.py`, for putting a question to the client that started the run (ADR-0082). Also serves availability (`can_elicit`). Also owns the registry mapping a streaming run to its originating connection. |
 | `_internal_client_api.py` | Low-level send/receive over the `AsyncIOThread`. |
 | `_internal_client_types.py` | Protocol types for WM↔ER communication (request/response/notification dataclasses, method name constants). |
 | `runner_counts.py` | The one runner-counting implementation and status filter (`count_runners`, `live_runner_pids`), plus `record_runner_peaks`. Neither the lag monitor nor the resource snapshot names a runner status. |
@@ -302,7 +320,7 @@ workspace/reloadConfig
   → config_reload_service.reload_config
       → [optional] read_configs.read_projects_in_dir over ws_dirs_paths  (rescan)
       → [per project, under project_init_lock]
-          → refuse if a run is in flight in this project (ADR-0079)
+          → refuse if a run is in flight in this project (ADR-0079; a cancelled delegated child counts until its reply, ADR-0179)
           → ws_projects_raw_configs.pop(project_dir)   ← every re-read path
                                                           short-circuits on this
           → runner_start_service.start_runners_with_auto_prepare
@@ -596,8 +614,14 @@ replacement — the one recovery operation that is not a WM method.
 
 ### Write-Ahead Log (`wal.py`)
 
-Optional feature.  When enabled, `WalWriter` appends action results to a log file for
-replay or inspection.  `WorkspaceContext.wal_writer` is `None` when WAL is disabled.
+`WalWriter` appends run lifecycle events for external readers (ADR-0015), and
+nothing in the WM replays them. `wal_writer` is `None` when WAL is disabled.
+Plain dispatches and delegated streaming runs
+(`ProjectExecutor.run_action_with_partial_results`) record lifecycle events,
+while client, batch and matrix streaming record none. One run id is minted per
+call, and a terminal event describes one dispatch, so a run id can carry zero,
+one or several terminal events. Terminal-event gaps kept for parity with the
+plain path are tracked in #913.
 
 ### Event-loop lag monitor (`services/event_loop_lag_monitor.py`)
 
@@ -643,6 +667,13 @@ It is diagnostic: it leases nothing, takes no lock, and nothing depends on it ru
 sample interval, threshold and cooldown are module constants (`SAMPLE_INTERVAL_SEC`,
 `WARN_THRESHOLD_SEC`, `WARN_COOLDOWN_SEC`).  `wm_server.start` launches it and
 `wm_server.stop` cancels it.
+
+The sampling mechanics (usage deltas, episode accounting, the rearm-from-wake sampler)
+live in the `finecode_common.lag` package, shared with the ER-side monitor
+(`finecode_extension_runner.er_lag_monitor`, owned by `ErServer`, started from the
+`initialize` exchange). The WM adapter owns the WM messages, thresholds, lifecycle and
+resource-peak folding; the ER adapter owns the D9 thresholds, its own messages and
+lifecycle. Neither adapter holds the other's state.
 
 The monitor keeps the recent samples (600 s window, `LAG_WINDOW_MAX_SEC`) and reports a
 `LagSummary` over a caller-chosen window (`lagWindowSec`, default `LAG_WINDOW_DEFAULT_SEC`

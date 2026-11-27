@@ -647,6 +647,7 @@ Execute multiple actions across multiple projects. Used for batch operations.
   "options": {
     "concurrently": false,
     "resultFormats": ["json", "string"],
+    "mergeResults": true,
     "trigger": "user",
     "devEnv": "cli"
   }
@@ -661,9 +662,15 @@ requested actions.
 - `partialResultToken` — when present, the server emits one `actions/partialResult`
   notification per completed project in completion order.  Each notification carries
   the full result block for that project (see `actions/partialResult` below).  The
-  final response contains only `returnCode` as a completion signal.
+  final response contains `returnCode` as a completion signal. When `mergeResults`
+  is enabled, it also contains the merged `results` described below.
 - `progressToken` — when present (and `partialResultToken` is absent), the server
   sends aggregated `actions/progress` notifications across all (project × action) slots.
+- `mergeResults` — when `true`, the final response includes a merged result for each
+  project/action slot in `results`. Each slot has `resultByFormat` and `returnCode`.
+  A successful result may contain `json`, `string`, or `styled_text_json` according
+  to `resultFormats`. A failed text merge has an empty `resultByFormat` and a nonzero
+  `returnCode`; the batch continues and other slots remain in `results`.
 
 **Result (without `partialResultToken`):**
 
@@ -680,15 +687,29 @@ requested actions.
 ```
 
 Result is keyed by project path, then by action source. `returnCode` at the top level
-is the bitwise OR of all individual return codes.
+is the bitwise OR of all individual return codes. Project and action keys retain the
+request's resolved project and action order, even when slots finish in a different order.
 
 **Result (with `partialResultToken`):**
 
 ```json
-{"returnCode": 0}
+{
+  "results": {
+    "/abs/path/to/project_a": {
+      "finecode_extension_api.actions.LintAction": {
+        "resultByFormat": {"json": {"messages": {"file.py": []}}, "string": "All checks passed."},
+        "returnCode": 0
+      }
+    }
+  },
+  "returnCode": 0
+}
 ```
 
-All per-project result data is carried by `actions/partialResult` notifications.
+With `mergeResults` enabled, `results` is included in the final response as above;
+otherwise the final response contains only `returnCode`. Per-project progress data is
+still carried by `actions/partialResult` notifications. Failed non-matrix text merges
+have an empty `resultByFormat` and a nonzero slot `returnCode` and produce no text block.
 
 ---
 
@@ -1053,6 +1074,63 @@ subscription is dropped.
 
 ---
 
+### Server -> Client Requests
+
+The WM sends a request to one client when a run needs something only that client
+can provide. The client answers with a JSON-RPC response, like any other
+request. Requests are addressed to a single connection, never broadcast.
+
+#### `client/elicit`
+
+Puts a choice, text, or multi-select question to the person behind one client. Sent to the
+connection that started the run asking the question, and only if that client
+declared the shape in `client/initialize`:
+
+```json
+{"clientId": "cli", "capabilities": {"elicitation": {"choice": true, "text": true, "multiChoice": true}}}
+```
+
+A capability of `true` declares choice only. A dict declares a shape only when its key is exactly `true`: `{"choice": false, "text": true}` declares text (and choice, which is truthy), `1`, `"yes"` or `{}` declare nothing. A connection that did not declare the asked shape is never sent the question; the asking handler
+is told that nobody could be asked, without a round trip. The `client/initialize` response still echoes only `{"elicitation": true|false}`; it never reports shapes.
+
+- **Type:** request (server -> client)
+- **Clients:** CLI, MCP
+- **Status:** implemented
+
+**Params (choice):**
+
+```json
+{
+  "message": "Keep the generated files?",
+  "options": ["keep", "revert"],
+  "default": "keep",
+  "timeoutSec": 300.0
+}
+```
+
+`default` is a display field for pre-selection and may be `null`; the WM never applies it
+on a client's behalf. `descriptions` (option text to detail) is sent only when given. An older client sees a described choice as a plain choice. `timeoutSec` is informational: the WM owns the deadline and
+withdraws the question when it passes (see `client/elicitWithdrawn`). A client
+that holds its own pending request needs it to know when to stop holding it.
+
+**Params (text):** `{ "kind": "text", "message": ..., "timeoutSec": ... }`, plus `multiline`, `initialValue` and `placeholder` only when set. **`Params (multi-select):** `{ "kind": "multiChoice", "message": ..., "options": ..., "timeoutSec": ... }`, plus `default` (the offered pre-selection, in offered order) and `descriptions` (offered keys only) only when set. The WM rejects an unknown `kind`, a choice or multi-select with no options, and a prefill over 65,536 characters without sending anything.
+
+**Result:**
+
+```json
+{"outcome": "answered", "value": "revert"}
+```
+
+`outcome` is `"answered"` (choice: `value` is one of `options`; text: `value` is the exact string; multi-select: `values` is the offered-ordered selection), `"declined"` (the
+person was asked and refused) or `"unavailable"` (nobody could be asked). A
+client that cannot ask a person at all must not declare the capability rather
+than answer `"unavailable"`. A text `value` that is not a string, is over 65,536 characters, or is not valid UTF-8 is `unavailable`; a multi-select `values` that is missing, holds a non-string, repeats, or names an unoffered option is `unavailable`.
+
+A response that arrives after the question ended is discarded by the WM without
+error.
+
+---
+
 ### Server -> Client Notifications
 
 These are sent by the WM Server to connected clients. Clients must implement
@@ -1243,3 +1321,51 @@ Delivery is batched (~200ms cadence by default) except records at `ERROR` or
 above, which are flushed immediately. Any buffered tail is force-flushed
 before the response to the request that triggered the logging and again on
 disconnect, so log ordering relative to the triggering request is preserved.
+
+---
+
+#### `client/elicitWithdrawn`
+
+Tells a client that the WM has stopped waiting for a `client/elicit` question it
+sent. The question must leave the person's screen and must not receive input
+meant for a later one.
+
+- **Type:** notification (server -> client)
+- **Clients:** CLI, MCP
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"id": 12, "reason": "expired"}
+```
+
+`id` is the `id` of the `client/elicit` request. `reason` says why the WM
+stopped waiting:
+
+| `reason` | Meaning |
+| --- | --- |
+| `"expired"` | The WM deadline passed. |
+| `"runCancelled"` | The WM cancelled the run that asked. |
+| `"noLongerNeeded"` | The asking action no longer wants an answer: it gave up the ask, finished, failed, or its runner exited. |
+
+More values may be added. A client treats an unknown `reason` as an ending with
+no stated cause.
+
+Client obligations:
+
+- Remove the question if it is shown, or drop it unshown if it is waiting, and
+  never show it later. Discard what was typed for it.
+- Do not reply: the notification is not acknowledged, and an answer to the
+  question would be discarded.
+- Ignore an `id` it does not hold.
+- A question read together with its withdrawal in one read must still be
+  withdrawn: hold a question from the moment its request is read.
+- On connection loss, end every held question, shown or waiting, before any
+  reconnection can carry a new one. The WM sends no withdrawal for a connection
+  it has lost.
+
+The WM writes the withdrawal before it writes anything that could make the
+client treat the question as still open: before the next `client/elicit` of the
+same run, and before the response of the run that asked. A client that ignores
+the notification keeps its previous behaviour: its late answer is discarded.

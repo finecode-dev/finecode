@@ -23,6 +23,7 @@ These services are registered by the Extension Runner at startup and are availab
 | `finecode_extension_api.interfaces.iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider` | `finecode_extension_runner.impls.extension_runner_info_provider.ExtensionRunnerInfoProvider` | Runtime env info (venv paths, cache dir). |
 | `finecode_extension_api.interfaces.iworkspaceactionregistry.IWorkspaceActionRegistry` | `finecode_extension_runner.impls.workspace_action_registry.WorkspaceActionRegistryImpl` | Read-only view of every action and handler in the workspace, across all projects and envs. See [Reading the action registry](#reading-the-action-registry-with-iworkspaceactionregistry). |
 | `finecode_extension_api.interfaces.iknowledgestore.IKnowledgeStore` | `finecode_extension_runner.impls.knowledge_store.KnowledgeStoreImpl` | Query the workspace's knowledge store, which the WM owns. See [Querying the knowledge store](#querying-the-knowledge-store-with-iknowledgestore). |
+| `finecode_extension_api.interfaces.iuserprompt.IUserPrompt` | `finecode_extension_runner.impls.user_prompt.UserPrompt` | Ask the person who started the run a question. See [Asking the user](#asking-the-user-with-iuserprompt). |
 
 ## Provisioning `IRepositoryCredentialsProvider`
 
@@ -82,11 +83,11 @@ config carrier with no I/O and nothing to validate is service config instead.
 
 ## Commands are executed without a shell
 
-`ICommandRunner.run()`/`run_sync()` take an **argv vector**, never a shell
-command string:
+`ICommandRunner.run()`/`run_to_completion()`/`run_sync()` take an **argv vector**,
+never a shell command string:
 
 ```python
-process = await self.command_runner.run(["git", "status", "--short"])
+process = await self.command_runner.run_to_completion(["git", "status", "--short"])
 ```
 
 Each element is passed to the program as exactly one argument, on any OS: no
@@ -109,21 +110,25 @@ program verbatim. Consequences:
   `^`, `&`, `|`, `<`, `>`, `(`, `)`, `"`, CR, LF) is **refused** with
   `UnsafeBatchArgumentError` rather than escaped — refusing is safer than
   handing the argument to cmd.exe unquoted.
-- **An unstartable program raises.** `run()` raises `OSError`
-  (`FileNotFoundError` for a missing program) instead of returning a nonzero
-  exit; a handler that cannot recover from a missing binary should catch it
-  and report a structured failure.
+- **An unstartable command raises `CommandStartError`.** Every spawning
+  method raises it instead of returning a nonzero exit: as
+  `ProgramStartError` when the OS fails the spawn (a missing program or
+  `cwd`; `.errno`, `.strerror`, `.program` and `.cwd` are set and the
+  original `OSError` is the `__cause__`), or as a `CommandNotLaunchableError`
+  refusal (above). A handler that cannot recover from a missing binary
+  catches `CommandStartError` around the call and reports a structured
+  failure. Only spawning raises it, so an `OSError` from the body of
+  `async with runner.run(...)` is not mistaken for a start failure.
 
 ## Reading process output with `ICommandRunner`
 
-A process spawned by `ICommandRunner.run()` offers its output two ways, and each
+A process spawned by `ICommandRunner` offers its output two ways, and each
 stream chooses independently.
 
 **Buffered** — the default, and what most handlers want:
 
 ```python
-process = await self.command_runner.run(["pytest", "-q"])
-await process.wait_for_end()
+process = await self.command_runner.run_to_completion(["pytest", "-q"])
 output = process.get_output()
 ```
 
@@ -131,9 +136,9 @@ output = process.get_output()
 running (a watch-mode tool, or a line-framed RPC protocol):
 
 ```python
-process = await self.command_runner.run(["npm", "watch"])
-async for line in process.stdout_lines():
-    ...  # lines arrive as the child writes them, newline stripped
+async with self.command_runner.run(["npm", "watch"]) as process:
+    async for line in process.stdout_lines():
+        ...  # lines arrive as the child writes them, newline stripped
 ```
 
 Both streams are drained from the moment the process is spawned, whether or not
@@ -153,21 +158,29 @@ the subscriber:
 Streaming is available only on `IAsyncProcess`. `run_sync()` has no way to
 interleave reads with anything else, so `ISyncProcess` is buffered only.
 
-## Stopping a process with `ICommandRunner`
+## Who owns a bounded process
 
-A handler that owns a long-lived child — an agent run, a watch-mode tool — has to
-be able to end it, because its own timeout otherwise only stops the *waiting*:
+A bounded command belongs to the scope that starts it, not to the handler run:
+leaving the scope stops whatever is still alive, and the ER ends any scope
+still open when it stops.
 
 ```python
-process = await self.command_runner.run(["claude", "--print"], new_process_group=True)
-...
-if process.is_alive():
-    process.terminate()          # SIGTERM, returns immediately
-    with contextlib.suppress(TimeoutError):
-        await process.wait_for_end(timeout=2.0)
-if process.is_alive():
-    process.kill()               # SIGKILL
+process = await self.command_runner.run_to_completion(["uv", "venv", "--clear", venv_dir])
 ```
+
+```python
+async with self.command_runner.run(["pytest", "-q"]) as process:
+    await process.wait_for_end()
+```
+
+Leaving the scope stops what is still alive on a bounded ladder — SIGTERM to
+the owned group, then SIGKILL after a grace on POSIX, one tree kill on
+Windows — waits a bounded time until the process or group is gone, releases
+the work slot and the local-cap permit, waits a bounded time for the WM
+release, and propagates under the body's exception precedence. Cancellation
+is never lost and never shortens the cleanup. Accepted costs of the guarantee:
+an escaped `setsid` descendant, a no-group descendant, Windows best effort, an
+unanswered WM release, and unconfirmable survivors.
 
 Two things are easy to get wrong here:
 
@@ -177,25 +190,40 @@ Two things are easy to get wrong here:
   which may be ignoring that signal, keeps running. `is_alive()` reports on the
   process group when the process owns one, which is the question a teardown
   actually has.
-- **`new_process_group=True` is what makes the signal reach the tree.** Without
-  it the signal goes to the process alone, so anything the command spawned
-  (an agent's tool calls) survives. It is off by default because it also detaches
-  the command from the terminal's signals; a caller that never tears its process
-  down would only lose the Ctrl-C that used to reach it.
+- **The group is owned by default.** The stop reaches everything the command
+  spawned rather than just the leader. Pass `new_process_group=False` only for
+a process that must stay in the caller's session.
 
-The subprocess slot the process holds (ADR-0056) is released when the process
-actually exits, not when the handler returns — which is why a teardown that stops
-one rung early leaks a slot for the ER's lifetime.
+Background bounded work holds the scope open in its own task, and the ER ends
+it at stop; scopes open only on the ER's event loop. A handler that ends
+normally but wants the manual `terminate()`/`wait_for_end(timeout)`/`kill()`
+sequence does it inside the body. For work whose lifetime is not a unit of
+work — a server, an interactive agent — use `start_long_running()`, which
+takes no slot and leaves the lifetime to the caller.
+
+The subprocess slot the process holds (ADR-0102) is released when the owned
+process or group is confirmed gone, not when the handler returns — which is why
+a teardown that stops one rung early leaks a slot for the ER's lifetime.
 
 ## Work slots
 
 Extension code has three explicit ways to do work, each with fixed slot semantics:
 
-- **Bounded job** — `ICommandRunner.run()` holds one work slot for the process lifetime.
+- **Bounded job** — `ICommandRunner.run()` holds one work slot for the scope's lifetime, until the owned process or group is confirmed gone.
 - **Long-lived process** — `ICommandRunner.start_long_running()` takes no work slot and no local cap. Use it for a server or an interactive agent whose lifetime is not a unit of work.
 - **Explicit scope** — `IWorkSlots.acquire()` holds one slot while the block causes CPU-heavy work it does not run as its own bounded child process, typically a request to a long-lived local server.
 
 Inside an `IWorkSlots.acquire()` block, starting a bounded process, submitting to `IProcessExecutor`, acquiring another slot, dispatching an action, or asking the WM anything through an injected service raises `WorkSlotScopeError`: each of those can wait on the slot the block holds. Keep the block to the work itself; a wait that is not the work belongs outside it.
+
+## Asking the user with `IUserPrompt`
+
+`ask_choice` puts one multiple-choice question to the person who started the run, `ask_text` asks for a short free text (one line, or several with `multiline=True`), and `ask_multi_choice` lets the person pick any number of the offered options. Each returns whether it was answered, declined, or could not be asked at all: a choice answer carries `value`, a text answer carries the exact submitted text in `value` (`""` and whitespace included), and a multi-select answer carries `values` in the order the options were offered (`()` is the empty selection). `check_availability` says whether a question could be put to a person right now — `can_ask`, `can_ask_text` and `can_ask_multi_choice` — answered from the facts the WM already holds; it sends nothing to the client. Call the check outside `IWorkSlots.acquire()`: a check inside the scope raises `WorkSlotScopeError` instead of answering. A passed check is not a promise that a later question is answered. In CI, FineCode clients declare nothing, so every question is answered unavailable at once (ADR-0163).
+
+An extension that calls `ask_text`, `ask_multi_choice`, or passes `descriptions` needs `finecode_extension_api~=0.5.1`; one that must run on an older ER leaves `descriptions` out. `default` (choice and multi-select), `descriptions`, `multiline` and `initial_value` are display fields a surface may drop without the handler knowing; `placeholder` is a hint and is never the answer. An unchanged submitted prefill is the answer. An empty or repeated `options` list for multi-select returns `UNAVAILABLE` without sending anything; a `default` or `descriptions` entry naming an unoffered option is ignored. Text answers and prefills longer than 65,536 characters fail explicitly and are never truncated.
+
+A question ends when it is answered, when the person declines, or when the WM stops waiting for it. The WM stops waiting at the question's deadline (`timeout_sec`, bounded by `QUESTION_MAX_DEADLINE_SEC`), when the run that asked ends or is cancelled, and when the connection to the person is lost. In each case the client removes the question from the terminal or editor, says why, and `ask_choice` returns `unavailable` — `ask_choice` returns `declined` only when a person refused. A terminal client also stops showing the question `timeout_sec` plus 5 seconds after it received it if the WM never says so, and sends nothing when it does.
+
+`ask_choice` is abandoned only by cancelling the task that awaits it, for example `task.cancel()` on a task wrapping it, or a `TaskGroup` cancelling that task. The ask then raises `asyncio.CancelledError`, the WM withdraws the question from the person's screen, and the run itself continues. Awaiting the ask under a timeout of your own is the same thing: the timeout cancels the ask. Returning from the handler while an ask is still pending does not cancel it; the WM withdraws it when the run ends (ADR-0168).
 
 ## Caching with `ICache`
 

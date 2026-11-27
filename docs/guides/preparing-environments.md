@@ -120,6 +120,24 @@ If the env's dependency group also names the project directly (the
 idempotent: the editable install from `install_project` takes precedence over
 the plain named requirement, and the project is installed once.
 
+### Pinning an env's interpreter
+
+Without a pin, an env's venv uses uv's default Python. To choose the Python
+version, set a singular `interpreter`:
+
+```toml
+[tool.finecode.env.dev]
+interpreter = "cpython@3.14"
+```
+
+This only selects the interpreter the venv is created with. The env and its
+actions stay non-matrix: results are not keyed by interpreter, and `--env` /
+`--interpreter` treat the env like any other non-matrix env. Like
+`install_project`, the project's value wins over a preset that declares the
+same env. To run an action once per interpreter, declare an
+[`interpreters` axis](#filtering-by-environment-name) instead. A
+one-element `interpreters` list is still a matrix, so don't use it as a pin.
+
 ### Composing environments
 
 To reuse a group inside another group, use the standard PEP 735 `include-group`:
@@ -291,7 +309,7 @@ This is not an edge case — it is the normal result of ordinary configuration c
   interpreters = ["3.11", "3.12", "3.13"]
   ```
 
-  → declares `testing@cpython-3.11`, `testing@cpython-3.12`, `testing@cpython-3.13`. The `.venvs/testing` directory created before the matrix existed is now orphaned. A matrix env's children are each a full virtualenv, so the leftover base is easily hundreds of megabytes per project.
+  → declares `testing-cpython-3.11`, `testing-cpython-3.12`, `testing-cpython-3.13`. The `.venvs/testing` directory created before the matrix existed is now orphaned. A matrix env's children are each a full virtualenv, so the leftover base is easily hundreds of megabytes per project.
 
 Orphan-ness is resolved **per project**: the same env name can be orphaned in one project and legitimately declared in another that has no matrix.
 
@@ -304,8 +322,9 @@ python -m finecode run list_envs
 ```text
 /workspaces/myrepo
   dev_workspace         declared  created
-  testing@cpython-3.11  declared  created
-  testing@cpython-3.14  declared  MISSING
+  testing-cpython-3.11  declared  created
+  testing@cpython-3.11  ORPHANED  created
+  testing-cpython-3.14  declared  MISSING
   testing               ORPHANED  created
 ```
 
@@ -354,7 +373,7 @@ For a matrix base (ADR-0047 — one declaring an `interpreters` axis), `--env` t
 | Form | Selects |
 |---|---|
 | `<base>` | that base's default interpreters |
-| `<base>@<impl>-<version>` | that one child |
+| `<base>-<impl>-<version>` | that one child |
 | `<base>@all` | every child |
 | `<non-matrix>` | that env |
 
@@ -367,11 +386,11 @@ python -m finecode prepare-envs --env=testing
 # Every child of "testing".
 python -m finecode prepare-envs --env=testing@all
 
-# Select only the cpython@3.11 child.
-python -m finecode prepare-envs --env=testing@cpython-3.11
+# Select only the cpython-3.11 child.
+python -m finecode prepare-envs --env=testing-cpython-3.11
 ```
 
-`prepare-envs` has no `--interpreter`; name the child, or use `<base>@all`.
+`prepare-envs` has no `--interpreter`; name the child, or use `<base>@all`. The old `<base>@<impl>-<version>` form no longer names a child and is reported as an unknown env.
 
 ### Default interpreter subset
 
@@ -459,7 +478,7 @@ The built-in `create_envs`/`install_envs` handlers (`fine_python_uv`) shell out 
 
 Hardlinks and CoW clones only work within a single filesystem. If your devcontainer (or any container setup) puts `uv`'s cache (`~/.cache/uv` by default) on a different filesystem than the venvs it populates, `uv` prints `Failed to hardlink files; falling back to full copy. This may lead to degraded performance.` and continues with full copies for every package in every venv. This is easy to hit by accident: a `docker-compose.yml`/`devcontainer.json` that bind-mounts the project as one volume (e.g. `.:/workspaces/myproject`) leaves the container's home directory — where `uv`'s default cache lives — on the container's own root/overlay filesystem, a different device from the bind-mounted workspace.
 
-**Symptom:** every env (including matrix children like `testing@cpython-3.11`) grows by the full size of every sizeable dependency instead of sharing one cached copy. `uv` itself is a good example if `fine_python_uv` is present in an env — its own PyPI package bundles a ~60MB binary. Across a workspace with many projects × many envs, this adds up to tens of GB of pure duplication.
+**Symptom:** every env (including matrix children like `testing-cpython-3.11`) grows by the full size of every sizeable dependency instead of sharing one cached copy. `uv` itself is a good example if `fine_python_uv` is present in an env — its own PyPI package bundles a ~60MB binary. Across a workspace with many projects × many envs, this adds up to tens of GB of pure duplication.
 
 **Fix:** point `UV_CACHE_DIR` at a path on the same filesystem as your venvs, and gitignore it:
 

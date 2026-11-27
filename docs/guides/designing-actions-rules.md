@@ -4,6 +4,8 @@ This page is the normative layer for action design. Each rule is intentionally s
 
 Use `MUST` for hard constraints and `SHOULD` for strong defaults.
 
+A rule marked **Candidate** is proposed and not yet settled: apply it to new work, and in reviews, raise a violation as a question rather than a blocker. A candidate is promoted by removing the mark, or dropped if real cases disprove it.
+
 Rule IDs use reserved numeric ranges by group so we can extend one area later without renumbering the others:
 
 - `R-100` to `R-199`: Action contract
@@ -91,6 +93,27 @@ layer: users cannot extend the collection with additional handlers per project,
 and the collection logic cannot be reused by other callers (e.g. an incremental
 update triggered by a single file change).
 
+## R-110: Actions that write files report each targeted file's outcome
+
+**Candidate.**
+
+An action that may write files MUST report in its result, for every file it targeted, what happened to that file on disk:
+
+- already up to date, not written;
+- out of date but not written, because of a dry run (`save = false` or similar);
+- written;
+- write refused, for example on a version conflict.
+
+Consumers do not need the outcome to get a file's content: they read the current version through `IFileEditor`. The outcome is needed for three other reasons:
+
+- **Decisions inside the run.** A later handler or a parent action may act only on files this run wrote. For example, the format step after a sync must not rewrite a file the sync left alone.
+- **Reporting to callers that are not subscribed to the editor.** The CLI, MCP and agents learn what the run did only from its result. Editor change events reach only live subscribers, and they name an author, not a run.
+- **Outcomes the editor never sees.** A dry run's predicted content and a refused write never reach the editor, so the result is their only record.
+
+A flag such as `changed` alone does not cover these, because it describes the computed content, not what was written. Pair each file's path with its status in one record, so neither can be present without the other. Store the status as a dataclass field, not a property: results are serialized with `dataclasses.asdict`, which drops properties.
+
+Example: `sync_toolchains` reports `project_def_file: ProjectDefFileOutcome | None` with status `up_to_date`, `out_of_date` or `updated`. `format_file` reports `status` with `unchanged`, `changed`, `saved` or `save_refused`. Its file path is the payload's, and `format_files` keys each file's result by path.
+
 ## Inputs And Run Context
 
 ## R-201: Runtime discovery and static defaults are different mechanisms
@@ -136,6 +159,16 @@ resources — MUST remain as direct attributes on the context instance and MUST
 NOT appear inside the state dataclass.
 
 See [ADR-0025](../adr/0025-cross-env-context-state-dedicated-state-type.md).
+
+## R-206: Run outcomes go in the result; context state is for coordination
+
+**Candidate.**
+
+A fact about what the run did that a caller could act on — which file it targeted, whether it wrote it, which items it skipped — MUST be reported in the result, not only in run context state or logs. Ask: would the caller of `run_action` want this value? If yes, it belongs in the result.
+
+A later handler in a sequential pipeline reads such facts from `run_context.current_result`, which crosses env boundaries the same way `STATE_TYPE` does. `STATE_TYPE` (R-205) holds working data that handlers pass to each other and callers do not need, such as discovered inputs or normalized values.
+
+Example: `sync_toolchains` reports `project_def_file` (the path and its status) in its result. `sync_toolchains_format` reads `current_result.project_def_file` and formats the file only when its status is `updated`. Context state is not involved.
 
 ## Execution Model
 
@@ -299,6 +332,17 @@ gate fails on legacy findings no snapshot records. Renaming a contributor id
 orphans its snapshot entries. `FileExistenceValidationHandler` (both umbrellas)
 is exempt: path-existence findings are not tool findings and cannot be baselined.
 
+## R-312: Streaming-capable handlers MUST give every caller the same final result
+
+A handler that supports streaming MUST emit its partial results without checking
+whether they are observed. The framework decides whether a caller receives them:
+a top-level caller observes partials by supplying a token, and a parent observes
+child partials with `run_action_iter()`; `run_action()` returns only the child's
+final result. When partials have the action's result type, the final result MUST
+be their `update()` merge in arrival order. If the handler sends no partials, its
+returned value is the final result. A handler whose final result differs between
+token and no-token runs does not conform to this rule.
+
 ## Handler Observability
 
 Reserved range: `R-500` to `R-599`.
@@ -377,3 +421,6 @@ Before merging a new action, verify:
 13. If the handler is a leaf callable via `run_action_in_projects`: it sends at least one result in all code paths, including the "nothing to process" path (R-308).
 14. If the handler is a bridge that fans out: it returns early without creating tasks when inputs are empty, rather than propagating empty inputs downstream (R-309).
 15. If the handler is a dispatch handler: inputs no subaction covered carry a coverage miss on the result it returns or the partial it sends (R-310); an action whose output is not optional and whose input is a single whole-call target keeps raising `ActionNotFound` instead.
+16. If the handler supports streaming: it sends partials without checking whether they are observed, and token and no-token runs return the same final result (R-312).
+17. *Candidate:* facts about what the run did that a caller could act on are in the result, not only in context state; later handlers read them from `current_result` (R-206).
+18. *Candidate:* if the action may write files: the result reports each targeted file's path and on-disk status, including dry-run and refused writes (R-110).

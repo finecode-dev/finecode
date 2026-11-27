@@ -59,7 +59,11 @@ protocol even though the runner never became reachable. (Regression-tested in
 **Requests**
 
 - `initialize`
-  - Standard LSP initialize request.
+  - Standard LSP initialize request, carrying the telemetry settings in
+    `initializationOptions.telemetry`: `{ "mode": "disabled" }`, or
+    `{ "mode": "otlp", "otlpEndpoint": "<host>:<port>" }` (`otlpEndpoint`
+    is present if and only if mode is `"otlp"`). Any other object counts as
+    non-disabled: the ER attempts activation and reports per-signal status.
   - Example params (trimmed):
     ```json
     {
@@ -67,9 +71,19 @@ protocol even though the runner never became reachable. (Regression-tested in
       "clientInfo": {"name": "FineCode_WorkspaceManager", "version": "0.1.0"},
       "capabilities": {},
       "workspaceFolders": [{"uri": "file:///path/to/project", "name": "project"}],
-      "trace": "verbose"
+      "trace": "verbose",
+      "initializationOptions": {"telemetry": {"mode": "otlp", "otlpEndpoint": "127.0.0.1:4317"}}
     }
     ```
+  - Result: the standard server capabilities and info, plus
+    `telemetry: { "traces": ..., "metrics": ..., "logs": ... }` with each
+    signal `"disabled"`, `"active"` or `"unavailable"`. The ER makes one
+    setup attempt before responding: it activates the OTLP providers, arms
+    and starts its event-loop lag monitor, installs the synchronous-phase
+    timing binding, and writes the first telemetry health summary. A second
+    `initialize` replays the stored result without attempting anything again.
+    Telemetry settings are never carried by or applied from
+    `finecodeRunner/updateConfig`.
 
 - `shutdown`
   - Standard LSP shutdown request.
@@ -239,11 +253,15 @@ protocol even though the runner never became reachable. (Regression-tested in
     `null` means the action class could not be imported.
 
 - `actions/mergeResults`
-  - Params: `{ "actionName": string, "results": list }`
+  - Params: `{ "actionName": string, "results": list, "resultFormats": ["json" | "string"] }`
+    `resultFormats` defaults to `["json"]`.
   - `results`: list of serialized `RunActionResult` objects (`dataclasses.asdict`),
     one per concurrent segment or handler. Used by the WM after a concurrent
     multi-env run to merge the per-env results into a single final result.
-  - Result: `{ "merged": <serialized RunActionResult> }` or `{ "error": "..." }`
+  - Result: `{ "resultByFormat": { ... } }` or `{ "error": "..." }`. The `json`
+    key is the merged result serialized with `dataclasses.asdict`. For `string`,
+    the ER returns `string` or `styled_text_json`, depending on the result's text
+    renderer. The `merged` key is not part of this request or response.
 
 - `actions/reload`
   - Params: `{ "actionName": string }`
@@ -318,11 +336,16 @@ protocol even though the runner never became reachable. (Regression-tested in
 - `textDocument/didChange`
 - `textDocument/didClose`
 - `$/cancelRequest`
-  - Sent by WM when an in-flight request should be cancelled.
+  - Sent by WM when an in-flight request should be cancelled. The ER sends it too, in the other direction, for `finecode/elicit` and the two run methods (see ER -> WM below).
 
 ### ER -> WM
 
 **Requests**
+
+ER → WM requests carry the caller's trace context in the existing envelope
+`_meta.traceparent` field, so receiver spans parent to the matching caller
+span across processes.
+
 
 - `workspace/applyEdit`
   - Standard LSP request for applying workspace edits.
@@ -337,8 +360,10 @@ protocol even though the runner never became reachable. (Regression-tested in
     in, handler/service dependencies are merged into `[dependency-groups]`, and
     interpreter matrices are already expanded (ADR-0047): an env declaring
     `interpreters` no longer appears in `[tool.finecode.env]`, having been replaced
-    by one `<base>@<impl>-<version>` child per interpreter, each with a singular
-    `interpreter`. Extensions reading the env table can rely on this ordering; it is
+    by one `<base>-<impl>-<version>` child per interpreter, each with a singular
+    `interpreter` and a `matrix_env` key naming its base. Only entries with
+    `matrix_env` are matrix children; an `interpreter` without it is a plain pin
+    that selects the venv's interpreter. Extensions reading the env table can rely on this ordering; it is
     pinned by `test_config_served_to_extensions_has_matrices_already_expanded`.
 
 - `workspace/getWorkspacePackages`
@@ -371,8 +396,90 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `payload` (object): serialized action payload (`dataclasses.asdict`)
     - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
     - `callerKwargs` (object | null): serialized `CallerRunContextKwargs`, or `null` when none. The WM passes it through opaquely to the target ER.
-  - Result: `{ "result": <json result object>, "returnCode": 0|1 }`
+    - `partialResultToken` (int | string, optional): selects streamed partial-result
+      delivery. Omission selects the existing non-streamed behavior. Tokens are
+      scoped to the parent connection that sent them.
+    - `progressToken` (int | string, optional): selects live child-progress
+      relay. Omission keeps today's behavior: the child's progress is invisible
+      to the parent. Scoped to the parent connection like `partialResultToken`;
+      only honored together with `partialResultToken`. Client paths
+      (`actions/run` token passthrough, `actions/runBatch`) are unchanged.
+  - Result: `{ "result": <json result object>, "returnCode": 0|1, "subtreeStopped": boolean }` — `subtreeStopped` is true iff every delegated call of the run ended stopped, including the calls of same-env child runs at any depth. A `delegated call` here and below is a WM-path call only.
   - Runs the action at project scope (all env-runners of the ER's own project). WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching.
+  - Streamed delivery: when `partialResultToken` is present, the WM allocates a
+    fresh child token for the child runner and translates each matching
+    `$/progress` notification back to the parent token. `value` is the child's
+    stringified `json` result object: the WM strips the child's per-format
+    wrapper (`{"json": {...}}`), so a streamed partial and the direct-final
+    fallback have the same shape, which the parent ER structures into the child's
+    result type. Other result formats are not forwarded. The streamed reply carries
+    completion metadata (`returnCode`, with no result data). When no partial
+    arrived, the WM emits the direct-final fallback notification on the parent
+    token before completion. Per-call forwarding state (the parent-token map
+    entry, forwarding pumps, the per-call progress buffer and the direct-final
+    fallback) is released when the parent closes early (see
+    `finecode/releaseDelegatedCall` below); a close or cancel sends
+    `$/cancelRequest`, which cancels the child. The close completes when both
+    the release and the child's stop have ended, or at the 5.0 s stop bound,
+    whichever is first.
+  - Live child-progress relay: when both `partialResultToken` and `progressToken`
+    are present, the WM allocates a second fresh child token — the child progress
+    token, a uuid distinct from the child partial token and never derived from
+    caller tokens — passes it as the child
+    run's progress token, and forwards the child's `$/progress` values to the
+    parent ER on the parent's `progressToken`, translated into plain
+    `report(message=...)` calls (percentages are never forwarded). Partials and
+    progress keep separate tokens end to end. A `begin`
+    carrying a string `message` relays that message, else its string `title`;
+    a `report` relays a string `message` and drops a missing one silently; an
+    `end` relays a string `message` and otherwise the fixed text
+    `Delegated progress ended`. Malformed or unknown child values are dropped
+    with a warning.
+  - Progress bound: at most 100 delegated-progress notifications are held per
+    call, summed over every WM stage and every child runner of the call; at the
+    limit the oldest pending notification is discarded first, except that the
+    newest pending notification that would produce a report is always kept.
+    A failing progress send to the parent stops progress forwarding for that
+    call only (logged once as a warning); partial results and the reply
+    continue, and the call's progress is still consumed to its end so the
+    child run's drain completes.
+  - Progress drain: every relayed report reaches the parent before the delegated
+    iterator ends on a received `end`, and none is delivered after it ends;
+    reports arrive in child order. A parent that stops pulling still receives
+    the bounded tail ending with the end.
+
+- `finecode/releaseDelegatedCall`
+  - Params: `{ "partialResultToken": <token> }` — the parent partial-result
+    token of a delegated call the parent closed early.
+  - Result: `{}`.
+  - The parent ER sends this once when its delegated iterator ends by `aclose()`,
+    finalization or cancellation while the `finecode/runActionInProject` request
+    still has no reply, and sends `$/cancelRequest` for that request at the same
+    moment. The close completes when both the release reply and the child's stop
+    have ended, or 5.0 s after the close began, whichever is first; the 2.0 s
+    release wait runs inside, and concurrently with, the 5.0 s stop bound, and a
+    late or missing release reply only logs a warning. A repeated
+    cancellation while waiting does not shorten the wait. No release is sent for
+    a call whose reply was received, or on the same-env path. A call released
+    before dispatch never acquires forwarding state. Notifications already handed
+    to the connection before the release was processed may still arrive; none
+    are forwarded after. On release the WM
+    drops that call's forwarding state — no further `$/progress` and no
+    direct-final fallback is sent to the parent for it — while the cancelled
+    child stops and its own output drains to a discarding sink until it ends.
+    Releasing an unknown, finished or already-released token (including another
+    connection's value) replies `{}` with no effect.
+
+- Version compatibility (delegated progress)
+  - The delegated-progress fields — `progressToken` on
+    `finecode/runActionInProject` and `finecode/releaseDelegatedCall` — require
+    same-version WM and ERs, with no capability flag, handshake or fallback:
+    sibling runner environments get the exact `finecode_extension_runner` pin
+    the WM injects (repaired by `prepare-envs`); `dev_workspace` equality is a
+    setup precondition that is not enforced. Behavior with a peer at another
+    version is unspecified and untested (a stale parent ER simply never sends
+    `progressToken`, so no child progress arrives); repair with `prepare-envs`
+    and a runner restart.
 
 - `finecode/getActionsForParent` (ADR-0045)
   - Params: `{ "parentActionSource": string }` — fully qualified import path of a
@@ -420,8 +527,25 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `projectPaths` (list[string] | null): explicit POSIX project paths, or `null` for all projects that declare the action
     - `payloadOverridesByProject` (object | null): complete per-project payload overrides (keyed by POSIX path); the WM shallow-merges `{**payload, **overrides[project]}`
     - `concurrently` (boolean, default `true`): run projects concurrently.
-  - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... } }`
+  - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... }, "subtreeStopped": boolean }` — same verdict rule as `finecode/runActionInProject` above.
   - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching, and never refuses a fan-out for its width — see [ADR-0095](../finecode_internal_docs/adr/0095-workspace-fan-out-is-bounded-by-recursion-depth-not-width.md). The subprocess fan-out a dispatch leads to is bounded by the [process budget](guides/wm-server-internals.md#process-budget) (ADR-0090).
+
+- `finecode/elicit`
+  - Params: `{ "message": string, "options": [string], "default": string | [string] | null, "kind": "choice" | "text" | "multiChoice", "multiline": boolean, "initialValue": string | null, "placeholder": string | null, "descriptions": { [option]: string }, "timeoutSec": number, "runId": string | null }` — `kind` is left out for choice; every other new field is left out when unused. A `default` or `descriptions` entry naming an unoffered option is left out.
+  - Result: `{ "outcome": "answered" | "declined" | "unavailable", "value": string | null, "values": [string] | null }` (ADR-0082); `value` and `values` are left out when unset.
+  - Puts one multiple-choice question to the client that started the named run and waits for its answer. No origin, a gone client, nothing declared, or the deadline all resolve `unavailable` without raising.
+  - When the WM stops waiting for the question (deadline, the run ending in any way, or the ER cancelling it), it sends the client `client/elicitWithdrawn` first ([WM protocol](wm-protocol.md#clientelicitwithdrawn)). A run that ends with an ask still pending gets that ask answered `unavailable` at once rather than at its deadline.
+  - Cancelling the wait is how an action abandons a question: the ER sends `$/cancelRequest` for this request id (below) and the WM withdraws the question.
+
+- `$/cancelRequest` (notification)
+  - Params: `{ "id": number }`
+  - Sent by the ER when the task awaiting its request is cancelled, synchronously before the cancellation completes: `finecode/elicit`, `finecode/runActionInProject`, and `finecode/runActionInWorkspace`. For `finecode/elicit` the WM withdraws the question from its client with reason `noLongerNeeded` (or `runCancelled` if the WM itself is cancelling the run) and answers the request `REQUEST_CANCELLED`. For the two run methods the WM cancels the call's WM run and its child requests, waits for the children, and replies `REQUEST_CANCELLED` with `error.data.subtreeStopped` carrying the verdict. A not-started run-method call replies `true`. A cancel that arrives before the request started, after it finished, twice, or for an unknown id withdraws at most once. A timeout is not an abandonment and sends none.
+  - Connection loss cancels the lost ER's open delegated calls and nothing else; `finecode/elicit` is never cancelled this way.
+
+- `finecode/elicitAvailability`
+  - Params: `{ "runId": string | null }`
+  - Result: `{ "canAnswer": boolean, "canAnswerText": boolean, "canAnswerMultiChoice": boolean }` — absent on an older WM reads as `false`. The ER probes availability before sending a text or multi-select question and sends no `finecode/elicit` when the shape is not reported.
+  - Says whether a question could be put to a person right now, answered from the same facts as `finecode/elicit`; sends nothing to the client. Nested runs answer for the root client. An older WM answers method-not-found, which the ER reads as `false`. Startup-slot neutral: the handler does a synchronous dict read and waits on no runner, lease or person.
 
 - `knowledge/registerSchema`
   - Params: `{ "snapshot": <object> }`
@@ -506,6 +630,13 @@ protocol even though the runner never became reachable. (Regression-tested in
   - When `$/progress` is used to deliver results, the final `actions/run` or
     `actions/runHandlers` response must have `status: "streamed"` and empty
     `result_by_format`. See result (streamed) entries above.
+  - Delegated progress (WM → parent ER): when a delegated call carries a
+    `progressToken` (see `finecode/runActionInProject` above), the WM forwards
+    the child run's progress values on the parent's token. `value` is the
+    child's progress value object (with `type` `begin`/`report`/`end`); the
+    parent ER maps it to a report per the table in
+    `docs/guides/designing-actions-reference.md` §Progress. Values arriving for
+    unknown tokens (late, or after a release) are dropped silently.
 
 - `er/logRecords` (ADR-0049)
   - Params: `{ "records": [{ "timestamp": number, "level": string, "group": string, "message": string }, ...] }`
@@ -612,6 +743,8 @@ it (ADR-0079), and an ER names it back in two places:
   *that run*. The project the asking runner serves cannot identify a run — two
   clients may be running the same project at the same moment — so an elicit
   without a `runId` is answered "unavailable" rather than guessed at (ADR-0082).
+- `finecode/elicitAvailability`, where it names the *asking* run. The answer
+  comes from the same facts, for the same run, and sends nothing.
 - `finecode/runActionInProject` and `finecode/runActionInWorkspace`, where it
   names the *calling* run. The nested run the WM starts gets an id of its own
   and inherits the caller's originating client, so a question asked from inside
@@ -625,6 +758,8 @@ missing one is a protocol error rather than a defaulted value.
 - JSON-RPC errors are used for protocol-level failures.
 - Command-level errors are returned via `{ "error": "..." }` in command results.
 - WM cancels in-flight requests by sending `$/cancelRequest` with the request id.
+- The ER sends `$/cancelRequest` when it stops waiting for `finecode/elicit` or one of the two run methods. For any other ER -> WM request the WM keeps serving the request after the ER stops waiting; a `$/cancelRequest` for one is ignored with a debug log. An older WM that registered no hook for the run methods ignores the cancel too: the child runs to its end, the parent waits at most 5.0 s, and the call reads unconfirmed. `subtreeStopped` and the run-method cancel are same-version rules (ADR-0159).
+- Every `actions/run` and `actions/runHandlers` result and cancelled error carries `subtreeStopped`, including the `{"error": ...}` returns. `subtreeStopped` never reaches a client: `actions/run` (streamed and non-streamed) and `actions/runBatch` results returned to a client, LSP or MCP never contain the key.
 
 ## Document Sync Notes
 

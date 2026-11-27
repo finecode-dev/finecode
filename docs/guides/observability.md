@@ -131,3 +131,130 @@ FineCode's repository does exactly this and is a useful reference:
 
 See FineCode's [`docker-compose.otel.yml`](https://github.com/finecode/finecode/blob/main/docker-compose.otel.yml)
 and `.devcontainer/` for the full pattern.
+
+## Signal coverage
+
+With telemetry on, each process records the same five evidence kinds. Every
+record carries the process identity as resource attributes — `service.name`,
+`project.path` / `workspace.path`, and `finecode.process.incarnation` (a fresh
+UUID hex per process start, shared by spans and health summaries).
+
+**Hop spans** — one caller span (`jsonrpc.client/{method}`) and one receiver
+span (`jsonrpc.server/{method}`) per WM↔ER request, in both directions. Stage
+events named `rpc.stage.<stage>` mark the real transport/dispatch/handler
+boundaries (submitted, enqueued, dequeued, write_returned, drain_started,
+drain_returned, frame_read, dispatched, handler_started, handler_ended,
+response_resolved, caller_completed); each event carries the wall-clock
+timestamp plus `finecode.mono_ns` and `finecode.stage.status`. Span attributes
+name the connection (`finecode.rpc.connection_id`, fresh per connection
+incarnation), the direction (`finecode.rpc.role`: `caller` or `receiver`), the
+typed request id (`finecode.rpc.request_id` plus `request_id_type`), the
+generation (distinguishes a replacement request reusing an id), the receiver's
+causal link (`finecode.rpc.causal_link`: `propagated` or `unavailable`), and
+the separate outcomes (`finecode.rpc.caller_outcome`,
+`finecode.rpc.handler_outcome`, `finecode.rpc.close_reason`). Absent stages
+mean that step never ran for the hop; a stage with status `unsupported` ran in
+a transport that cannot observe it (stdio has no drain step).
+
+**Late-stage logs** — stages or responses observed after their hop closed are
+never edited into the span. They become bounded `INFO` logs under the group
+`finecode_extension_runner.shared_telemetry.rpc_hops`, correlated by
+connection, role, typed request id and generation, with `rpc_correlation`
+`matched` (the trace id is restored for that emission only) or `unavailable`.
+
+**Lag logs** — the WM's event-loop monitor logs under
+`finecode.wm_server.services.event_loop_lag_monitor`, each endpoint-enabled
+ER's monitor under `finecode_extension_runner.er_lag_monitor`. One `WARNING`
+per episode per 30 s cooldown, one `INFO` recovery summary when the episode
+ends (or an interruption summary if shutdown lands mid-episode). Every value
+is in the message text and in the extras: lag and threshold, the process CPU
+window (process-wide, all threads), host load, host pressure, pid, project
+and env.
+
+**Phase spans** — one span per synchronous phase, named `phase/<label>`, with
+elapsed and thread-CPU time as separate attributes
+(`finecode.phase.elapsed_ns`, `finecode.phase.thread_cpu_ns` with an
+unavailable reason when the clock cannot answer), the outcome, the completion
+counts availability, and one `finecode.phase.count.<name>` attribute per
+count. Thread CPU covers only the calling thread; worker threads and
+subprocesses are unattributed elapsed time.
+
+**Health summaries** — see below.
+
+## Diagnostic profile
+
+The supported way to collect all of the above is the diagnostic profile:
+
+- the OTLP endpoint is set (at WM start; ERs inherit it through `initialize`),
+- `OTEL_TRACES_SAMPLER` is unset (`parentbased_always_on`),
+- the effective log level is `INFO`,
+- the collector runs all three pipelines: traces, metrics and logs.
+
+There is no FineCode sampler or API key: sampling is the SDK's, authentication
+is the endpoint's. The profile does not promise lossless delivery — a sampled
+span is dropped silently (and counted as S3), a full queue or a failed export
+drops records (counted as S5/S6), and anything the collector drops after a
+successful export is invisible to FineCode. What the profile does promise is
+that every loss before the export is counted and reported in the health
+summary.
+
+## Telemetry health summary
+
+One loguru record per process, under the log group
+`finecode_extension_runner.shared_telemetry.health`, with the message
+`telemetry health summary` plus a human-readable digest. The level is `INFO`
+when no loss was recorded and `WARNING` when any loss count or admission flag
+is set; the as-written level is whatever the group's configured level lets
+through. The first summary is written when the setup attempt completes (even
+when every signal is unavailable); afterwards a summary is written only when
+the counts, flags, availability or ER-setup categories changed, at most one
+per 60 seconds. A level change alone never triggers a summary.
+
+The structured extras are flat scalars (`health_<signal>_<field>`,
+`health_sampler`, `health_er_setup_<category>`, `health_late_contention`,
+`health_late_clock_failure`, `health_log_levels`), because nested objects are
+not OTel attribute values. A metric mirror (`finecode.telemetry.evidence_loss`
+per signal and cause, `finecode.telemetry.signal_available` per signal) reports
+the same counts where metric export works.
+
+How to read a missing summary: a process with no summary has reported nothing,
+which is not the same as reporting no loss. A process killed mid-window keeps
+only its earlier summaries, so the last summary is a lower bound on the loss,
+never an overstatement. Loss on the collector side (after a successful export)
+is never reported — only the health summary and the metric mirror speak, and
+both stop at the export boundary.
+
+## Locating a slow request
+
+1. Find the caller span (`jsonrpc.client/{method}`) for the slow request and
+   read its stage gaps: the gap bracketing the delay names the slow step.
+2. Open the receiver child (`jsonrpc.server/{method}`) and read its stage gaps
+   the same way. Compare the two spans' per-process gaps only; never subtract
+   timestamps across processes — each process has its own monotonic clock, and
+   only the wall timestamps are shared, for ordering, not arithmetic.
+3. Check the ER and WM lag warnings in the same window: a warning on either
+   side attributes unattributed elapsed time to loop starvation there.
+4. Read the phase spans (`phase/<label>`) inside the slow handler: thread CPU
+   near elapsed means the phase burnt the CPU itself; CPU far below elapsed
+   with no lag warning means the time went to workers, subprocesses, or
+   waiting that no span covers.
+5. Decide: WM delay shows as gaps in the WM-side spans (caller stages for
+   WM→ER, receiver stages for ER→WM) with no ER-side counterpart; ER delay is
+   the mirror image; transport/scheduling delay shows as `submitted`→`enqueued`
+   or `enqueued`→`dequeued` gaps with both endpoints idle. Absent stages and
+   `unsupported` statuses narrow the field: an `unsupported` drain stage on
+   stdio is normal, a missing `handler_started` with outcome `not_executed`
+   means the request was rejected before the handler ran.
+
+## Trace IDs and the WAL
+
+Trace ids and WAL run ids are different namespaces with no navigation between
+them yet: a trace shows how long each hop and phase took, the WAL shows what
+the run did. Correlating the two (root trace ↔ WAL UUID) needs its own
+decision and does not exist in this delivery.
+
+## Timing coverage
+
+Timing starts at the `initialize` exchange. Work before the ER's `initialize`
+response -- process start, interpreter startup, config collection -- has no
+hop or phase records; the first traced request is `initialize` itself.

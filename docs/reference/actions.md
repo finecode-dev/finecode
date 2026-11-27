@@ -196,6 +196,14 @@ Format a specific set of files. Internal action dispatched by `format`.
 
 The built-in `FormatFilesIterateHandler` iterates over all files and delegates each to `format_file`. Language routing is handled by `format_file` via its dispatch handler — `format_files` has no language awareness.
 
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `result_by_file_path` | `dict[ResourceUri, FormatRunFileResult]` | Per file: `changed`, `code` and `status`, as in [`format_file`](#format_file). `format` returns the same shape. |
+
+A file with status `save_refused` makes the return code `ERROR`; the other files in the batch are still formatted and reported.
+
 ---
 
 ## `format_file`
@@ -225,10 +233,11 @@ When called standalone (e.g. IDE on-save), no kwargs are needed — the context 
 
 | Field | Type | Description |
 |---|---|---|
-| `changed` | `bool` | Whether the file content was modified |
-| `code` | `str` | The formatted content |
+| `changed` | `bool` | Whether formatting changed the content |
+| `code` | `str` | The formatted content when `changed`, otherwise empty |
+| `status` | `FormatFileStatus \| None` | What happened to the file: `unchanged` (formatting produced no change, not written), `changed` (not written because `save = false`; `code` holds the content), `saved` (committed through the file editor), or `save_refused` (the file changed after it was read, so nothing was written; the run's return code is `ERROR`). Set by `SaveFormatFileHandler`; `None` only when no save handler ran. |
 
-Handlers read and update `run_context.file_info` to pass formatted content to the next handler in the pipeline.
+Handlers read and update `run_context.file_info` to pass formatted content to the next handler in the pipeline. To get the saved content, read the file through the file editor, not `code`.
 
 ---
 
@@ -570,6 +579,22 @@ filename membership answers "which of my files still need uploading".
 
 - **Source:** `fine_dist_artifacts.ListPublishedArtifactsAction`
 
+The Python handler takes identity from the source definition
+(`src_artifact_def_path`), not from the payload's files: it reads
+`project.name` there and queries the registry index for that package. The
+returned filenames are filtered to the requested version — the canonical
+project name and the exact version must both match the parsed wheel/sdist
+filename. Equivalent version spellings (`1.0` vs `1.0.0`) match; foreign
+package names, other versions and unparseable filenames are omitted (never
+an error). The legacy `versions` index key is ignored.
+
+The body must be a JSON object with a `files` list of `{filename: str}`
+entries; anything else (non-2xx other than 404, non-JSON, missing
+`files`, malformed entries) raises before filtering. 404 means "nothing
+published" and returns empty — so an index URL pointing at the wrong host
+is indistinguishable from an unpublished package. No retry happens here;
+callers that need it implement their own bounds.
+
 ---
 
 ## `verify_artifact_published_to_registry`
@@ -577,6 +602,30 @@ filename membership answers "which of my files still need uploading".
 Verify that publishing succeeded by checking the registry.
 
 - **Source:** `fine_dist_artifacts.VerifyArtifactPublishedToRegistryAction`
+
+The payload carries the explicit source definition (`src_artifact_def_path`,
+required), the distribution paths, the registry name and the version to
+confirm. Verification checks every distribution basename by filename
+membership against the shared listing — it does not parse identity, compare
+hashes, install or resolve artifacts. An empty distribution list is
+vacuously complete and performs no listing.
+
+Each registry is checked independently with at most five listing attempts
+and 60 seconds of local waiting (delays of 1, 2, 4 and 8 seconds between
+attempts). Checks for different registries run concurrently and never mutate
+each other's outcome. On expiry the outstanding listing is cancelled without
+waiting for acknowledgement; a late arrival never rewrites the outcome.
+Cancellation (`asyncio.CancelledError`, `ActionRunCancelled`) propagates
+immediately and is never retried or converted.
+
+When the wait is exhausted, each still-missing file yields one error naming
+the file and registry; when the last completed observation was a listing
+error, verification raises instead. Callers prefix these with the registry
+and `Upload accepted but not confirmed`. The handler is registered only in
+the development preset; other presets must declare their own handler.
+Concurrent checks share listing resources (contention may delay a sibling
+but never reduces its budget) and the registry may keep executing an
+abandoned query remotely.
 
 ---
 
@@ -616,6 +665,46 @@ Group source files by language (internal, used by language-aware actions).
 Create virtual environments for all envs discovered from the project's dependency-groups.
 
 - **Source:** `fine_envs.CreateEnvsAction`
+
+The collection dispatcher prepares the project's config dump once per run and
+lends it to every `create_env` child, instead of each child fetching and
+dumping the config on its own. The dump is made when the batch is eligible:
+the `prepare_project_config_dump` handler setting is `true` (the default), the
+batch is nonempty, and every env's `project_def_path` is the current project.
+Warm nonempty runs are included: a run whose venvs already exist still prepares
+the dump and removes it afterwards. Explicit empty batches, mixed-project
+batches and standalone `create_env` runs keep today's per-env behavior.
+
+**Handler setting:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `prepare_project_config_dump` | `bool` | `true` | Prepare one shared config dump for the run and lend it to children. Set `false` to restore per-env dumps |
+
+```toml
+[tool.finecode.action.create_envs.handlers.create_envs_dispatch]
+config.prepare_project_config_dump = false
+```
+
+Backends that never read the lent dump file still pay for its preparation
+(one raw-config fetch and one `dump_config` dispatch per run); that is the
+accepted cost of the shared default, and `false` opts out.
+
+**Borrowed input.** Each child is lent
+`project_config_dump_file`: the file URI of the dump file (`pyproject.toml`
+format). Borrowers must not modify or remove the file or its directory. The
+directory is removed after every `create_env` call the run started has ended,
+on every exit. If the run's delegated-calls read is unconfirmed at that point —
+a child elsewhere may still be using the removed directory — the dispatcher
+logs one WARNING naming the project directory.
+
+A uv `create_env` given a value that is not a file URI, names no existing
+file, or names a file other than `pyproject.toml` fails that env without
+starting uv.
+
+No promise is made for a `dump_config` handler in another env that outlives
+the bound: it may recreate the removed directory (the save handler creates
+the parent directory), and no warning is promised for that case.
 
 ---
 
@@ -719,11 +808,13 @@ Derive each environment's toolchain axis from the project's declared support ran
 | Field | Type | Description |
 |---|---|---|
 | `axes` | `list[EnvToolchainAxis]` | Per env: `declared`, `derived`, and whether it `changed` |
-| `saved` | `bool` | Whether a derived axis was written |
+| `project_def_file` | `ProjectDefFileOutcome \| None` | The definition file the sync targeted (`path`) and its `status` on disk: `up_to_date` (already matched, not written), `out_of_date` (drifted, left stale because `save = false`), or `updated` (drifted, written). `None` when no file was targeted. |
 
 A **toolchain** is the implementation-and-version a project is executed against; in Python it is an [interpreter](../glossary.md#interpreter). Every ecosystem declares its support range somewhere (`requires-python`, `engines`, `required_ruby_version`), and a language handler expands that range into toolchain identities. The action dispatches on project language to the matching subaction.
 
 The axis is *materialized* — written to the file rather than recomputed on each run — so that config resolution stays a pure read of already-declared data. See [ADR-0053](../adr/0053-derived-interpreter-axis-is-materialized-into-config.md) for why, and note the consequence: the axis is wholly generated, so extra toolchains are configured as *inputs to the source* (`extra_interpreters`) rather than hand-added to its output.
+
+Handlers run in order: `sync_toolchains_dispatch` runs the language subaction, then `sync_toolchains_format` runs `format_file` (with `save = true`) on the definition file, so a synced file passes `check_formatting` with no extra step. Only a file the sync actually wrote is formatted: the format handler reads `project_def_file` from the accumulated result and acts only on status `updated`. A dry run (`save = false`, which is what `check_toolchains` uses) or an axis that is already up to date leaves the tree untouched. The whole file is formatted, so any older formatting drift in a file the sync writes is normalised in the same run; files the sync does not write keep their drift. When no formatter covers the file, it stays in the writer's layout and the result's `unhandled` names it. A formatter that fails, or a formatted file that could not be saved because it changed in the meantime, fails the run after the axis is already written. To keep the writer's layout, disable the `sync_toolchains_format` handler; it needs the `fine_envs[format]` extra.
 
 ---
 
@@ -933,6 +1024,9 @@ second one. Nothing enforces this — the result merge degrades to last-writer-w
 | `prompt` | `str` | The task, in natural language |
 | `profile` | `str \| None` | A named role for the run; `None` uses the handler's top-level settings |
 | `output_schema` | `dict \| None` | JSON Schema the final answer must satisfy |
+| `capture_history` | `bool` | Request a native-history observation on the result; default `false`. Never changes execution or status |
+| `continue_session` | `AgentSessionRef \| None` | Resume a previously reported native session instead of starting one; default `None` |
+| `start_without_questions` | `bool` | Start an opted-in run without questions when nobody can answer them; default `false`. Has an effect only for a profile that opts in; Claude Code offers the opt-in (see below), Pi and Codex do not yet |
 
 `profile` selects a named bundle of handler config, so the same task definition
 remains portable across setups and a caller does not name a model (PRD-0005 R3).
@@ -949,17 +1043,20 @@ a dataclass.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | `AgentRunStatus` | `settled`, `failed`, `aborted`, or `refused_interaction` |
+| `status` | `AgentRunStatus` | `running` appears only in partial results; terminal values are `settled`, `failed`, `aborted`, or `refused_interaction` |
 | `output` | `str` | The agent's final text |
 | `structured_output` | `Any` | Decoded JSON the final answer carried, when `output_schema` was requested; `None` otherwise |
 | `turns` | `int \| None` | Assistant turns taken, and a sign of looping; `None` where the backend has no turn concept |
 | `usage` | `AgentRunUsage \| None` | What the run consumed; `None` when the backend reported nothing |
 | `duration_sec` | `float \| None` | Wall-clock time, measured by the handler rather than reported by the backend |
 | `error` | `str \| None` | Why the run did not settle; `None` when `status` is `settled` |
+| `observation` | `AgentRunObservation \| None` | Native history observation, present only when `capture_history` was requested |
+| `session` | `AgentSessionRef \| None` | The native session this run settled in, reported independently of `capture_history`; `None` on runs that never reached a settled backend session. A run ended `refused_interaction` by an unanswered question or by the settle budget mid-question reports its session whenever the backend had one, so it can be continued with an answer (ADR-0143) |
 
-`refused_interaction` is deliberately distinct from `failed`: nothing went wrong,
-the agent asked the user a question and no interactive channel was available. A
-non-interactive caller (CI) needs to tell those apart.
+`refused_interaction` is deliberately distinct from `failed`: nothing went wrong, the run needed a person's decision and none could be had. A denial a person decided never makes a run `refused_interaction`. The causes are examples, not a closed set:
+
+- today: Pi's `ui_policy` abort and its refusal of an unknown dialog method, and Claude Code's denial rule;
+- with questions: refused at the start check (see below), a question nobody answered or whose backend timeout left no time to ask, and a settle budget that ran out while a question was pending.
 
 **`AgentRunUsage` fields**, all optional and independently so:
 
@@ -997,9 +1094,10 @@ spent before being withdrawn is lost with it.
 |---|---|---|
 | `model` | `None` | Passed to `pi --model`; `None` leaves pi's own default |
 | `provider` | `None` | Passed to `pi --provider` |
+| `thinking` | `None` | Passed to `pi --thinking` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); `None` leaves pi's own default |
 | `ui_policy` | `{}` | Per dialog method (`select`, `confirm`, `input`, `editor`) → how to answer |
 | `default_ui_policy` | `"abort"` | Applied to methods absent from `ui_policy` |
-| `settle_timeout_sec` | `900.0` | Ceiling on one run; an agent loop has no natural bound |
+| `settle_timeout_sec` | `900.0` | Ceiling on the agent's working time, excluding time blocked on a person's reply; an agent loop has no natural bound |
 
 A `ui_policy` value of `abort` refuses and ends the run, `cancel` declines and lets
 the agent continue, and any other string is sent back as the literal answer.
@@ -1014,34 +1112,50 @@ recognise is refused rather than ignored, for the same reason.
 | Option | Default | Description |
 |---|---|---|
 | `model` | `None` | Passed to `claude --model`, as an alias (`opus`, `sonnet`) or a full name; `None` leaves the CLI's own default |
+| `thinking` | `None` | Passed to `claude --effort` (`low`, `medium`, `high`, `xhigh`, `max`); `None` leaves the CLI's own default |
 | `permission_mode` | `None` | Passed to `claude --permission-mode` (`acceptEdits`, `bypassPermissions`, `plan`, …); `None` leaves the CLI's default, which approves nothing |
 | `allowed_tools` | `[]` | Tool patterns granted without asking, e.g. `["Read", "Bash(git *)"]` |
 | `disallowed_tools` | `[]` | Tool patterns denied outright, applied over `allowed_tools` |
 | `append_system_prompt` | `None` | Extra instructions appended to the CLI's own system prompt |
 | `max_budget_usd` | `None` | Ceiling on what one run may spend on API calls, enforced by the CLI |
-| `settle_timeout_sec` | `900.0` | Ceiling on one run; an agent loop has no natural bound |
+| `settle_timeout_sec` | `900.0` | Ceiling on the agent's working time, excluding time blocked on a person's reply; an agent loop has no natural bound |
+| `may_ask_questions` | `false` | Route the CLI's permission prompts to the run's originating person over the control wire (see below); needs a client that can answer choice, text and multi-select questions |
 
 The default permission mode approves nothing, so a task that must edit files needs
 `permission_mode = "acceptEdits"` or an explicit `allowed_tools`. That is a
 deliberate decision to make: this handler runs an agent with write access to the
 project.
 
-Unlike pi, Claude Code does not ask the client questions in this mode — a tool call
-it cannot get approved is denied, and the agent is told and carries on. So a run
+Without the opt-in (`may_ask_questions = false`, the default) the run behaves
+as before: Claude Code does not ask the client questions — a tool call it
+cannot get approved is denied, and the agent is told and carries on. So a run
 that **settled** despite a denial is reported as `settled` (the agent found another
 way), while a run that **failed** with a denial recorded is `refused_interaction`:
-the run needed a decision this setup was configured not to make. The transcript is
-persisted; the handler logs the session id so `claude --resume <id>` can show what
-the agent actually did.
+the run needed a decision this setup was configured not to make.
+
+With the opt-in, the handler attaches FineCode as the CLI's permission host
+over the stream-json control wire (`--input-format stream-json
+--permission-prompt-tool stdio`, undocumented upstream): every permission
+request reaches the run's originating person. An `AskUserQuestion` call becomes
+one choice ask per entry (plus a typed-answer follow-up); any other tool becomes
+a single allow-once-or-deny choice. A `disallowed_tools` entry denies the call
+without asking — note a parenthesised pattern denies *every* call of that tool,
+since the handler cannot evaluate the CLI's specifier grammar. A question the
+backend cannot present in this form is denied with a "not supported yet" reply
+and the run continues. `--permission-prompt-tool stdio` is undocumented
+upstream, so a CLI update may change the wire; the supported versions are
+recorded in the integration notes. The transcript is persisted; the handler logs
+the session id so `claude --resume <id>` can show what the agent actually did.
 
 ### `CodexAgentHandler` configuration
 
 | Option | Default | Description |
 |---|---|---|
 | `model` | `None` | Passed to `codex --model`; `None` leaves the CLI's own default |
+| `thinking` | `None` | Sent as `--config model_reasoning_effort="<value>"` (`minimal`, `low`, `medium`, `high`, `xhigh`); `None` leaves `~/.codex/config.toml` in charge |
 | `sandbox_mode` | `"read-only"` | Passed to `codex --sandbox` (`read-only`, `workspace-write`, `danger-full-access`) |
 | `skip_git_repo_check` | `false` | Passed as `--skip-git-repo-check`; opt in only outside a git checkout |
-| `settle_timeout_sec` | `900.0` | Ceiling on one run; an agent loop has no natural bound |
+| `settle_timeout_sec` | `900.0` | Ceiling on the agent's working time, excluding time blocked on a person's reply; an agent loop has no natural bound |
 
 The non-interactive approvals (`--ask-for-approval never`) and the sandbox above
 are always set explicitly, so a run never inherits an interactive policy. A task
@@ -1073,12 +1187,64 @@ config.settle_timeout_sec = 900
 config.profiles.my_task = { model = "anthropic/claude-opus-5:high", settle_timeout_sec = 3600 }
 ```
 
-`PiAgentProfile` fields are `model`, `provider` and `settle_timeout_sec`.
-`ClaudeCodeAgentProfile` fields are `model` and `settle_timeout_sec`;
+`PiAgentProfile` fields are `model`, `provider`, `thinking` and `settle_timeout_sec`.
+`ClaudeCodeAgentProfile` fields are `model`, `thinking`, `settle_timeout_sec` and `may_ask_questions`;
 `permission_mode`, `allowed_tools` and `max_budget_usd` remain top-level.
-`CodexAgentProfile` fields are `model` and `settle_timeout_sec`; `sandbox_mode`
+`CodexAgentProfile` fields are `model`, `thinking` and `settle_timeout_sec`; `sandbox_mode`
 and `skip_git_repo_check` remain top-level, so a profile can never silently
 widen the sandbox.
+
+### Questions to a person
+
+Nothing below happens unless a backend opts in. Claude Code offers it (see
+above); Pi and Codex do not yet. Every sentence here is conditioned on it.
+
+1. Each backend opts in with the same top-level and per-profile key,
+   `may_ask_questions` (`bool`, default `false`), inherited by profiles like
+   `settle_timeout_sec`. There are two levels: a run whose profile does not opt
+   in never probes and behaves as today; an opted-in run probes before
+   spawning (ADR-0164).
+2. The start check asks whether anyone could answer right now, without sending
+   a question. A passed check starts with questions; a failed one starts
+   without them when the caller passes `start_without_questions=true`, and is
+   refused otherwise — `refused_interaction` with an `error` naming the start
+   check and the override. The refusal carries no duration and no session.
+3. Under CI a FineCode client declares no question support, so an opted-in run
+   started from CI is refused unless overridden (ADR-0163).
+4. The agent is told what happened to each question: answered carries the
+   chosen option, declined means a person refused (never read as an answer),
+   unavailable means nobody could be asked, and a cancelled run aborts instead
+   of answering. When several questions overlap, the first one to end decides
+   and the rest are withdrawn. An unanswered question ends the run as
+   `refused_interaction` with its session reported whenever the backend had
+   one (ADR-0165).
+5. A question waits at most 900 s, less when the backend's own dialog timeout
+   leaves no room (then it is not asked at all). Time blocked on a person's
+   reply does not count against `settle_timeout_sec`, so the wall-clock cost
+   can exceed it. A waiting run is in flight and refuses recovery (see
+   [Behavior constraints](../reference/behavior-constraints.md) "Recovery
+   scope and in-flight runs") (ADR-0166).
+6. **For backend authors.** Build on the shared helpers in `fine_agent`
+   (`resolve_question_mode`, `resolve_question_start`, `refused_at_start_result`,
+   the D1 texts including `QUESTION_NOT_SUPPORTED_REPLY`, `question_deadline_sec`,
+   `with_session(report_unsettled_session=…)`) rather than local copies; report
+   a needed change as a plan amendment. The routed rules each adapter owns: tools the setup
+   denies stay denied without asking (Claude); a cancelled run stops its
+   backend (Pi, Claude); each backend names the signal the clock pauses on
+   while a reply is pending; process exit while a question is pending
+   withdraws it (gated on #981); overlapping questions withdraw all but the
+   first to end, and the `error` names the ending one; a declined permission is
+   never a recorded denial and a declined answer is never read as one (Claude);
+   sessions from `refused_interaction` runs stay continuable (Pi's
+   settle-timeout path keeps its session, Claude likewise); a choice-only
+   client passes the start check while a later text question ends the run
+   (#983); Codex's "approvals always non-interactive" holds for non-opted-in
+   runs; the start probe runs outside any work slot on the real handler path;
+   an adapter's own cancel of its ask at the deadline cutoff reads
+   `unavailable`, not D1.cancel; each adapter keeps reading events while a
+   reply is pending; exiting together with `unavailable` gives D1.exit's
+   status; until #981 lands, an answer arriving after cancel or budget expiry
+   is discarded; the D1.G8 compositions with S9 and S11 hold per backend.
 
 ### Structured output
 
@@ -1102,6 +1268,177 @@ In every failure case the raw `output` is kept, and `structured_output` stays
 `None`. There is no repair turn: a run that cannot produce the requested shape
 fails at once. With `output_schema` unset the prompt is sent byte-for-byte
 unchanged and `structured_output` is `None`.
+
+### Continuing a session
+
+Every settled run reports the native session it ran in as `session`, whether or
+not `capture_history` was set — capture controls only the `observation`, never
+whether a session is available for reuse. To continue, pass that reference back
+as `continue_session` with the next prompt:
+
+```python
+first = await runner.run_action("run_agent_task", RunAgentTaskRunPayload(prompt="investigate"))
+second = await runner.run_action(
+    "run_agent_task",
+    RunAgentTaskRunPayload(prompt="now fix it", continue_session=first.session),
+)
+```
+
+**`AgentSessionRef` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `backend` | `AgentBackend` | `pi`, `claude_code` or `codex` — the backend that owns the session |
+| `session_id` | `str` | The full backend-reported native session id, spelled as reported |
+| `project_dir` | `ResourceUri` | The project the original run belonged to; a continuation in another project is rejected |
+
+The reference round-trips through the action converter, so a caller can persist
+it as JSON and pass it back later. FineCode itself keeps no record of sessions:
+retention is the native CLI's own history on disk, and the caller owns the
+reference. Pi writes one session file per run under its sessions root even with
+capture off, so every run has a small disk cost there.
+
+A continuation resumes exactly the referenced session or fails explicitly — it
+never silently starts a new one. Pre-start failures produce no task prompt and
+no new native session, checked in this order: caller cancellation, malformed
+session id, backend mismatch, reference project mismatch, unknown profile,
+missing or deleted native session, unsupported settings, then schema
+preparation or launch failure. A would-be settled run with no reported native
+id is `FAILED` with the raw output kept. A continued run is otherwise subject
+to the same post-start rules as a new one (statuses, structured-output
+precedence, usage reporting, timeout, cleanup), and a failed or cancelled
+continuation may still have advanced the native session — keep using the latest
+reference the backend reported.
+
+Continuation reuses the run's *current* profile and configuration, never the
+saved native settings. Where the current setup cannot be reapplied explicitly,
+the run fails before spawning:
+
+| Setting | Continuation behavior |
+|---|---|
+| Explicit model (all backends) | Passed as the current `--model` value; pi also passes the current provider when set |
+| Unset model (all backends) | `FAILED`: the saved model cannot be reset to the native default explicitly |
+| Codex sandbox / approvals | Current sandbox mode on the parent command; approvals stay non-interactive |
+| Claude permission mode and tool lists | Current mode, allowed/disallowed lists (empty lists passed as explicitly empty), schema, budget and append prompt |
+| Claude permission mode unset | `FAILED`: resume must not silently restore the saved mode |
+| Claude system prompt | Always resumed with the snapshot disabled, so current instructions apply |
+| Pi approval / UI policy | Current policy answers the resumed process, including during startup |
+| Timeout | The existing `settle_timeout_sec` bounds the whole interaction, including startup |
+
+The router forwards `continue_session` unchanged to the referenced backend; a
+cross-backend route is rejected without delegation.
+
+### Routed setup (opt-in)
+
+Keep a direct single-backend registration for the simple case. To choose a
+backend per task role, register `fine_agent.RouteAgentTaskHandler` on
+`run_agent_task` and one leaf action per backend (`run_pi_agent_task`,
+`run_claude_code_agent_task`, `run_codex_agent_task`). The leaf actions
+subclass `RunAgentTaskAction` with the same payload/context/result and set
+`PARENT_ACTION = RunAgentTaskAction`; `LANGUAGE` stays `None` so discovery
+excludes them, and explicit references provide the routing target.
+
+```toml
+[tool.finecode.action.run_agent_task]
+handlers_mode = "replace"
+handlers = [{ name = "agent_router", source = "fine_agent.RouteAgentTaskHandler", env = "dev_no_runtime", dependencies = ["fine_agent~=0.1.0"] }]
+
+[tool.finecode.action.run_agent_task.handlers.agent_router]
+config.default_backend = "pi"
+config.profiles.implement_plan = { backend = "claude_code", profile = "implementation" }
+config.profiles.run_fine_design_critic = { backend = "pi", profile = "review" }
+
+[tool.finecode.action.run_claude_code_agent_task]
+source = "fine_agent_claude_code.RunClaudeCodeAgentTaskAction"
+handlers = [{ name = "claude_code_agent", source = "fine_agent_claude_code.ClaudeCodeAgentHandler", env = "dev_no_runtime", dependencies = ["fine_agent_claude_code~=0.1.0"] }]
+
+[tool.finecode.action.run_claude_code_agent_task.handlers.claude_code_agent]
+config.permission_mode = "acceptEdits"
+config.profiles.implementation = { settle_timeout_sec = 3600 }
+
+[tool.finecode.action.run_pi_agent_task]
+source = "fine_agent_pi.RunPiAgentTaskAction"
+handlers = [{ name = "pi_agent", source = "fine_agent_pi.PiAgentHandler", env = "dev_no_runtime", dependencies = ["fine_agent_pi~=0.1.0"] }]
+
+[tool.finecode.action.run_pi_agent_task.handlers.pi_agent]
+config.profiles.review = { settle_timeout_sec = 3600 }
+```
+
+Add a Codex leaf the same way without changing its sandbox defaults. A caller
+role selects a backend and an optional bundle; `default_backend` is required.
+A missing payload profile uses the default backend's top-level settings. Named
+roles must be present in `profiles`; unknown names (including `""`) are
+`FAILED` with `duration_sec=0.0`, with no delegated call. A route with
+`profile=None` uses top-level settings; otherwise it names a backend bundle
+that may differ from the role. Only `profile` is translated. Router references
+use canonical class sources, not re-export aliases. A role selecting an
+unconfigured backend returns `FAILED` naming the backend and the canonical
+action. Leaf bundles do not inherit old direct-backend config; move selected
+settings to the leaf action. Existing direct setups keep working.
+
+---
+
+## `locate_agent_history`
+
+Find the native history files of one AI agent session by its id or a marker it wrote.
+
+- **Source:** `fine_agent.LocateAgentHistoryAction`
+- **Default handler execution:** sequential
+
+`run_agent_task` observes the session it drives (`capture_history`). This action
+covers a session nobody drove: one a person started in the agent's own UI. It
+reports paths only and never copies anything; `fine_agent.archive_observed_history`
+copies an observation into the same `history/` layout a dispatched run's archive
+uses.
+
+The `fine_agent` preset declares the action with no handler. Register
+`fine_agent.RouteAgentHistoryHandler` on it and one leaf action per installed
+backend. Unlike `run_agent_task`'s router there is nothing to configure: the
+backend is a fact about the session, so the payload names it.
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `backend` | `AgentBackend` | `claude_code`, `codex` or `pi` |
+| `session_id` | `str \| None` | The backend's session id (Codex: thread id); `None` finds the session by `marker` |
+| `marker` | `str \| None` | A string the session's main history contains; used only when `session_id` is `None` |
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `observation` | `AgentRunObservation \| None` | The files found, as `run_agent_task` reports them; a session that was not found is an `unavailable` observation with gaps |
+
+Each backend searches its own history root: `CLAUDE_CONFIG_DIR` or `~/.claude`,
+`CODEX_HOME` or `~/.codex`, `PI_CODING_AGENT_SESSION_DIR` or
+`~/.pi/agent/sessions`. A marker search reads main session files only; more than
+one match identifies no session, except that a Codex marker found in a root
+thread and in threads spawned below it names the root thread. Claude Code
+sessions also report the non-transcript files kept beside a session
+(`tool-results/*`, `subagents/*.meta.json`) as related `claude-sidecar` files;
+`capture_history` reports them too. Usage provenance is always `unknown`, since
+no run was observed.
+
+```toml
+[tool.finecode.action.locate_agent_history]
+handlers = [{ name = "agent_history_router", source = "fine_agent.RouteAgentHistoryHandler", env = "dev_no_runtime", dependencies = ["fine_agent~=0.1.0"] }]
+
+[tool.finecode.action.locate_claude_code_agent_history]
+source = "fine_agent_claude_code.LocateClaudeCodeAgentHistoryAction"
+handlers = [{ name = "claude_code_history", source = "fine_agent_claude_code.LocateClaudeCodeHistoryHandler", env = "dev_no_runtime", dependencies = ["fine_agent_claude_code~=0.1.0"] }]
+
+[tool.finecode.action.locate_codex_agent_history]
+source = "fine_agent_codex.LocateCodexAgentHistoryAction"
+handlers = [{ name = "codex_history", source = "fine_agent_codex.LocateCodexHistoryHandler", env = "dev_no_runtime", dependencies = ["fine_agent_codex~=0.1.0"] }]
+
+[tool.finecode.action.locate_pi_agent_history]
+source = "fine_agent_pi.LocatePiAgentHistoryAction"
+handlers = [{ name = "pi_history", source = "fine_agent_pi.LocatePiHistoryHandler", env = "dev_no_runtime", dependencies = ["fine_agent_pi~=0.1.0"] }]
+```
+
+A backend whose leaf action is not registered answers with a `failed`
+observation naming the missing action.
 
 ---
 
@@ -1130,6 +1467,10 @@ machine-input mode used by the uv `create_env` handler (which passes
 `format_output: false` and points the target file into a private temp directory instead
 of `finecode_config_dump/`, for `uv venv` to read), and the escape hatch when a formatter
 cannot run.
+
+The `dump_config` handler renders each dump with a plain TOML writer, per
+call, and the rendered text parses back to the configuration it was given,
+apart from the attribution comment.
 
 ---
 

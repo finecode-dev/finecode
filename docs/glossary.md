@@ -18,7 +18,7 @@ An action whose payload carries multiple items and whose result describes that b
 
 ## Concrete Environment
 
-One of the per-toolchain execution environments a matrix environment expands into (for example `testing@cpython-3.11`). Each is an ordinary execution environment bound to a single toolchain — in Python, a single interpreter — and materialized as its own virtual environment.
+One of the per-toolchain execution environments a matrix environment expands into (for example `testing-cpython-3.11`). Each is an ordinary execution environment bound to a single toolchain — in Python, a single interpreter — and materialized as its own virtual environment.
 
 ## Main Handler Action
 
