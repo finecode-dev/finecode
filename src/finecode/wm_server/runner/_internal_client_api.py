@@ -2,12 +2,16 @@
 Client API used only internally in runner manager or other modules of this package. They
 are not intended to be used in higher layers.
 """
+
 import pathlib
+import typing
 
 from loguru import logger
 
 from finecode.wm_server.runner import _internal_client_types
 from finecode_jsonrpc import client as jsonrpc_client
+
+_SHUTDOWN_TIMEOUT_SEC: typing.Final = 10
 
 
 async def initialize(
@@ -15,10 +19,17 @@ async def initialize(
     client_process_id: int,
     client_name: str,
     client_version: str,
-    client_workspace_dir: pathlib.Path
-) -> None:
+    client_workspace_dir: pathlib.Path,
+    telemetry: _internal_client_types.InitializeTelemetryOptions,
+) -> _internal_client_types.TelemetrySetupResult:
     logger.debug(f"Send initialize to server {client.readable_id}")
-    await client.send_request(
+    # initializationOptions.telemetry mirrors the protocol doc: otlpEndpoint is
+    # present iff mode is "otlp" (built explicitly so a disabled value carries
+    # no endpoint key rather than an explicit null).
+    telemetry_value: dict[str, typing.Any] = {"mode": telemetry.mode}
+    if telemetry.otlp_endpoint is not None:
+        telemetry_value["otlpEndpoint"] = telemetry.otlp_endpoint
+    response = await client.send_request(
         method=_internal_client_types.INITIALIZE,
         params=_internal_client_types.InitializeParams(
             process_id=client_process_id,
@@ -26,11 +37,18 @@ async def initialize(
             client_info=_internal_client_types.ClientInfo(
                 name=client_name, version=client_version
             ),
+            initialization_options={"telemetry": telemetry_value},
             trace=_internal_client_types.TraceValue.Verbose,
-            workspace_folders=[_internal_client_types.WorkspaceFolder(uri=f'file://{client_workspace_dir.as_posix()}', name=client_workspace_dir.name)]
+            workspace_folders=[
+                _internal_client_types.WorkspaceFolder(
+                    uri=f"file://{client_workspace_dir.as_posix()}",
+                    name=client_workspace_dir.name,
+                )
+            ],
         ),
         timeout=20,
     )
+    return response.result.telemetry
 
 
 async def notify_initialized(client: jsonrpc_client.JsonRpcClient) -> None:
@@ -66,21 +84,12 @@ async def shutdown(
     client: jsonrpc_client.JsonRpcClient,
 ) -> None:
     logger.debug(f"Send shutdown to server {client.readable_id}")
-    await client.send_request(method=_internal_client_types.SHUTDOWN)
-
-
-def shutdown_sync(
-    client: jsonrpc_client.JsonRpcClient,
-) -> None:
-    logger.debug(f"Send shutdown to server  {client.readable_id}")
-    client.send_request_sync(method=_internal_client_types.SHUTDOWN)
+    await client.send_request(
+        method=_internal_client_types.SHUTDOWN,
+        timeout=_SHUTDOWN_TIMEOUT_SEC,
+    )
 
 
 async def exit(client: jsonrpc_client.JsonRpcClient) -> None:
-    logger.debug(f"Send exit to server {client.readable_id}")
-    client.notify(method=_internal_client_types.EXIT)
-
-
-def exit_sync(client: jsonrpc_client.JsonRpcClient) -> None:
     logger.debug(f"Send exit to server {client.readable_id}")
     client.notify(method=_internal_client_types.EXIT)

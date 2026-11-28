@@ -1,8 +1,10 @@
 from loguru import logger
 
-import finecode.context as context
-import finecode.wm_server.find_project as find_project
-import finecode.watcher as watcher
+from finecode import (
+    context,
+    watcher,
+)
+from finecode.wm_server import find_project
 
 
 async def watch_and_run(
@@ -31,7 +33,7 @@ async def watch_and_run(
                 #       and lint?
                 for action in ["lint", "format"]:
                     # TODO: this can be cached
-                    project_root = await find_project.find_project_with_action_for_file(
+                    await find_project.find_project_with_action_for_file(
                         file_path=path_to_apply_on,
                         action_name=action,
                         ws_context=ws_context,

@@ -1,7 +1,7 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import get_src_artifact_registries_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
     irepositorycredentialsprovider,
@@ -36,7 +36,11 @@ class GetSrcArtifactRegistriesPyHandler(
         repositories = self.repository_credentials_provider.get_all_repositories()
 
         registries = [
-            get_src_artifact_registries_action.Registry(url=repo.url, name=repo.name)
+            get_src_artifact_registries_action.Registry(
+                name=repo.name,
+                index_url=repo.index_url,
+                upload_url=repo.upload_url,
+            )
             for repo in repositories
         ]
 

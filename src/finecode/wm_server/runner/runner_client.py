@@ -7,27 +7,48 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
-import typing
 import pathlib
+import typing
 from typing import Any
 
+from finecode_extension_runner.shared_telemetry.health import ErSetupCategory
 from loguru import logger
 
-import finecode.wm_server.domain as domain
-from finecode.wm_server.config.config_models import ErLoggingConfig
-from finecode.wm_server.runner import _internal_client_types, _internal_client_api
-from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 import finecode_jsonrpc as jsonrpc_client
-
+from finecode.wm_server import domain
+from finecode.wm_server.domain import ErLoggingConfig
+from finecode.wm_server.runner import _internal_client_api, _internal_client_types
+from finecode.wm_server.runner import stream_completion as runner_streams
+from finecode.wm_server.runner.delegated_child_stops import (
+    DelegatedChildStops,
+    subtree_stopped_of,
+)
+from finecode.wm_server.utils import stream_completion as completion_streams
+from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
+from finecode_extension_runner import schema_utils
 
 # reexport
 BaseRunnerRequestException = jsonrpc_client.BaseRunnerRequestException
 DidChangeTextDocumentParams = _internal_client_types.DidChangeTextDocumentParams
 VersionedTextDocumentIdentifier = _internal_client_types.VersionedTextDocumentIdentifier
-TextDocumentContentChangeWholeDocument = _internal_client_types.TextDocumentContentChangeWholeDocument
-TextDocumentContentChangePartial = _internal_client_types.TextDocumentContentChangePartial
+TextDocumentContentChangeWholeDocument = (
+    _internal_client_types.TextDocumentContentChangeWholeDocument
+)
+TextDocumentContentChangePartial = (
+    _internal_client_types.TextDocumentContentChangePartial
+)
 Range = _internal_client_types.Range
 Position = _internal_client_types.Position
+# The WM-side record of the ER's per-signal telemetry setup outcome.
+TelemetrySetupResultRecord = _internal_client_types.TelemetrySetupResult
+
+
+# Control-plane RPCs are never legitimately long, so a dead channel must fail
+# them within a bound instead of parking forever. ``update_config`` gets the
+# larger bound because it rebuilds the ER's RunnerContext (imports handlers)
+# right after a cold start; the others introspect already-imported modules.
+_ER_UPDATE_CONFIG_TIMEOUT_SEC: typing.Final = 60
+_ER_CONTROL_RPC_TIMEOUT_SEC: typing.Final = 30
 
 
 class ActionRunFailed(jsonrpc_client.BaseRunnerRequestException): ...
@@ -55,10 +76,34 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     progress_notifications: IterableSubscribe = dataclasses.field(
         default_factory=IterableSubscribe
     )
+    # Service-owned stream-completion subscriptions drained before a received
+    # runner response is exposed. Selected per invocation by
+    # token; unsubscribed callers keep the unchanged request path.
+    stream_registry: runner_streams.RunnerStreamRegistry = dataclasses.field(
+        default_factory=runner_streams.RunnerStreamRegistry
+    )
     cmd_override: str | None = None
     # Last (enabled, level) sent via finecodeRunner/updateLogging, to avoid
     # redundant RPCs (ADR-0049).
     log_forwarding: tuple[bool, str] | None = dataclasses.field(default=None)
+    # While a start holds `er_startup_semaphore` (spawn→RUNNING, ADR-0100), a
+    # yielding back-channel handler may call this once to release the slot
+    # (see `_yield_startup_slot`). None outside that window.
+    startup_slot_release: typing.Callable[[], None] | None = dataclasses.field(
+        default=None
+    )
+    active_requests: int = 0
+    awaiting_startup_slot: bool = False
+    # Set by `stop_extension_runner` before the shutdown RPC. An exit that was
+    # not asked for is an unexpected one and counts against the restart budget
+    # (ADR-0109 rule 4); a WM stop never does.
+    stopped_by_wm: bool = False
+    # Per-signal telemetry setup reported by the ER's `initialize` result.
+    # None until `initialize` answers.
+    telemetry_setup: TelemetrySetupResultRecord | None = None
+    # Health-summary bucket for this runner's setup outcome. Set together with
+    # `telemetry_setup`; cleared when the count is released on stop/abandon.
+    telemetry_setup_category: ErSetupCategory | None = None
 
 
 # Alias for backward compatibility — status enum now lives in domain
@@ -66,7 +111,7 @@ RunnerStatus = domain.ExtensionRunnerStatus
 
 
 # JSON object or text
-type RunActionRawResult = dict[str, Any] | str
+RunActionRawResult: typing.TypeAlias = dict[str, Any] | str
 
 
 @dataclasses.dataclass
@@ -82,7 +127,9 @@ class RunActionResponse:
         return result
 
     def text(self) -> str:
-        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        result = self.result_by_format.get(
+            "styled_text_json"
+        ) or self.result_by_format.get("string")
         if result is None:
             raise ActionRunFailed("Expected text result format but it was not returned")
         return result
@@ -98,6 +145,7 @@ class RunHandlersResponse:
     ``context`` is the serialized STATE_TYPE dict for context chaining
     (pass as ``previous_context`` to the next segment's run_handlers call).
     """
+
     raw_result: dict
     result_by_format: dict[str, RunActionRawResult]
     return_code: int
@@ -111,7 +159,9 @@ class RunHandlersResponse:
         return result
 
     def text(self) -> str:
-        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        result = self.result_by_format.get(
+            "styled_text_json"
+        ) or self.result_by_format.get("string")
         if result is None:
             raise ActionRunFailed("Expected text result format but it was not returned")
         return result
@@ -123,17 +173,230 @@ class RunResultFormat(enum.Enum):
 
 
 class RunActionTrigger(enum.StrEnum):
-    USER = 'user'
-    SYSTEM = 'system'
-    UNKNOWN = 'unknown'
+    USER = "user"
+    SYSTEM = "system"
+    UNKNOWN = "unknown"
 
 
 class DevEnv(enum.StrEnum):
-    IDE = 'ide'
-    CLI = 'cli'
-    AI = 'ai'
-    GIT_HOOK = 'git_hook'
-    CI = 'ci'
+    IDE = "ide"
+    CLI = "cli"
+    AI = "ai"
+    GIT_HOOK = "git_hook"
+    CI = "ci"
+
+
+async def _supervised_send(
+    client: typing.Any,
+    boundary: runner_streams.InvocationBoundary,
+    method: str,
+    params: typing.Any,
+    await_reply_after_cancel: jsonrpc_client.AwaitReplyAfterCancel | None = None,
+) -> typing.Any:
+    """Send one covered request while supervising subscription faults.
+
+    Aborts the owned request wait on a pre-response subscription fault or on
+    interruption, retaining the current cancel signaling. The response-capture
+    hook never runs for timeout/cancellation/EOF, so it cannot strand waits.
+    """
+    send_task: asyncio.Task[typing.Any] = asyncio.ensure_future(
+        client.send_request(
+            method,
+            params,
+            timeout=None,
+            on_response=boundary.completion,
+            await_reply_after_cancel=await_reply_after_cancel,
+        )
+    )
+    faults = [subscription.failure for subscription in boundary.subscriptions]
+    try:
+        while not send_task.done():
+            await asyncio.wait(
+                {send_task, *faults}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if not send_task.done() and any(fault.done() for fault in faults):
+                _ = send_task.cancel()
+        return send_task.result()
+    except asyncio.CancelledError:
+        _ = send_task.cancel()
+        current = asyncio.current_task()
+        if current is not None and current.cancelling() > 0:
+            current.uncancel()
+        # A repeated cancellation must not abandon this wait: consume it and
+        # keep waiting for the send to settle, so an in-flight delegated call
+        # is never dropped before the child replied.
+        while not send_task.done():
+            try:
+                await asyncio.shield(send_task)
+            except asyncio.CancelledError:
+                if current is not None and current.cancelling() > 0:
+                    current.uncancel()
+        # The send settled: translate its outcome exactly as the direct wait
+        # below did — the request id lets callers send the ER $/cancelRequest.
+        try:
+            settled = send_task.result()
+        except jsonrpc_client.RequestCancelledError as error:
+            raise error from None
+        except jsonrpc_client.ErrorOnRequest as error:
+            if await_reply_after_cancel is not None:
+                # No $/cancelRequest follows a received reply, so the id
+                # (which an error reply does not carry) is never used.
+                raise jsonrpc_client.RequestCancelledError(
+                    "",
+                    reply=jsonrpc_client.ReplyAfterCancel(
+                        kind=jsonrpc_client.ReplyAfterCancelKind.ERROR,
+                        error_code=error.error.code,
+                        error_data=error.error.data,
+                    ),
+                ) from None
+        except (asyncio.CancelledError, Exception):
+            pass
+        else:
+            if await_reply_after_cancel is not None:
+                # The reply finished the send before the cancel reached this
+                # wait. Report it as a reply after cancel, as the client does
+                # when the cancel reaches the send, so the caller still
+                # records the child's subtreeStopped verdict.
+                raise jsonrpc_client.RequestCancelledError(
+                    settled.id,
+                    reply=jsonrpc_client.ReplyAfterCancel(
+                        kind=jsonrpc_client.ReplyAfterCancelKind.RESULT,
+                        result=settled,
+                    ),
+                ) from None
+        raise
+
+
+async def _drain_boundary(
+    boundary: runner_streams.InvocationBoundary,
+) -> None:
+    """Wait the frozen prefix and surface prefix/stream faults.
+
+    Hook failure aborts captured work rather than waiting for a fence that
+    was never inserted; later errors/items cannot extend the frozen prefix.
+    An interruption while draining settles the owned fences as an interrupted
+    receipt so no pending receipt is left behind.
+    """
+    try:
+        prefix_errors = await boundary.wait_prefixes()
+    except BaseException as exc:
+        for prefix in boundary.prefixes:
+            if not prefix.fence.completion.done():
+                prefix.fence.completion.set_result(
+                    completion_streams.PipelineFailure(exc)
+                )
+        raise
+    faults = [
+        error
+        for error in (
+            subscription.consume_failure() for subscription in boundary.subscriptions
+        )
+        if error is not None
+    ]
+    errors = [*prefix_errors, *faults]
+    if errors:
+        raise ActionRunFailed(
+            f"Stream prefix did not complete: {errors[0]}"
+        ) from errors[0]
+
+
+def _received_runner_failure(
+    response: (
+        _internal_client_types.ErRunActionResponse
+        | _internal_client_types.ErRunHandlersResponse
+    ),
+) -> bool:
+    """Whether a transport-success response already carries a runner failure."""
+    result = response.result
+    return result.error is not None or result.status == "stopped"
+
+
+async def _subscribed_request(
+    runner: ExtensionRunnerInfo,
+    boundary: runner_streams.InvocationBoundary,
+    method: str,
+    params: typing.Any,
+    await_reply_after_cancel: jsonrpc_client.AwaitReplyAfterCancel | None = None,
+) -> typing.Any:
+    """Covered request path: capture the outcome, drain, then map.
+
+    The received outcome is captured internally and its prefix drained before
+    the existing runner error/status mapping runs, including for received
+    runner errors. On a dual fault the received runner outcome wins at this
+    layer; the prefix fault is witnessed in the log for the service adapters.
+    Caller interruption stays primary and never returns a response instead.
+    """
+    send_error: BaseException | None = None
+    response: typing.Any = None
+    try:
+        response = await _supervised_send(
+            runner.client,
+            boundary,
+            method,
+            params,
+            await_reply_after_cancel=await_reply_after_cancel,
+        )
+    except BaseException as exc:
+        send_error = exc
+    if send_error is None:
+        try:
+            await _drain_boundary(boundary)
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as drain_error:
+            if _received_runner_failure(response):
+                logger.warning(
+                    f"Prefix fault after runner failure on {runner.readable_id}:"
+                    f" {drain_error}; reporting the runner outcome"
+                )
+                return response
+            raise
+        return response
+    try:
+        await _drain_boundary(boundary)
+    except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as drain_error:
+        message = (
+            f"Prefix fault after runner error on {runner.readable_id}:"
+            f" {drain_error}; reporting the runner outcome"
+        )
+        if isinstance(send_error, asyncio.CancelledError):
+            # An interrupted prefix has no delivery guarantee, so
+            # its unsettled fence is expected on a cancel.
+            logger.debug(message)
+        else:
+            logger.warning(message)
+    raise send_error
+
+
+def _invocation_boundary(
+    runner: ExtensionRunnerInfo, options: dict[str, typing.Any] | None
+) -> runner_streams.InvocationBoundary:
+    """Select current subscriptions for the request's tokens, if any."""
+    opts = options or {}
+    return runner.stream_registry.begin_invocation(
+        opts.get("partialResultToken"), opts.get("progressToken")
+    )
+
+
+def _stopped_of_result(response: typing.Any) -> bool:
+    """Whether a structured child-ER response carries ``subtreeStopped: true``."""
+    subtree_stopped: object = response.result.subtree_stopped
+    return subtree_stopped is True
+
+
+def _stopped_of_cancel_reply(
+    reply: jsonrpc_client.ReplyAfterCancel | None,
+) -> bool:
+    """Whether a post-cancel wait observed a stopped child."""
+    if reply is None:
+        return False
+    if reply.kind is jsonrpc_client.ReplyAfterCancelKind.RESULT:
+        return _stopped_of_result(reply.result)
+    if reply.kind is jsonrpc_client.ReplyAfterCancelKind.ERROR:
+        return subtree_stopped_of(reply.error_data)
+    return False
 
 
 async def run_action(
@@ -141,6 +404,8 @@ async def run_action(
     action_name: str,
     params: dict[str, Any],
     options: dict[str, Any] | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> RunActionResponse:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
@@ -155,31 +420,74 @@ async def run_action(
             f"Runner {runner.readable_id} has no active client connection (status: {runner.status})"
         )
 
+    runner.active_requests += 1
     try:
-        response = await runner.client.send_request(
-            method=_internal_client_types.ER_RUN_ACTION,
-            params=_internal_client_types.ErRunActionParams(
-                action_name=action_name, params=params, options=options
-            ),
-            timeout=None,
+        boundary = _invocation_boundary(runner, options)
+        send_option = (
+            None
+            if child_stops is None
+            else jsonrpc_client.AwaitReplyAfterCancel(timeout=None)
         )
+        if child_stops is not None:
+            child_stops.child_started()
+        try:
+            if boundary.subscriptions:
+                response = await _subscribed_request(
+                    runner,
+                    boundary,
+                    _internal_client_types.ER_RUN_ACTION,
+                    _internal_client_types.ErRunActionParams(
+                        action_name=action_name, params=params, options=options
+                    ),
+                    await_reply_after_cancel=send_option,
+                )
+            else:
+                response = await runner.client.send_request(
+                    method=_internal_client_types.ER_RUN_ACTION,
+                    params=_internal_client_types.ErRunActionParams(
+                        action_name=action_name, params=params, options=options
+                    ),
+                    timeout=None,
+                    await_reply_after_cancel=send_option,
+                )
+        except jsonrpc_client.RequestCancelledError as error:
+            if child_stops is not None:
+                child_stops.child_finished(
+                    stopped=_stopped_of_cancel_reply(error.reply)
+                )
+            raise
+        except (
+            jsonrpc_client.ServerStoppedError,
+            jsonrpc_client.InvalidResponse,
+        ):
+            if child_stops is not None:
+                child_stops.child_finished(stopped=False)
+            raise
+        except jsonrpc_client.ErrorOnRequest as error:
+            if child_stops is not None:
+                child_stops.child_finished(stopped=subtree_stopped_of(error.error.data))
+            raise
+        if child_stops is not None:
+            child_stops.child_finished(stopped=_stopped_of_result(response))
     except jsonrpc_client.ServerStoppedError as exc:
         raise ActionRunFailed(
-            "Runner stopped during execution — it may have been restarted."
-            " Try again."
+            "Runner stopped during execution — it may have been restarted. Try again."
         ) from exc
     except jsonrpc_client.RequestCancelledError as error:
-        logger.trace(
-            f"Request {error.request_id} to {runner.readable_id} was cancelled"
-        )
-        await _internal_client_api.cancel_request(
-            client=runner.client, request_id=error.request_id
-        )
-        raise error
+        if child_stops is None:
+            logger.trace(
+                f"Request {error.request_id} to {runner.readable_id} was cancelled"
+            )
+            await _internal_client_api.cancel_request(
+                client=runner.client, request_id=error.request_id
+            )
+        raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
         raise
+    finally:
+        runner.active_requests -= 1
 
     run_result = response.result
 
@@ -194,7 +502,9 @@ async def run_action(
     if status == "stopped":
         raise ActionRunStopped(message=result_by_format)
 
-    return RunActionResponse(result_by_format=result_by_format, return_code=return_code, status=status)
+    return RunActionResponse(
+        result_by_format=result_by_format, return_code=return_code, status=status
+    )
 
 
 async def run_handlers(
@@ -206,6 +516,8 @@ async def run_handlers(
     previous_context: dict | None = None,
     caller_kwargs: dict | None = None,
     options: dict[str, typing.Any] | None = None,
+    *,
+    child_stops: DelegatedChildStops | None,
 ) -> RunHandlersResponse:
     """Call actions/runHandlers on the ER for multi-env segment orchestration.
 
@@ -228,32 +540,82 @@ async def run_handlers(
             f"Runner {runner.readable_id} has no active client connection (status: {runner.status})"
         )
 
+    runner.active_requests += 1
     try:
-        response = await runner.client.send_request(
-            method=_internal_client_types.ER_RUN_HANDLERS,
-            params=_internal_client_types.ErRunHandlersParams(
-                action_name=action_name,
-                handler_names=handler_names,
-                params=params or {},
-                previous_result=previous_result,
-                previous_context=previous_context,
-                caller_kwargs=caller_kwargs,
-                options=options,
-            ),
-            timeout=None,
+        boundary = _invocation_boundary(runner, options)
+        send_option = (
+            None
+            if child_stops is None
+            else jsonrpc_client.AwaitReplyAfterCancel(timeout=None)
         )
+        if child_stops is not None:
+            child_stops.child_started()
+        try:
+            if boundary.subscriptions:
+                response = await _subscribed_request(
+                    runner,
+                    boundary,
+                    _internal_client_types.ER_RUN_HANDLERS,
+                    _internal_client_types.ErRunHandlersParams(
+                        action_name=action_name,
+                        handler_names=handler_names,
+                        params=params or {},
+                        previous_result=previous_result,
+                        previous_context=previous_context,
+                        caller_kwargs=caller_kwargs,
+                        options=options,
+                    ),
+                    await_reply_after_cancel=send_option,
+                )
+            else:
+                response = await runner.client.send_request(
+                    method=_internal_client_types.ER_RUN_HANDLERS,
+                    params=_internal_client_types.ErRunHandlersParams(
+                        action_name=action_name,
+                        handler_names=handler_names,
+                        params=params or {},
+                        previous_result=previous_result,
+                        previous_context=previous_context,
+                        caller_kwargs=caller_kwargs,
+                        options=options,
+                    ),
+                    timeout=None,
+                    await_reply_after_cancel=send_option,
+                )
+        except jsonrpc_client.RequestCancelledError as error:
+            if child_stops is not None:
+                child_stops.child_finished(
+                    stopped=_stopped_of_cancel_reply(error.reply)
+                )
+            raise
+        except (
+            jsonrpc_client.ServerStoppedError,
+            jsonrpc_client.InvalidResponse,
+        ):
+            if child_stops is not None:
+                child_stops.child_finished(stopped=False)
+            raise
+        except jsonrpc_client.ErrorOnRequest as error:
+            if child_stops is not None:
+                child_stops.child_finished(stopped=subtree_stopped_of(error.error.data))
+            raise
+        if child_stops is not None:
+            child_stops.child_finished(stopped=_stopped_of_result(response))
     except jsonrpc_client.RequestCancelledError as error:
-        logger.trace(
-            f"Request {error.request_id} to {runner.readable_id} was cancelled"
-        )
-        await _internal_client_api.cancel_request(
-            client=runner.client, request_id=error.request_id
-        )
-        raise error
+        if child_stops is None:
+            logger.trace(
+                f"Request {error.request_id} to {runner.readable_id} was cancelled"
+            )
+            await _internal_client_api.cancel_request(
+                client=runner.client, request_id=error.request_id
+            )
+        raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
         raise
+    finally:
+        runner.active_requests -= 1
 
     run_result = response.result
 
@@ -275,8 +637,12 @@ async def run_handlers(
 async def merge_results(
     runner: ExtensionRunnerInfo,
     action_name: str,
-    results: list[dict],
-) -> dict:
+    results: list[dict[str, Any]],
+    result_formats: list[RunResultFormat] | None = None,
+) -> _internal_client_types.ResultByFormat:
+    requested_formats = (
+        [RunResultFormat.JSON] if result_formats is None else result_formats
+    )
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
@@ -288,27 +654,40 @@ async def merge_results(
     response = await runner.client.send_request(
         method=_internal_client_types.ER_MERGE_RESULTS,
         params=_internal_client_types.ErMergeResultsParams(
-            action_name=action_name, results=results
+            action_name=action_name,
+            results=results,
+            result_formats=[
+                "json" if result_format is RunResultFormat.JSON else "string"
+                for result_format in requested_formats
+            ],
         ),
         timeout=None,
     )
     merge_result = response.result
     if merge_result.error is not None:
         raise ActionRunFailed(merge_result.error)
-    return merge_result.merged
+    return merge_result.result_by_format or {}
 
 
-async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
+async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> bool:
+    """Ask a runner to re-import an action and its handlers.
+
+    Returns whether the request was sent: a runner that is not running has
+    nothing to reload, which is a normal condition rather than an error, but the
+    caller must be able to tell that from a reload that happened.
+    """
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
     if runner.status != RunnerStatus.RUNNING:
-        return
+        return False
 
     await runner.client.send_request(
         method=_internal_client_types.ER_RELOAD_ACTION,
         params=_internal_client_types.ErReloadActionParams(action_name=action_name),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
+    return True
 
 
 async def resolve_source(runner: ExtensionRunnerInfo, source: str) -> str | None:
@@ -340,12 +719,14 @@ async def resolve_action_meta(runner: ExtensionRunnerInfo) -> dict[str, dict]:
     """Ask the ER to resolve action meta info (canonical source + execution mode)."""
     response = await runner.client.send_request(
         method=_internal_client_types.ER_RESOLVE_ACTION_META,
-        timeout=None,
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return response.result
 
 
-async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | None]:
+async def get_payload_schemas(
+    runner: ExtensionRunnerInfo,
+) -> dict[str, schema_utils.PayloadSchema | None]:
     """Fetch payload schemas for all actions known to the runner."""
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
@@ -357,7 +738,7 @@ async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | N
 
     response = await runner.client.send_request(
         method=_internal_client_types.ER_GET_PAYLOAD_SCHEMAS,
-        timeout=None,
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return response.result
 
@@ -371,14 +752,12 @@ async def resolve_package_path(
     # checked here.
     response = await runner.client.send_request(
         method=_internal_client_types.ER_RESOLVE_PACKAGE_PATH,
-        params=_internal_client_types.ErResolvePackagePathParams(package_name=package_name),
+        params=_internal_client_types.ErResolvePackagePathParams(
+            package_name=package_name
+        ),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return {"packagePath": response.result.package_path}
-
-
-@dataclasses.dataclass
-class ErTelemetryConfig:
-    otlp_endpoint: str | None = None
 
 
 @dataclasses.dataclass
@@ -387,23 +766,26 @@ class RunnerConfig:
     # config by handler source
     action_handler_configs: dict[str, dict[str, Any]]
     services: list[domain.ServiceDeclaration] = dataclasses.field(default_factory=list)
+    # Service config overrides keyed by derived alias. Forwarded verbatim: the ER
+    # matches them against its bindings, because activator-registered services
+    # are invisible from here (ADR-0070).
+    service_config_overrides: dict[str, dict[str, Any]] = dataclasses.field(
+        default_factory=dict
+    )
     # If provided, eagerly instantiate these handlers after config update.
     # Keys are action names, values are lists of handler names within that action.
     handlers_to_initialize: dict[str, list[str]] | None = None
     logging: ErLoggingConfig = dataclasses.field(default_factory=ErLoggingConfig)
-    telemetry: ErTelemetryConfig = dataclasses.field(default_factory=ErTelemetryConfig)
 
     def to_dict(self) -> dict[str, typing.Any]:
         result: dict[str, typing.Any] = {
             "actions": [action.to_dict() for action in self.actions],
             "action_handler_configs": self.action_handler_configs,
             "services": [svc.to_dict() for svc in self.services],
+            "service_config_overrides": self.service_config_overrides,
             "logging": {
                 "defaultLevel": self.logging.default_level,
                 "logGroups": self.logging.log_groups,
-            },
-            "telemetry": {
-                "otlp_endpoint": self.telemetry.otlp_endpoint,
             },
         }
         if self.handlers_to_initialize is not None:
@@ -422,10 +804,13 @@ async def update_config(
             project_def_path=project_def_path.as_posix(),
             config=config.to_dict(),
         ),
+        timeout=_ER_UPDATE_CONFIG_TIMEOUT_SEC,
     )
 
 
-async def update_logging(runner: ExtensionRunnerInfo, forward: bool, forward_level: str) -> None:
+async def update_logging(
+    runner: ExtensionRunnerInfo, forward: bool, forward_level: str
+) -> None:
     """Toggle ER->WM log forwarding via the dedicated ``finecodeRunner/updateLogging``
     request. Process-level only on the ER side -- does NOT rebuild RunnerContext
     (contrast ``update_config``)."""
@@ -434,6 +819,7 @@ async def update_logging(runner: ExtensionRunnerInfo, forward: bool, forward_lev
         params=_internal_client_types.ErUpdateLoggingParams(
             forward=forward, forward_level=forward_level
         ),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
 
 
@@ -463,7 +849,11 @@ async def notify_document_did_close(
         ),
     )
 
-async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params: _internal_client_types.DidChangeTextDocumentParams) -> None:
+
+async def notify_document_did_change(
+    runner: ExtensionRunnerInfo,
+    change_params: _internal_client_types.DidChangeTextDocumentParams,
+) -> None:
     runner.client.notify(
         method=_internal_client_types.TEXT_DOCUMENT_DID_CHANGE,
         params=change_params,
@@ -471,23 +861,23 @@ async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params:
 
 
 __all__ = [
+    "ActionRunCancelled",
     "ActionRunFailed",
     "ActionRunStopped",
-    "ActionRunCancelled",
     "ExtensionRunnerInfo",
-    "RunnerStatus",
     "RunActionRawResult",
     "RunActionResponse",
     "RunResultFormat",
-    "run_action",
+    "RunnerConfig",
+    "RunnerStatus",
+    "get_payload_schemas",
     "merge_results",
+    "notify_document_did_close",
+    "notify_document_did_open",
     "reload_action",
     "resolve_action_meta",
-    "get_payload_schemas",
     "resolve_package_path",
-    "RunnerConfig",
+    "run_action",
     "update_config",
     "update_logging",
-    "notify_document_did_open",
-    "notify_document_did_close",
 ]

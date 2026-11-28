@@ -243,7 +243,7 @@ class MyRunContext(code_action.RunActionContext[MyRunPayload]):
 
 When possible, prefer not overriding `__init__` at all. If you do override it, keep it compatible with the base `RunActionContext` constructor unless you have a concrete reason not to.
 
-See `presets/fine_envs/fine_envs/install_envs_discover_envs_handler.py`
+See `extensions/fine_envs/fine_envs/install_envs_discover_envs_handler.py`
 for a concrete example of this constructor-forwarding pattern.
 <!-- 
 This is currently still an idea, not implemented:
@@ -593,7 +593,7 @@ async def run(self, payload, run_context):
             )
 ```
 
-The framework detects that the handler used direct sends and skips the scheduler loop entirely. For streaming callers (`run_action_iter`), partial results arrive as subactions yield them. For non-streaming callers (`run_action`), the framework accumulates all sent results into the final return value.
+The framework detects that the handler used direct sends and skips the scheduler loop entirely. For streaming callers (`run_action_iter`), partial results arrive as subactions yield them. For non-streaming callers (`run_action`), the framework accumulates all sent results into the final return value. A handler's result must be the same whether the caller observes partials or receives only the final result; see [R-312](designing-actions-rules.md#r-312-streaming-capable-handlers-must-give-every-caller-the-same-final-result).
 
 | | Scheduler pattern | Direct send pattern |
 | --- | --- | --- |
@@ -786,6 +786,20 @@ class FormatFileDispatchHandler(code_action.ActionHandler[FormatFileAction, ...]
 
 For collection-level dispatch (e.g. `LintFilesDispatchHandler`), the handler groups items by language and dispatches each group to the matching language subaction concurrently — see [Two patterns for sending partial results](#two-patterns-for-sending-partial-results).
 
+**Unhandled inputs are an answer.** A dispatch handler computes which inputs no
+subaction covered and MUST record that on the result it returns or the partial
+it sends: an `ItemCoverage` entry per input on the result's `coverage` list
+(R-310, ADR-0098). `NO_SUBACTIONS` when the action has none,
+`NO_LANGUAGE_DETECTED` when the language is undeterminable, and
+`NO_SUBACTION_FOR_LANGUAGE` with the detected language as `detail` when the
+language is known but unserved. The caller reads `result.unhandled` — the
+entries whose status ranks below `ABSORBED`. The miss survives every merge
+(the join is installed into `update()` by the base class) and every bridge
+that builds a fresh result object from selected fields (the run-scoped
+coverage sink carries it). An author cannot bypass either choke point; a
+bridge that genuinely handled the degradation suppresses its own miss with
+`coverage_sink.absorb_coverage(...)`.
+
 ### Iterate bridge handler
 
 A handler on a collection action that splits the payload into individual items and delegates each to an item action. This changes the granularity from collection to item:
@@ -860,13 +874,68 @@ async def run(self, payload, run_context):
 
 Making `run()` an async generator (using `yield`) is what enables this — see [Async generator handlers](developing-finecode.md#async-generator-handlers).
 
-#### Progress does not propagate to sub-actions
+#### Progress relay to sub-actions is opt-in
 
-Sub-actions called via `run_action()` or `run_action_iter()` do **not** inherit the parent's progress token. Their `run_context.progress()` calls are no-ops unless the sub-action is called at the top level (directly by the client).
+Sub-actions called via `run_action()` or `run_action_iter()` do **not** inherit
+the parent's progress token. Their `run_context.progress()` calls are no-ops
+unless the sub-action is called at the top level (directly by the client) — or
+unless the parent opts into the live relay by passing its own open
+`ProgressContext` as `progress=` to `run_action_iter()`:
 
-As a result: if a long-running sub-action (like `serve_wal_explorer_from_store`) reports "Serving at {url}" via its own progress, that message is invisible when the same action is called from a parent handler.
+```python
+async def run(self, payload, run_context):
+    async with run_context.progress("WAL Explorer", cancellable=True) as prog:
+        async with contextlib.aclosing(
+            self.action_runner.run_action_iter(serve_action, payload, meta, progress=prog)
+        ) as stream:
+            async for serve_partial in stream:
+                yield MyActionResult(base_url=serve_partial.base_url, ...)
+```
 
-The workaround is to handle progress at the parent level — read the URL from the sub-action's partial result and report it from the parent's own progress context:
+Always close the iterator with `contextlib.aclosing` (or an explicit `aclose()`):
+the context manager owns the relay, and an unclosed iterator keeps the child
+subscribed with no one draining it. Never pass a context you have already exited,
+and never use the context after the relay ends — reports arriving after the end
+are dropped. (A report relayed into a context the parent already exited follows
+`ProgressContext.report`'s existing behavior; the relay adds no guard.)
+
+The child's `begin`/`report`/`end` reach the parent as plain
+`report(message=...)` calls, live while the parent awaits the iterator:
+
+| Child event | Parent report |
+| --- | --- |
+| `begin` with a string `message` | that `message` |
+| `begin` with no string `message` but a string `title` | that `title` |
+| `begin` with neither | dropped (warning logged) |
+| `report` with a string `message` | that `message` |
+| `report` with no message | dropped silently |
+| `end` with a string `message` | that `message` |
+| `end` with no message | `Delegated progress ended` |
+
+Percentages are never forwarded. A relayed `end` never ends the iteration: the
+partials, final result and errors with `progress=` are identical to those with
+`progress=None`. Every relayed report arrives before the iterator ends on a
+received end, in child order, and none arrives after it ends. No order is
+promised between relayed progress and the call's partial results. A report the
+parent's own sink raises on is dropped (logged) and the call continues; only
+values inside the `ProgressSender` type contract (`str`/`int`/`bool`/`None`,
+`json.dumps`-serializable) are relayed — anything else fails as it already does
+for client-requested progress.
+
+Costs of opting in: reports that carry only a percentage are invisible; under
+load the oldest buffered reports are discarded (at most 100 held per call), so a
+slow parent sees the bounded tail, not every message (on the same-env path no
+backlog forms at all — the child's sender waits for the parent's sink); and closing or cancelling
+the iterator while the child still runs cancels the child and holds the close up to
+5.0 s while the child stops (same-env `run_action` is unchanged; same-env
+`run_action_iter` now cancels its child on cancel and close). Message
+size is not bounded: one very large valid message is relayed like any other and
+can exhaust memory and fail the call, as can a child that sends faster than its
+own runner writes to the WM — the only exceptions to the otherwise-identical
+outcome. If you
+only need the final outcome (like the serving URL above), prefer reading it from
+the sub-action's partial result and reporting it from the parent's own progress
+context instead:
 
 ```python
 async def run(self, payload, run_context):
@@ -899,13 +968,15 @@ env = "dev_workspace"
 
 [[tool.finecode.action.lock_python_dependencies.handlers]]
 name = "uv"
-source = "fine_python_uv.UvLockHandler"
+source = "my_lock_tools.UvLockHandler"
 env = "dev_workspace"
 ```
 
+The `my_lock_tools` handlers in this example are illustrative and are not shipped by FineCode.
+
 ### Multi-lock setup (per-platform locks, e.g. pip-compile)
 
-A Python project needs separate lock files per Python version and platform. The user activates `LockAllPythonTargetsHandler` — a different handler for the same `lock_dependencies` action. It calls `lock_python_dependencies` once per configured target combination and collects all generated paths.
+A Python project needs separate lock files per Python version and platform. The user activates `my_lock_tools.LockAllPythonTargetsHandler` — a different handler for the same `lock_dependencies` action. It calls `lock_python_dependencies` once per configured target combination and collects all generated paths. These `my_lock_tools` handlers are illustrative and are not shipped by FineCode.
 
 ```mermaid
 flowchart TD
@@ -919,14 +990,14 @@ flowchart TD
 ```toml
 [[tool.finecode.action.lock_dependencies.handlers]]
 name = "all_python_targets"
-source = "fine_python_pip.LockAllPythonTargetsHandler"
+source = "my_lock_tools.LockAllPythonTargetsHandler"
 env = "dev_workspace"
 config.python_versions = ["3.11", "3.12"]
 config.platforms = ["linux_x86_64", "win_amd64"]
 
 [[tool.finecode.action.lock_python_dependencies.handlers]]
 name = "pip_compile"
-source = "fine_python_pip.PipCompileLockHandler"
+source = "my_lock_tools.PipCompileLockHandler"
 env = "dev_workspace"
 ```
 
@@ -960,6 +1031,12 @@ Adding support for a new language requires no changes to `LockDependenciesDispat
 ## Partial results and progress
 
 For long-running actions, the default recommendation is: **use partial results when the caller can consume useful incremental result data, and use progress when the user benefits from seeing execution status. Often you want both.**
+
+A streaming-capable handler always emits its partials. It does not check whether a
+top-level caller supplied a partial-result token or whether a parent uses
+`run_action_iter()`; the framework controls who observes them. When partials have
+the action's result type, every caller receives their `update()` merge as the final
+result. See [R-312](designing-actions-rules.md#r-312-streaming-capable-handlers-must-give-every-caller-the-same-final-result).
 
 They solve different problems:
 
@@ -1394,6 +1471,72 @@ class FormatFileCallerRunContextKwargs(code_action.CallerRunContextKwargs):
 ```
 
 **Fields that are services or sessions must be excluded** (set to `None` or omitted) in `serialize()`. The run context must handle `caller_kwargs.session is None` by falling back to DI-resolved defaults, exactly as it does for the standalone (no-parent) case.
+
+### Lending a resource to a child action
+
+A parent sometimes prepares something once and lets every child use it: a temporary
+directory, a file it rendered, a lock it holds. The parent owns the resource and
+removes it; children only borrow it. Pass an address (a path string or file URI) in
+`caller_kwargs`, never `pathlib.Path` or a live object, and keep the child's
+standalone behavior: with no address, the child prepares its own.
+
+The parent must keep the resource until every child that may use it has stopped.
+Whether the end of the parent's `await run_action(...)` means that depends on where
+the child runs:
+
+- **Same env.** When the child action is found locally and all its handlers are in the
+  caller's env, `run_action` awaits the child's run directly in the caller's task. If the
+  parent is cancelled, the cancellation reaches the child's handler, and the child's own
+  cleanup finishes before the parent's await raises. A collection handler that wraps
+  its fan-out (`asyncio.TaskGroup`) in the resource's context manager therefore removes
+  the resource only after every child has unwound. A child that runs a subprocess still
+  has to stop it on cancellation itself; see
+  [Stopping a process](../reference/services.md#stopping-a-process-with-icommandrunner).
+- **Another env.** If any handler is in another env, the call goes through the WM
+  (`finecode/runActionInProject`). A normal reply arrives after the child run has
+  ended. A cancelled or closed await sends `$/cancelRequest`, which cancels the
+  child (see [WM ↔ ER protocol](../wm-er-protocol.md)), and
+  the await then waits up to 5.0 s for the child's stop. A communication error can
+  still end the await while the child runs. In either case the parent's await has
+  ended, but the child has not necessarily stopped. A resource removed at that point
+  can disappear under a running child. Read `run_context.delegated_calls_outcome()`
+  in cleanup, from the run context the handler was given, after every delegating
+  await has ended (ADR-0184): it reports whether every delegated call of the
+  handler's own action run ended stopped, counting the calls of same-env child runs
+  it started at any depth. Calls counted are those made through the project or the
+  workspace action runner; a call counts in the run that is current in the task
+  making it, and tasks a handler creates while its run lasts carry it. Not counted:
+  a call from a task that carries no run (for example a reused service's worker
+  task), and a call made after the run ended — so the read can say stopped while
+  such a call runs. Wrap `run_action_iter` in `contextlib.aclosing`. Await every
+  delegated call before the handler returns; holding one in a task that outlives the
+  await, `asyncio.shield` included, is unsupported until #1008. Same-env descendants
+  are not tracked by the WM: after a child ER's reply says `subtreeStopped: false`,
+  recovery is no longer refused on the child's account. A run context built outside
+  the ER (a test, standalone use) reads unconfirmed; runs started through
+  `finecode_extension_runner.testing` read the real outcome.
+
+Choose one of two rules for a child that may run in another env, and write it in the
+caller-kwargs docstring:
+
+1. **Share only in-process (default).** Exclude the address in `serialize()`, as for
+   sessions above. A child in another env prepares its own resource. Sharing then
+   holds only in the same env, and nothing outlives the parent.
+2. **Lend across envs.** Serialize the address, and accept that after the parent is
+   cancelled or loses its connection, a child still running in another env may find the
+   resource gone and fail. Normal completion and returned errors are safe.
+
+Do not build cross-env completion tracking inside a handler: no registry of runs, no
+per-run tokens, no polling for the child's end. The framework does not report when a
+child in another env has stopped after a cancelled or failed await. A design that needs
+that guarantee needs it from the framework.
+
+The 5.0 s bound covers delegated calls and `uv` through `ICommandRunner`'s stop
+ladder only: after it the await ends whether the child stopped or not. A same-env
+child handler that ignores cancellation delays the parent's `TaskGroup` as it does
+today — the bound does not cut it short. The built-in example of rule 2 is
+`create_envs`: it lends one shared config-dump file to every `create_env`
+child and removes its directory after the fan-out, warning once when the read is unconfirmed.
 
 ## Choosing between project scope and workspace scope
 

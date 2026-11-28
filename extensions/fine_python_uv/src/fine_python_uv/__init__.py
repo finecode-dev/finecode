@@ -1,3 +1,4 @@
+from .build_python_artifact_handler import UvBuildPythonArtifactHandler
 from .create_env_handler import UvCreateEnvHandler
 from .install_deps_in_env_handler import UvInstallDepsInEnvHandler
 from .list_obtainable_python_interpreters_handler import (
@@ -5,6 +6,7 @@ from .list_obtainable_python_interpreters_handler import (
 )
 
 __all__ = [
+    "UvBuildPythonArtifactHandler",
     "UvCreateEnvHandler",
     "UvInstallDepsInEnvHandler",
     "UvListObtainablePythonInterpretersHandler",

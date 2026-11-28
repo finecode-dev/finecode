@@ -51,9 +51,10 @@ from __future__ import annotations
 import dataclasses
 import typing
 
+from finecode_extension_api.code_action import RunActionResult, RunReturnCode
+
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode_extension_api import textstyler
-from finecode_extension_api.code_action import RunActionResult, RunReturnCode
 
 __all__ = ["VariantKeyedRunResult"]
 

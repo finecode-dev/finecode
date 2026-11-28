@@ -1,0 +1,4 @@
+# ripgrep (and tools built on it: VS Code search, Claude Code Grep/Glob) skips
+# gitignored paths. The internal docs are gitignored so the public repo never
+# tracks them, but they are meant to be searched from the root.
+!/finecode_internal_docs/

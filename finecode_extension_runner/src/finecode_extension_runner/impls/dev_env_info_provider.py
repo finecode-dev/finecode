@@ -5,9 +5,7 @@
 from finecode_extension_api.interfaces import idevenvinfoprovider, ilogger
 
 
-class DevEnvInfoProvider(
-    idevenvinfoprovider.IDevEnvInfoProvider
-):
+class DevEnvInfoProvider(idevenvinfoprovider.IDevEnvInfoProvider):
     def __init__(
         self,
         logger: ilogger.ILogger,
@@ -34,6 +32,6 @@ class DevEnvInfoProvider(
 
     # async def get_file_content(self, file_path: pathlib.Path) -> bytes:
     #     ...
-    
+
     # async def save_file_content(self, file_path: pathlib.Path, file_content: bytes) -> None:
     #     ...

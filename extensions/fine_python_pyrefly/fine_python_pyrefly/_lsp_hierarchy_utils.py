@@ -7,12 +7,11 @@ Field mapping notes:
   - kind: SymbolKind IntEnum <-> "kind": int (LSP)
   - tags: list[SymbolTag] | None <-> "tags": list[int] (LSP, omitted when empty/None)
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-from finecode_extension_api import common_types
-from fine_code_hierarchy.types import SymbolKind, SymbolTag
 from fine_code_hierarchy.call_hierarchy_incoming_calls_action import (
     CallHierarchyIncomingCall,
 )
@@ -25,8 +24,9 @@ from fine_code_hierarchy.text_document_prepare_call_hierarchy_action import (
 from fine_code_hierarchy.text_document_prepare_type_hierarchy_action import (
     TypeHierarchyItem,
 )
+from fine_code_hierarchy.types import SymbolKind, SymbolTag
+from finecode_extension_api import common_types
 from finecode_extension_api.resource_uri import ResourceUri
-
 
 # ---------------------------------------------------------------------------
 # Range / Position helpers

@@ -1,0 +1,137 @@
+{
+  "_AnyPayload": {
+    "properties": {
+      "anything": {}
+    },
+    "required": [
+      "anything"
+    ]
+  },
+  "_EnumPayload": {
+    "properties": {
+      "color": {
+        "description": "The chosen colour.",
+        "enum": [
+          "red",
+          "green"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "color"
+    ]
+  },
+  "_ListPayload": {
+    "properties": {
+      "bare": {},
+      "ints": {
+        "items": {
+          "type": "integer"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "ints",
+      "bare"
+    ]
+  },
+  "_LiteralPayload": {
+    "properties": {
+      "literal": {}
+    },
+    "required": [
+      "literal"
+    ]
+  },
+  "_MappingPayload": {
+    "properties": {
+      "mapping": {}
+    },
+    "required": [
+      "mapping"
+    ]
+  },
+  "_NestedPayload": {
+    "properties": {
+      "nested": {
+        "description": "The nested object.",
+        "properties": {
+          "inner": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "inner"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "nested"
+    ]
+  },
+  "_OptionalPayload": {
+    "properties": {
+      "maybe_int": {
+        "type": "integer"
+      },
+      "maybe_str": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "maybe_int"
+    ]
+  },
+  "_ResourceUriPayload": {
+    "properties": {
+      "uri": {
+        "description": "A URI identifying a resource. For local files, use a file:// URI, e.g. file:///home/user/foo.py",
+        "format": "uri",
+        "type": "string"
+      }
+    },
+    "required": [
+      "uri"
+    ]
+  },
+  "_ScalarsPayload": {
+    "properties": {
+      "a_bool": {
+        "type": "boolean"
+      },
+      "a_float": {
+        "type": "number"
+      },
+      "a_path": {
+        "type": "string"
+      },
+      "a_str": {
+        "type": "string"
+      },
+      "an_int": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "a_bool",
+      "an_int",
+      "a_float",
+      "a_str",
+      "a_path"
+    ]
+  },
+  "_UnionPayload": {
+    "properties": {
+      "int_or_str": {}
+    },
+    "required": [
+      "int_or_str"
+    ]
+  }
+}

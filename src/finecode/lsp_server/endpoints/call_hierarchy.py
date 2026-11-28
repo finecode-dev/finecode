@@ -79,12 +79,17 @@ async def prepare_call_hierarchy(
             project=project_dir,
             params={
                 "uri": uri,
-                "position": {"line": position["line"], "character": position["character"]},
+                "position": {
+                    "line": position["line"],
+                    "character": position["character"],
+                },
             },
             options={"trigger": "system", "devEnv": "ide"},
         )
     except Exception as error:
-        _cancellation.reraise_if_cancelled(error, context=f"Error preparing call hierarchy for {uri}")
+        _cancellation.reraise_if_cancelled(
+            error, context=f"Error preparing call hierarchy for {uri}"
+        )
         logger.error(f"Error preparing call hierarchy for {uri}: {error}")
         return None
 
@@ -124,7 +129,9 @@ async def call_hierarchy_incoming_calls(
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
-        _cancellation.reraise_if_cancelled(error, context=f"Error getting incoming calls for {uri}")
+        _cancellation.reraise_if_cancelled(
+            error, context=f"Error getting incoming calls for {uri}"
+        )
         logger.error(f"Error getting incoming calls for {uri}: {error}")
         return None
 
@@ -170,7 +177,9 @@ async def call_hierarchy_outgoing_calls(
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
-        _cancellation.reraise_if_cancelled(error, context=f"Error getting outgoing calls for {uri}")
+        _cancellation.reraise_if_cancelled(
+            error, context=f"Error getting outgoing calls for {uri}"
+        )
         logger.error(f"Error getting outgoing calls for {uri}: {error}")
         return None
 

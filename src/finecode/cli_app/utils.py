@@ -12,6 +12,30 @@ class RunActionsResult(typing.NamedTuple):
     output: str
     return_code: int
     result_by_project: dict[pathlib.Path, dict[str, runner_client.RunActionResponse]]
+    scope_by_action_source: dict[str, str | None] | None = None
+    """Declared scope of each action that ran, by action source.
+
+    Carried out of the run because a workspace-scoped action's result is filed
+    under the project that *hosted* it -- the workspace root -- rather than the
+    projects it was about, and the result itself says nothing about which of the
+    two a reader is holding. Without this, `{"/ws": {...}}` from a workspace-scoped
+    `lint --project_paths=X` is indistinguishable from the same shape produced by
+    a project-scoped action run on `/ws`, and a reader that looks up its project
+    by key silently finds nothing. `None` means the scope was not resolved."""
+
+    project_paths_requested: list[str] | None = None
+    """Paths the requested project *names* resolved to, in the order returned.
+
+    `--project` takes a name, but every key in `result_by_project` is a path, so
+    the request and the outcome cannot be joined without this. `None` means the
+    run was not restricted to a subset of projects."""
+
+    resolved_payload: dict[str, typing.Any] | None = None
+    """The payload the ERs actually received, after schema-guided deserialization
+
+    and resource absolutization. Distinct from the blind JSON parse the caller
+    built, so `--results-file` records what ran rather than what was typed.
+    `None` when the run failed before the payload was resolved."""
 
 
 def run_result_to_str(
@@ -107,6 +131,9 @@ async def run_actions_in_projects_and_concat_results(
         run_trigger=run_trigger,
         dev_env=dev_env,
         payload_overrides_by_project=payload_overrides_by_project or {},
+        # The CLI drives the WM in-process; there is no client connection an ER
+        # could be pointed at.
+        origin=None,
     )
 
     result_output: str = ""

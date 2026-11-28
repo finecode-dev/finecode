@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_code_hierarchy.type_hierarchy_supertypes_action import (
     TypeHierarchySupertypesPayload,
     TypeHierarchySupertypesResult,
 )
-from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
 from fine_python_lang.type_hierarchy_supertypes_python_action import (
     TypeHierarchySupertypesPythonAction,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
+
 from fine_python_pyrefly._lsp_hierarchy_utils import (
     type_hierarchy_item_from_lsp,
     type_hierarchy_item_to_lsp,
@@ -58,9 +59,11 @@ class PyreflyTypeHierarchySupertypesHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
 
-        async with self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session:
-            async with session.read_file(file_path) as file_info:
-                content = file_info.content
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path) as file_info,
+        ):
+            content = file_info.content
 
         item_dict = type_hierarchy_item_to_lsp(payload.item)
         raw_result = await self.lsp_service.get_type_hierarchy_supertypes(

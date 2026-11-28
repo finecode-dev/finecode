@@ -1,9 +1,9 @@
-from finecode_extension_api import code_action
 from fine_code_hierarchy.call_hierarchy_outgoing_calls_action import (
     CallHierarchyOutgoingCallsAction,
     CallHierarchyOutgoingCallsPayload,
     CallHierarchyOutgoingCallsResult,
 )
+from finecode_extension_api import code_action
 
 
 class CallHierarchyOutgoingCallsPythonAction(code_action.Action):

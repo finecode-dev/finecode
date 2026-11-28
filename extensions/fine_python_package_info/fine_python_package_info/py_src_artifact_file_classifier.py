@@ -2,8 +2,10 @@ import pathlib
 
 from fine_python_lang import ipypackagelayoutinfoprovider
 from finecode_extension_api import service
-from finecode_extension_api.interfaces import (iprojectinfoprovider,
-                                               isrcartifactfileclassifier)
+from finecode_extension_api.interfaces import (
+    iprojectinfoprovider,
+    isrcartifactfileclassifier,
+)
 
 
 class PySrcArtifactFileClassifier(

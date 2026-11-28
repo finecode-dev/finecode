@@ -1,5 +1,5 @@
-"""Test config injection in services.
-"""
+"""Test config injection in services."""
+
 from __future__ import annotations
 
 import dataclasses

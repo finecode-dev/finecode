@@ -3,18 +3,19 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-from finecode_extension_api import code_action, common_types
-from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
+from fine_python_lang.text_document_document_highlight_python_action import (
+    TextDocumentDocumentHighlightPythonAction,
+)
 from fine_symbol_info.text_document_document_highlight_action import (
     DocumentHighlight,
     DocumentHighlightKind,
     DocumentHighlightPayload,
     DocumentHighlightResult,
 )
-from fine_python_lang.text_document_document_highlight_python_action import (
-    TextDocumentDocumentHighlightPythonAction,
-)
+from finecode_extension_api import code_action, common_types
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
+
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
@@ -44,7 +45,9 @@ class PyreflyDocumentHighlightHandler(
         PyreflyDocumentHighlightHandlerConfig,
     ]
 ):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="PyreflyDocumentHighlightHandler")
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="PyreflyDocumentHighlightHandler"
+    )
 
     def __init__(
         self,
@@ -70,16 +73,20 @@ class PyreflyDocumentHighlightHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
 
-        async with self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session:
-            async with session.read_file(file_path) as file_info:
-                content = file_info.content
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path) as file_info,
+        ):
+            content = file_info.content
 
         position = {
             "line": payload.position.line,
             "character": payload.position.character,
         }
 
-        result = await self.lsp_service.get_document_highlight(file_path, content, position)
+        result = await self.lsp_service.get_document_highlight(
+            file_path, content, position
+        )
         if not result:
             return DocumentHighlightResult()
         highlights = [

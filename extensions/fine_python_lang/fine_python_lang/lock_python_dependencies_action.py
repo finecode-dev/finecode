@@ -1,12 +1,12 @@
 # docs: docs/reference/actions.md
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts.lock_dependencies_action import (
     LockDependenciesAction,
     LockDependenciesRunPayload,
     LockDependenciesRunResult,
 )
+from finecode_extension_api import code_action
 
 
 @dataclasses.dataclass
@@ -31,7 +31,9 @@ class LockPythonDependenciesAction(
 ):
     """Generate a pip-compatible lock file for a Python artifact's dependencies."""
 
-    DESCRIPTION = "Generate a pip-compatible lock file for a Python artifact's dependencies."
+    DESCRIPTION = (
+        "Generate a pip-compatible lock file for a Python artifact's dependencies."
+    )
     PAYLOAD_TYPE = LockPythonDependenciesRunPayload
     RUN_CONTEXT_TYPE = LockPythonDependenciesRunContext
     RESULT_TYPE = LockDependenciesRunResult

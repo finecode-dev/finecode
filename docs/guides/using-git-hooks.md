@@ -22,9 +22,9 @@ Installing the git hook only connects Git to FineCode. You also need to configur
 
 The two common options are:
 
-### Option 1: Use the `fine_precommit` preset
+### Option 1: Use the `fine_git_hooks` preset
 
-`fine_precommit` is the ready-made option. It registers the `precommit` action and default handlers that:
+`fine_git_hooks` is the ready-made option. It registers the `precommit` action and default handlers that:
 
 1. discover staged files
 2. run lint checks on those files
@@ -36,7 +36,7 @@ Add it to your project's `pyproject.toml`:
 [tool.finecode]
 presets = [
     { source = "fine_python_recommended" },
-    { source = "fine_precommit" },
+    { source = "fine_git_hooks" },
 ]
 ```
 
@@ -52,22 +52,22 @@ If you want a custom hook workflow, define the `precommit` action and only the h
 
 ```toml
 [tool.finecode.action.precommit]
-source = "finecode_extension_api.actions.PrecommitAction"
+source = "fine_git_hooks.PrecommitAction"
 
 [[tool.finecode.action.precommit.handlers]]
 name = "staged_files_discovery"
 source = "fine_git_hooks.StagedFilesDiscoveryHandler"
 env = "dev_workspace"
-dependencies = ["fine_git_hooks~=0.1.0a0"]
+dependencies = ["fine_git_hooks~=0.1.0"]
 
 [[tool.finecode.action.precommit.handlers]]
-name = "mypy_precommit_bridge"
-source = "fine_python_mypy.MypyPrecommitBridgeHandler"
+name = "type_check_precommit_bridge"
+source = "fine_git_hooks.TypeCheckPrecommitBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_mypy~=0.1.0"]
+dependencies = ["fine_git_hooks~=0.1.0"]
 ```
 
-Keep `StagedFilesDiscoveryHandler` first so later handlers receive the staged file list. Bridge handlers run in the order they are declared.
+Keep `StagedFilesDiscoveryHandler` first so later handlers receive the staged file list. The type-check bridge runs the `type_check` action on those files. Bridge handlers run in the order they are declared.
 
 ## Adding another bridge handler
 
@@ -75,10 +75,10 @@ If `precommit` is already configured and you just want to extend it, register an
 
 ```toml
 [[tool.finecode.action.precommit.handlers]]
-name = "mypy_precommit_bridge"
-source = "fine_python_mypy.MypyPrecommitBridgeHandler"
+name = "type_check_precommit_bridge"
+source = "fine_git_hooks.TypeCheckPrecommitBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_mypy~=0.1.0"]
+dependencies = ["fine_git_hooks~=0.1.0"]
 ```
 
 Handlers execute in the order they are declared. No other configuration changes are needed.

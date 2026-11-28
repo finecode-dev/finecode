@@ -23,10 +23,12 @@ async def start(
     log_level: str = "INFO",
 ) -> None:
     from finecode.wm_server.config import read_configs
+
     workspace_root = pathlib.Path.cwd()
     wm_telemetry = read_configs.read_wm_telemetry_config(workspace_root)
     global_state.lsp_log_file_path = logger_utils.init_logger(
-        log_name="lsp_server", log_level=log_level,
+        log_name="lsp_server",
+        log_level=log_level,
         workspace_path=workspace_root,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )

@@ -4,20 +4,7 @@ import pathlib
 
 import pytest
 import tomlkit
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces.ifileeditor import IFileEditor
-from finecode_extension_api.interfaces.ilogger import ILogger
-from finecode_extension_api.interfaces.iprojectinfoprovider import (
-    IProjectInfoProvider,
-)
-
-# the ER wraps a handler's code_action.ActionFailedException in its own exception type
-# before it reaches the caller, so that is what a session-level failure asserts on
-from finecode_extension_runner._services.run_action import (
-    ActionFailedException as ActionRunFailed,
-)
-from finecode_extension_runner.testing import InMemoryFileEditor, handler_test_session
-
+from fine_envs.sync_toolchains_action import ProjectDefFileOutcome, ProjectDefFileStatus
 from fine_python_lang.list_obtainable_python_interpreters_action import (
     ListObtainablePythonInterpretersAction,
 )
@@ -25,18 +12,30 @@ from fine_python_lang.sync_python_interpreters_action import (
     SyncPythonInterpretersAction,
     SyncPythonInterpretersRunPayload,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces.ifileeditor import IFileEditor
+from finecode_extension_api.interfaces.ilogger import ILogger
+from finecode_extension_api.interfaces.iprojectactionrunner import ActionRunFailed
+from finecode_extension_api.interfaces.iprojectinfoprovider import (
+    IProjectInfoProvider,
+)
+from finecode_extension_api.resource_uri import path_to_resource_uri
+from finecode_extension_runner.testing import InMemoryFileEditor, handler_test_session
+
 from fine_python_package_info.sync_python_interpreters_handler import (
     SyncPythonInterpretersHandler,
     derive_interpreters,
 )
-
+from tests.stubs import (
+    CONCURRENT_EDIT_MARKER,
+    CollectingLogger,
+    ConcurrentEditObtainableHandler,
+    StubObtainableInterpretersHandler,
+)
 from tests.stubs import OBTAINABLE as _OBTAINABLE
-from tests.stubs import CollectingLogger, StubObtainableInterpretersHandler
 
 _ACTION_NAME = SyncPythonInterpretersAction.__name__
-_ACTION_SOURCE = (
-    f"{SyncPythonInterpretersAction.__module__}.{SyncPythonInterpretersAction.__qualname__}"
-)
+_ACTION_SOURCE = f"{SyncPythonInterpretersAction.__module__}.{SyncPythonInterpretersAction.__qualname__}"
 _HANDLER_NAME = SyncPythonInterpretersHandler.__name__
 _HANDLER_SOURCE = (
     f"{SyncPythonInterpretersHandler.__module__}"
@@ -53,6 +52,10 @@ _STUB_SOURCE = (
     f"{StubObtainableInterpretersHandler.__module__}"
     f".{StubObtainableInterpretersHandler.__qualname__}"
 )
+_CONCURRENT_EDIT_SOURCE = (
+    f"{ConcurrentEditObtainableHandler.__module__}"
+    f".{ConcurrentEditObtainableHandler.__qualname__}"
+)
 
 
 # the runner only executes a nested action in-process when every handler for it is
@@ -60,7 +63,7 @@ _STUB_SOURCE = (
 _SESSION_ENV = "test"
 
 
-def _actions(**handler_config) -> dict:
+def _actions(obtainable_source: str = _STUB_SOURCE, **handler_config) -> dict:
     return {
         _ACTION_NAME: {
             "source": _ACTION_SOURCE,
@@ -80,7 +83,7 @@ def _actions(**handler_config) -> dict:
             "handlers": [
                 {
                     "name": "stub_obtainable",
-                    "source": _STUB_SOURCE,
+                    "source": obtainable_source,
                     "env": _SESSION_ENV,
                 }
             ],
@@ -138,9 +141,9 @@ def test_non_cpython_is_never_derived() -> None:
 
 
 def test_ceiling_caps_the_newest_derived_version() -> None:
-    assert derive_interpreters(
-        ">=3.12", _OBTAINABLE, max_supported_python="3.12"
-    ) == ["cpython@3.12"]
+    assert derive_interpreters(">=3.12", _OBTAINABLE, max_supported_python="3.12") == [
+        "cpython@3.12"
+    ]
 
 
 def test_extra_interpreters_are_appended_after_the_derived_rows() -> None:
@@ -150,9 +153,9 @@ def test_extra_interpreters_are_appended_after_the_derived_rows() -> None:
 
 
 def test_extra_interpreter_already_derived_is_not_duplicated() -> None:
-    assert derive_interpreters(
-        ">=3.14", _OBTAINABLE, extra_interpreters=["3.14"]
-    ) == ["cpython@3.14"]
+    assert derive_interpreters(">=3.14", _OBTAINABLE, extra_interpreters=["3.14"]) == [
+        "cpython@3.14"
+    ]
 
 
 def test_patch_level_floor_keeps_its_own_minor() -> None:
@@ -176,9 +179,7 @@ def test_patch_level_ceiling_drops_the_minor_it_cannot_satisfy() -> None:
 def test_invalid_max_supported_python_is_an_action_failure() -> None:
     # a typo'd handler config must name the offending key, not surface as a raw
     # packaging.InvalidVersion traceback
-    with pytest.raises(
-        code_action.ActionFailedException, match="max_supported_python"
-    ):
+    with pytest.raises(code_action.ActionFailedException, match="max_supported_python"):
         derive_interpreters(">=3.11", _OBTAINABLE, max_supported_python="3.12.x")
 
 
@@ -222,7 +223,7 @@ class _StubProjectInfoProvider:
     def get_current_project_raw_config_version(self) -> int:
         return 0
 
-    async def get_workspace_editable_packages(self) -> dict:
+    async def get_workspace_packages(self) -> dict:
         return {}
 
 
@@ -231,7 +232,7 @@ class _StubProjectInfoProvider:
 
 async def test_writes_derived_axis_into_the_env_table(tmp_path: pathlib.Path) -> None:
     project_def_path = _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
 
     async with handler_test_session(
         project_dir=tmp_path,
@@ -242,7 +243,10 @@ async def test_writes_derived_axis_into_the_env_table(tmp_path: pathlib.Path) ->
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
         )
 
-    assert result.saved is True
+    assert result.project_def_file == ProjectDefFileOutcome(
+        path=path_to_resource_uri(project_def_path),
+        status=ProjectDefFileStatus.UPDATED,
+    )
     written = tomlkit.parse(file_editor.contents(project_def_path))
     assert written["tool"]["finecode"]["env"]["dev"]["interpreters"] == [
         "cpython@3.12",
@@ -252,7 +256,7 @@ async def test_writes_derived_axis_into_the_env_table(tmp_path: pathlib.Path) ->
 
 async def test_save_false_reports_drift_without_writing(tmp_path: pathlib.Path) -> None:
     _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
 
     async with handler_test_session(
         project_dir=tmp_path,
@@ -263,7 +267,7 @@ async def test_save_false_reports_drift_without_writing(tmp_path: pathlib.Path) 
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=False)
         )
 
-    assert result.saved is False
+    assert result.project_def_file.status is ProjectDefFileStatus.OUT_OF_DATE
     assert file_editor.writes == []
     assert [axis.env_name for axis in result.axes if axis.changed] == ["dev"]
 
@@ -272,11 +276,9 @@ async def test_axis_already_current_is_left_alone(tmp_path: pathlib.Path) -> Non
     _write_pyproject(
         tmp_path,
         requires_python=">=3.13,<3.14",
-        env_table=(
-            "\n[tool.finecode.env.dev]\n" 'interpreters = ["cpython@3.13"]\n'
-        ),
+        env_table=('\n[tool.finecode.env.dev]\ninterpreters = ["cpython@3.13"]\n'),
     )
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
 
     async with handler_test_session(
         project_dir=tmp_path,
@@ -287,9 +289,62 @@ async def test_axis_already_current_is_left_alone(tmp_path: pathlib.Path) -> Non
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
         )
 
-    assert result.saved is False
+    assert result.project_def_file.status is ProjectDefFileStatus.UP_TO_DATE
     assert file_editor.writes == []
     assert [axis.changed for axis in result.axes] == [False]
+
+
+async def test_regular_env_with_base_prefix_does_not_declare_the_base(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A regular env sharing the matrix base prefix carries no child marker, so it
+    # must not count as proof that the base env is declared.
+    _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
+    merged_config = {
+        "dependency-groups": {"testing-extra": ["hypothesis"]},
+        "tool": {"finecode": {"env": {"testing-extra": {}}}},
+    }
+
+    async with handler_test_session(
+        project_dir=tmp_path,
+        actions=_actions(envs=["testing"]),
+        service_overrides={
+            IFileEditor: InMemoryFileEditor(seed_from_disk=True),
+            IProjectInfoProvider: _StubProjectInfoProvider(tmp_path, merged_config),
+        },
+    ) as session:
+        with pytest.raises(ActionRunFailed, match="not declared"):
+            await session.run_action(
+                _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
+            )
+
+
+async def test_regular_env_with_base_prefix_does_not_trigger_the_layer_warning(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The layer warning reads the same child marker, so a name-prefix sibling
+    # without the marker must stay silent.
+    _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
+    logger = CollectingLogger()
+    merged_config = {
+        "dependency-groups": {"testing": ["pytest"], "testing-extra": ["hypothesis"]},
+        "tool": {"finecode": {"env": {"testing-extra": {}}}},
+    }
+
+    async with handler_test_session(
+        project_dir=tmp_path,
+        actions=_actions(envs=["testing"]),
+        service_overrides={
+            IFileEditor: InMemoryFileEditor(seed_from_disk=True),
+            ILogger: logger,
+            IProjectInfoProvider: _StubProjectInfoProvider(tmp_path, merged_config),
+        },
+    ) as session:
+        await session.run_action(
+            _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
+        )
+
+    assert logger.warnings == []
 
 
 async def test_version_only_shorthand_is_not_drift(tmp_path: pathlib.Path) -> None:
@@ -298,9 +353,9 @@ async def test_version_only_shorthand_is_not_drift(tmp_path: pathlib.Path) -> No
     _write_pyproject(
         tmp_path,
         requires_python=">=3.13,<3.14",
-        env_table="\n[tool.finecode.env.dev]\ninterpreters = [\"3.13\"]\n",
+        env_table='\n[tool.finecode.env.dev]\ninterpreters = ["3.13"]\n',
     )
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
 
     async with handler_test_session(
         project_dir=tmp_path,
@@ -311,14 +366,14 @@ async def test_version_only_shorthand_is_not_drift(tmp_path: pathlib.Path) -> No
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
         )
 
-    assert result.saved is False
+    assert result.project_def_file.status is ProjectDefFileStatus.UP_TO_DATE
     assert file_editor.writes == []
 
 
 async def test_no_configured_envs_is_a_no_op(tmp_path: pathlib.Path) -> None:
     # matrices stay opt-in (PRD-0003 R7)
     _write_pyproject(tmp_path)
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
 
     async with handler_test_session(
         project_dir=tmp_path,
@@ -339,7 +394,7 @@ async def test_undeclared_env_is_an_error(tmp_path: pathlib.Path) -> None:
     async with handler_test_session(
         project_dir=tmp_path,
         actions=_actions(envs=["nope"]),
-        service_overrides={IFileEditor: InMemoryFileEditor()},
+        service_overrides={IFileEditor: InMemoryFileEditor(seed_from_disk=True)},
     ) as session:
         with pytest.raises(ActionRunFailed, match="not declared"):
             await session.run_action(
@@ -354,7 +409,7 @@ async def test_env_declared_only_via_preset_merged_config_is_accepted(
     # written into this project's own pyproject.toml declares it. The merged config,
     # not the raw file, is what proves the env is real (regression test).
     _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
     merged_config = {"dependency-groups": {"testing": ["pytest"]}}
 
     async with handler_test_session(
@@ -369,7 +424,7 @@ async def test_env_declared_only_via_preset_merged_config_is_accepted(
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
         )
 
-    assert result.saved is True
+    assert result.project_def_file.status is ProjectDefFileStatus.UPDATED
     written = tomlkit.parse(file_editor.contents(tmp_path / "pyproject.toml"))
     assert written["tool"]["finecode"]["env"]["testing"]["interpreters"] == [
         "cpython@3.12",
@@ -381,7 +436,7 @@ async def test_env_already_expanded_into_matrix_children_is_accepted(
     tmp_path: pathlib.Path,
 ) -> None:
     # Once a matrix env's axis is known, config resolution expands the base name into
-    # one concrete env per interpreter (`<name>@<impl>-<version>`, ADR-0047) -- the bare
+    # one concrete env per interpreter (ADR-0047) -- the bare
     # base name then no longer appears as a key in the merged config at all. A run right
     # after the axis was first derived and written must not treat the env as undeclared
     # (regression test).
@@ -393,17 +448,23 @@ async def test_env_already_expanded_into_matrix_children_is_accepted(
             'interpreters = ["cpython@3.12", "cpython@3.13"]\n'
         ),
     )
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
     merged_config = {
         "dependency-groups": {
-            "testing@cpython-3.12": ["pytest"],
-            "testing@cpython-3.13": ["pytest"],
+            "testing-cpython-3.12": ["pytest"],
+            "testing-cpython-3.13": ["pytest"],
         },
         "tool": {
             "finecode": {
                 "env": {
-                    "testing@cpython-3.12": {"interpreter": "cpython@3.12"},
-                    "testing@cpython-3.13": {"interpreter": "cpython@3.13"},
+                    "testing-cpython-3.12": {
+                        "interpreter": "cpython@3.12",
+                        "matrix_env": "testing",
+                    },
+                    "testing-cpython-3.13": {
+                        "interpreter": "cpython@3.13",
+                        "matrix_env": "testing",
+                    },
                 }
             }
         },
@@ -421,7 +482,7 @@ async def test_env_already_expanded_into_matrix_children_is_accepted(
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
         )
 
-    assert result.saved is False
+    assert result.project_def_file.status is ProjectDefFileStatus.UP_TO_DATE
     assert file_editor.writes == []
     assert [axis.changed for axis in result.axes] == [False]
 
@@ -436,12 +497,15 @@ def _preset_axis_merged_config(*interpreters: str) -> dict:
     """
     return {
         "dependency-groups": {
-            f"testing@{value.replace('@', '-')}": ["pytest"] for value in interpreters
+            f"testing-{value.replace('@', '-')}": ["pytest"] for value in interpreters
         },
         "tool": {
             "finecode": {
                 "env": {
-                    f"testing@{value.replace('@', '-')}": {"interpreter": value}
+                    f"testing-{value.replace('@', '-')}": {
+                        "interpreter": value,
+                        "matrix_env": "testing",
+                    }
                     for value in interpreters
                 }
             }
@@ -457,7 +521,7 @@ async def test_axis_from_another_config_layer_is_materialized_and_reported(
     # pin, since a config key can be replaced but never unset. The pin going dead is
     # worth one warning, though, or nothing marks that it stopped having any effect.
     _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
     logger = CollectingLogger()
 
     async with handler_test_session(
@@ -475,7 +539,7 @@ async def test_axis_from_another_config_layer_is_materialized_and_reported(
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
         )
 
-    assert result.saved is True
+    assert result.project_def_file.status is ProjectDefFileStatus.UPDATED
     written = tomlkit.parse(file_editor.contents(tmp_path / "pyproject.toml"))
     assert written["tool"]["finecode"]["env"]["testing"]["interpreters"] == [
         "cpython@3.12",
@@ -491,7 +555,7 @@ async def test_axis_from_another_config_layer_is_reported_without_saving(
     # check_toolchains runs the sync with save=False, so the report has to reach CI
     # without a write -- that is where a shadowed pin is most likely to be noticed.
     _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
     logger = CollectingLogger()
 
     async with handler_test_session(
@@ -533,7 +597,7 @@ async def test_axis_already_owned_by_this_file_is_not_reported(
         project_dir=tmp_path,
         actions=_actions(envs=["testing"]),
         service_overrides={
-            IFileEditor: InMemoryFileEditor(),
+            IFileEditor: InMemoryFileEditor(seed_from_disk=True),
             ILogger: logger,
             IProjectInfoProvider: _StubProjectInfoProvider(
                 tmp_path, _preset_axis_merged_config("cpython@3.12", "cpython@3.13")
@@ -544,7 +608,7 @@ async def test_axis_already_owned_by_this_file_is_not_reported(
             _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
         )
 
-    assert result.saved is False
+    assert result.project_def_file.status is ProjectDefFileStatus.UP_TO_DATE
     assert logger.warnings == []
 
 
@@ -556,7 +620,7 @@ async def test_missing_requires_python_is_an_error(tmp_path: pathlib.Path) -> No
     async with handler_test_session(
         project_dir=tmp_path,
         actions=_actions(envs=["dev"]),
-        service_overrides={IFileEditor: InMemoryFileEditor()},
+        service_overrides={IFileEditor: InMemoryFileEditor(seed_from_disk=True)},
     ) as session:
         with pytest.raises(ActionRunFailed, match="requires-python not found"):
             await session.run_action(
@@ -575,7 +639,7 @@ async def test_write_preserves_unrelated_content(tmp_path: pathlib.Path) -> None
         "[dependency-groups]\n"
         'dev = ["pytest"]\n'
     )
-    file_editor = InMemoryFileEditor()
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
 
     async with handler_test_session(
         project_dir=tmp_path,
@@ -589,3 +653,54 @@ async def test_write_preserves_unrelated_content(tmp_path: pathlib.Path) -> None
     written = file_editor.contents(project_def_path)
     assert "# keep me" in written
     assert 'name = "sample"' in written
+
+
+async def test_unsaved_editor_content_is_the_basis_of_the_write(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The file editor holds the current version of a file, including unsaved IDE
+    edits. Deriving from the disk copy and writing the result back would discard
+    them."""
+    project_def_path = _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
+    unsaved = project_def_path.read_text().replace(
+        'dev = ["pytest"]', 'dev = ["pytest", "ruff"]'
+    )
+    file_editor.seed(project_def_path, unsaved)
+
+    async with handler_test_session(
+        project_dir=tmp_path,
+        actions=_actions(envs=["dev"]),
+        service_overrides={IFileEditor: file_editor},
+    ) as session:
+        await session.run_action(
+            _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
+        )
+
+    written = tomlkit.parse(file_editor.contents(project_def_path))
+    assert written["dependency-groups"]["dev"] == ["pytest", "ruff"]
+    assert written["tool"]["finecode"]["env"]["dev"]["interpreters"] == [
+        "cpython@3.12",
+        "cpython@3.13",
+    ]
+
+
+async def test_edit_made_during_the_sync_is_not_overwritten(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The derived axis is based on the version the sync read. If the file changed
+    before the write, writing would discard that change, so the run fails instead."""
+    project_def_path = _write_pyproject(tmp_path, requires_python=">=3.12,<3.14")
+    file_editor = InMemoryFileEditor(seed_from_disk=True)
+
+    async with handler_test_session(
+        project_dir=tmp_path,
+        actions=_actions(obtainable_source=_CONCURRENT_EDIT_SOURCE, envs=["dev"]),
+        service_overrides={IFileEditor: file_editor},
+    ) as session:
+        with pytest.raises(ActionRunFailed, match="changed while"):
+            await session.run_action(
+                _ACTION_NAME, SyncPythonInterpretersRunPayload(save=True)
+            )
+
+    assert file_editor.contents(project_def_path).startswith(CONCURRENT_EDIT_MARKER)

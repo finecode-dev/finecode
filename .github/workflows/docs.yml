@@ -27,21 +27,46 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
+      # uv hardlinks (Linux/Windows) or CoW-clones (macOS) package files out of its
+      # cache into each venv only within one filesystem; RUNNER_TEMP is on the
+      # workspace volume and is wiped between jobs, so only actions/cache carries
+      # state across runs. See docs/guides/preparing-environments.md.
+      - name: Configure uv cache
+        id: uv_env
+        run: |
+          echo "UV_CACHE_DIR=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+          echo "generation=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
       # Same cache key pattern as ci-cd.yml so a preceding CI run on the same commit
       # can seed this cache and skip most of the install work.
-      - name: Cache all venvs
-        uses: actions/cache@v4
+      - name: Restore venvs cache
+        id: venvs_cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             .venvs
             **/.venvs
           key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
 
+      # Restore only on a venvs miss: on a hit nothing installs, so fetching a
+      # multi-GB uv entry would be wasted. A partial match is safe because the cache
+      # is content-addressed and uv re-resolves against the project.
+      - name: Restore uv cache
+        id: uv_cache
+        if: steps.venvs_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-${{ steps.uv_env.outputs.generation }}-${{ steps.venvs_cache.outputs.cache-primary-key }}
+          restore-keys: |
+            uv-${{ steps.uv_env.outputs.generation }}-${{ runner.os }}-venvs-
+
       - name: Install dependencies
+        id: install
         run: sh scripts/setup-dev-workspace.sh
 
       - name: Build docs
@@ -58,3 +83,39 @@ jobs:
           external_repository: finecode-dev/finecode.github.io
           publish_branch: main
           publish_dir: ./site
+
+      # Save the venvs whenever the install succeeded, even if the docs build or
+      # deploy failed: the cold install is the expensive part and is still valid.
+      # The key is reused from the restore step, never recomputed: `hashFiles` after
+      # the install would walk every venv and could save under a key no run restores.
+      - name: Save venvs cache
+        if: ${{ always() && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ steps.venvs_cache.outputs.cache-primary-key }}
+
+      # See the matching step in ci-cd.yml for the rationale behind the trim.
+      - name: Trim uv cache to reusable entries
+        id: uv_trim
+        if: ${{ always() && steps.install.outcome == 'success' && steps.uv_cache.outcome == 'success' }}
+        run: |
+          manifest=".venvs/dev_workspace/cache/wheelhouse/manifest.json"
+          if [ -f "$manifest" ]; then
+            # Wheel mode is the CI default; the manifest is the authoritative installed set.
+            names=$(python -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))))" "$manifest")
+          else
+            # Fallback: derive the same names from the workspace's own resolver. Covers a
+            # future non-wheel CI mode and mirrors what prepare-envs installed.
+            names=$(python -c "import pathlib,sys; sys.path.insert(0,'scripts'); import list_dev_workspace_editables as m; print(' '.join(m.resolve_workspace_packages(pathlib.Path.cwd())))")
+          fi
+          uv cache clean finecode $names
+          uv cache prune
+      - name: Save uv cache
+        if: ${{ always() && steps.install.outcome == 'success' && steps.uv_trim.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: ${{ steps.uv_cache.outputs.cache-primary-key }}

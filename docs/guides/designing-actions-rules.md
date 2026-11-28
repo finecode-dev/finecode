@@ -4,6 +4,8 @@ This page is the normative layer for action design. Each rule is intentionally s
 
 Use `MUST` for hard constraints and `SHOULD` for strong defaults.
 
+A rule marked **Candidate** is proposed and not yet settled: apply it to new work, and in reviews, raise a violation as a question rather than a blocker. A candidate is promoted by removing the mark, or dropped if real cases disprove it.
+
 Rule IDs use reserved numeric ranges by group so we can extend one area later without renumbering the others:
 
 - `R-100` to `R-199`: Action contract
@@ -59,9 +61,20 @@ The absence of extra payload fields on the subaction is NOT a reason to omit it.
 
 ## R-108: Action declares its execution scope
 
-An action MUST declare `SCOPE = ActionScope.WORKSPACE` when it needs to reason about all workspace projects together (e.g. de-duplicating results across projects, or orchestrating per-project sub-actions from a single entry point). All other actions use the default `ActionScope.PROJECT`.
+An action MUST declare `SCOPE = ActionScope.WORKSPACE` when it needs a workspace-level view of its inputs or outputs. Concretely, that means at least one of the following holds:
 
-A workspace-scoped action runs exactly once per invocation, hosted in the workspace root project. Its handler is responsible for any per-project fan-out. See [ADR-0035](../adr/0035-action-declares-execution-scope-project-or-workspace.md).
+- **(a) Cross-project output aggregation** — the action combines, de-duplicates, or cross-references results from multiple projects into a single answer (e.g. a workspace-wide test count, or dependency cross-referencing).
+- **(b) Cross-project input routing** — the action accepts a workspace-level input (such as a flat `file_paths` list whose members belong to different projects) that must be split and routed to the owning projects before per-project work can start.
+- **(c) Single-entry-point orchestration** — one invocation must fan out to *different* child actions per project (e.g. `inspect_code` routing to both lint and type_check), not just replicate a single action across projects.
+- **(d) Exactly-once effect** — the action's effect is not per-project, so repeating it per project would be *wrong*, not merely wasteful. An action that posts a comment to an issue tracker, or otherwise acts once on an external resource named in its payload, produces N duplicate writes under per-project dispatch.
+
+All other actions use the default `ActionScope.PROJECT`.
+
+Trigger (d) is narrower than it first reads, and is the easiest to over-claim. The test is whether per-project repetition is *incorrect*, not whether it is redundant: `create_git_tag` and `publish_artifact` repeat per project and that is exactly right, because each project owns a tag and an artifact. Reach for (d) only when a second execution would corrupt or duplicate a single external effect.
+
+Running in multiple projects is NOT by itself a reason to be workspace-scoped. The WM already dispatches a `PROJECT` action once per project that declares it, collecting independent per-project results (which stay project-scoped, per R-302). Reserve `WORKSPACE` for the cases above, where a per-project fan-out of a single action is insufficient. Triggers (b) and (c) are input/orchestration concerns and are independent of (a): an action may be legitimately workspace-scoped even when it performs no cross-project result merging — `inspect_code`/`audit_code` send each project's diagnostics as independent partial results yet are workspace-scoped for (b) and (c).
+
+A workspace-scoped action runs exactly once per invocation, hosted in the workspace root project. Its handler is responsible for any per-project fan-out, and MUST delegate per-project data collection to a project-scoped action rather than reading project files directly (R-109). See [ADR-0035](../adr/0035-action-declares-execution-scope-project-or-workspace.md).
 
 ## R-109: Workspace handlers must not perform per-project data collection directly
 
@@ -79,6 +92,27 @@ Direct per-project work in a workspace handler bypasses the project's action
 layer: users cannot extend the collection with additional handlers per project,
 and the collection logic cannot be reused by other callers (e.g. an incremental
 update triggered by a single file change).
+
+## R-110: Actions that write files report each targeted file's outcome
+
+**Candidate.**
+
+An action that may write files MUST report in its result, for every file it targeted, what happened to that file on disk:
+
+- already up to date, not written;
+- out of date but not written, because of a dry run (`save = false` or similar);
+- written;
+- write refused, for example on a version conflict.
+
+Consumers do not need the outcome to get a file's content: they read the current version through `IFileEditor`. The outcome is needed for three other reasons:
+
+- **Decisions inside the run.** A later handler or a parent action may act only on files this run wrote. For example, the format step after a sync must not rewrite a file the sync left alone.
+- **Reporting to callers that are not subscribed to the editor.** The CLI, MCP and agents learn what the run did only from its result. Editor change events reach only live subscribers, and they name an author, not a run.
+- **Outcomes the editor never sees.** A dry run's predicted content and a refused write never reach the editor, so the result is their only record.
+
+A flag such as `changed` alone does not cover these, because it describes the computed content, not what was written. Pair each file's path with its status in one record, so neither can be present without the other. Store the status as a dataclass field, not a property: results are serialized with `dataclasses.asdict`, which drops properties.
+
+Example: `sync_toolchains` reports `project_def_file: ProjectDefFileOutcome | None` with status `up_to_date`, `out_of_date` or `updated`. `format_file` reports `status` with `unchanged`, `changed`, `saved` or `save_refused`. Its file path is the payload's, and `format_files` keys each file's result by path.
 
 ## Inputs And Run Context
 
@@ -125,6 +159,16 @@ resources — MUST remain as direct attributes on the context instance and MUST
 NOT appear inside the state dataclass.
 
 See [ADR-0025](../adr/0025-cross-env-context-state-dedicated-state-type.md).
+
+## R-206: Run outcomes go in the result; context state is for coordination
+
+**Candidate.**
+
+A fact about what the run did that a caller could act on — which file it targeted, whether it wrote it, which items it skipped — MUST be reported in the result, not only in run context state or logs. Ask: would the caller of `run_action` want this value? If yes, it belongs in the result.
+
+A later handler in a sequential pipeline reads such facts from `run_context.current_result`, which crosses env boundaries the same way `STATE_TYPE` does. `STATE_TYPE` (R-205) holds working data that handlers pass to each other and callers do not need, such as discovered inputs or normalized values.
+
+Example: `sync_toolchains` reports `project_def_file` (the path and its status) in its result. `sync_toolchains_format` reads `current_result.project_def_file` and formats the file only when its status is `updated`. Context state is not involved.
 
 ## Execution Model
 
@@ -192,12 +236,16 @@ Items silently absent from partial results leave callers in a stale state they c
 
 Dispatch handlers are responsible for this guarantee across the whole payload: if a subaction does not handle some items (e.g. files of an unsupported language), the dispatch handler MUST send an explicit empty-or-no-op partial result for those items before returning. This mirrors the pattern for non-streaming handlers, where returning a result implicitly covers all inputs.
 
+The coverage miss those items carry is part of the same send — see R-310. Coverage is added to the explicit empty send, never a replacement for it.
+
 ## R-308: Handlers callable via `run_action_in_projects` must always send a result
 
 A handler for action A that can be invoked by other handlers via
-`workspace_action_runner.run_action_in_projects(A, ...)` MUST always send at least one
+`workspace_action_runner.run_action_in_projects(A, ...)` or
+`workspace_action_runner.run_action_per_project(A, ...)` MUST always send at least one
 result through `partial_result_sender` before returning — even when the result is empty
-(e.g. `messages={}`).
+(e.g. `messages={}`). The two methods differ only in payload shape (one payload everywhere
+vs. a complete payload per project); the result contract is identical.
 
 Sending nothing produces a `null` JSON result that the caller cannot deserialize into the
 expected type. The error surfaces as a cryptic structural failure ("required field
@@ -209,6 +257,15 @@ type-checking, running tests). It does NOT apply to *bridge/orchestrator handler
 contribute partial results to a parent action: a bridge handler that determines it has
 nothing to orchestrate may return without sending, because contributing zero to the parent
 action's accumulated result is semantically correct.
+
+The LSP-facing language dispatch handlers (the ``text_document_*`` family R-310 governs)
+used to rely on exactly that permission to send nothing when no subaction covered the
+document. Under R-310 they MUST instead send one coverage-only partial — an instance of the
+action's own ``RESULT_TYPE`` with empty domain data, never a bare ``RunActionResult`` — so
+the "no provider for this language" answer reaches the caller instead of vanishing. The
+exemption above remains for bridges contributing to a parent action's accumulated result; it
+no longer covers a category-D dispatcher's "nothing to orchestrate", which R-310 now
+answers with coverage.
 
 ## R-309: Bridge handlers must skip fan-out when inputs are empty
 
@@ -225,6 +282,66 @@ and propagates the empty input into leaf handlers, where it triggers R-308 viola
 Note: empty `file_paths` with `target=FILES` means "no files were requested", which is
 distinct from "I processed files and found no issues". The correct response is to do
 nothing (early return), not to send an empty result.
+
+## R-310: Dispatched inputs no subaction covered are recorded as coverage
+
+A dispatch handler that routes by language MUST record a coverage miss for every input no
+registered subaction covered. The result it returns, or the partial it sends, carries
+``ItemCoverage`` entries naming the input and the reason: ``NO_SUBACTIONS`` when the action
+has no subactions registered at all, ``NO_LANGUAGE_DETECTED`` when the language cannot be
+determined, ``NO_SUBACTION_FOR_LANGUAGE`` (detected language as ``detail``) when the language
+is known but no subaction serves it. The entries live on the ``coverage`` list every
+``RunActionResult`` inherits; a caller distinguishes "no handler covered this input" from "a
+handler ran and found nothing" by reading ``unhandled`` — coverage entries whose status ranks
+below ``ABSORBED`` (ADR-0098).
+
+The merge happens at two framework choke points an author cannot bypass: a join installed
+into every ``update()`` by ``RunActionResult.__init_subclass__`` covers same-action merges
+(sequential handlers, the partial-result coalescing buffer, ``actions/mergeResults``), and
+the run-scoped coverage sink (``finecode_extension_runner.coverage_sink``) carries a
+sub-action's coverage across a bridge that builds a fresh result object. The join is
+commutative: miss reasons are totally ordered, ties resolve by lexicographically-minimum
+detail. Nothing emits ``HANDLED`` (D-4); it exists so the join stays sound if a catch-all
+handler is ever registered beside a dispatcher. A bridge that genuinely handled the
+degradation itself suppresses its own miss with ``coverage_sink.absorb_coverage(...)``, which
+records ``ABSORBED`` (D-10) — never by deleting the miss from a result it keeps.
+
+Actions whose output is not optional and whose input is a single whole-call target (e.g.
+``build_artifact``, ``lock_dependencies``, ``sync_toolchains``, ``list_obtainable_toolchains``)
+keep raising ``ActionNotFound`` instead — there is no per-item miss to express (ADR-0098).
+
+Project-routing dispatchers (``apply_lint_fixes`` routing files to owning
+projects) are in scope under the same rule, with the file URI as the item: a
+file matching no known project has no routing target, so the dispatcher
+records a miss (``NO_LANGUAGE_DETECTED`` — the owning-project routing key could
+not be determined) on the explicit empty send R-307 already requires, instead
+of an indistinguishable ``applied_counts=0``. Env-routing dispatchers
+(``create_envs``, ``install_envs``) are in scope by the same reading but
+dispatch every env in the run's discovered set and have no branch with an
+uncovered input, so there is nothing for them to record.
+
+## R-311: Handlers emitting findings onto `inspect_code`/`audit_code` MUST apply the ratchet
+
+A handler that emits findings onto `inspect_code` or `audit_code` MUST judge them
+through `IDiagnosticsRatchet`: hold its contributor id as a
+`RATCHET_CONTRIBUTOR` class constant, inject the ratchet, and call `apply()` once
+per `(contributor, project)` where it currently passes a sub-result to
+`partial_result_sender.send`, forwarding the outcome's `messages`, `stale` and
+`receipts`. A contributor that skips the ratchet leaves its findings new, so the
+gate fails on legacy findings no snapshot records. Renaming a contributor id
+orphans its snapshot entries. `FileExistenceValidationHandler` (both umbrellas)
+is exempt: path-existence findings are not tool findings and cannot be baselined.
+
+## R-312: Streaming-capable handlers MUST give every caller the same final result
+
+A handler that supports streaming MUST emit its partial results without checking
+whether they are observed. The framework decides whether a caller receives them:
+a top-level caller observes partials by supplying a token, and a parent observes
+child partials with `run_action_iter()`; `run_action()` returns only the child's
+final result. When partials have the action's result type, the final result MUST
+be their `update()` merge in arrival order. If the handler sends no partials, its
+returned value is the final result. A handler whose final result differs between
+token and no-token runs does not conform to this rule.
 
 ## Handler Observability
 
@@ -250,11 +367,27 @@ When a workspace or bridge handler fans out over a set of targets (projects,
 files, or other items) derived from the payload, it MUST emit a `WARNING` if
 the fan-out produces zero targets while the payload requested specific items.
 
-Zero targets with specific input is always a diagnosable condition: either the
-items do not belong to any known project, the input identifiers are in an
-unexpected form, or the project list is stale. A silent no-op leaves the caller
-unable to distinguish "processed and found nothing" from "never ran". The
-warning MUST include the problematic input values.
+Zero targets with specific input is diagnosable when the caller explicitly asked
+for those items: either the items do not belong to any known project, the input
+identifiers are in an unexpected form, or the project list is stale. A silent
+no-op leaves the caller unable to distinguish "processed and found nothing" from
+"never ran". The warning MUST include the problematic input values.
+
+This only holds for `RunActionMeta.trigger == RunActionTrigger.USER`. Editors
+routinely invoke actions with `trigger=SYSTEM` for every open buffer without
+checking whether the action or the target project actually applies (e.g. LSP
+`textDocument/diagnostic` firing for a file outside any known project) — for
+those calls, zero targets is expected, not diagnosable, and MUST NOT surface as
+a user-facing warning. Handlers MUST check `run_context.meta.trigger` and only
+call `user_messenger.warning(...)` when it is `USER`; for other triggers, log
+the same message at `DEBUG` instead so it stays diagnosable in the ER logs
+without prompting the user.
+
+The specific-input warning this rule requires is *derivable* from coverage
+(R-310): an unhandled input under a `USER` trigger is exactly the
+requested-versus-swept distinction the warning exists to surface. The
+user-facing warning built from coverage is the first planned application of
+the mechanism, currently out of scope (ADR-0098, follow-up).
 
 Emit the warning through the injected
 `iuser_messenger.IUserMessenger` (`self.user_messenger.warning(...)`) so the
@@ -287,3 +420,7 @@ Before merging a new action, verify:
 12. If the handler fans out over projects or files: emit a WARNING when specific inputs match no targets (R-505).
 13. If the handler is a leaf callable via `run_action_in_projects`: it sends at least one result in all code paths, including the "nothing to process" path (R-308).
 14. If the handler is a bridge that fans out: it returns early without creating tasks when inputs are empty, rather than propagating empty inputs downstream (R-309).
+15. If the handler is a dispatch handler: inputs no subaction covered carry a coverage miss on the result it returns or the partial it sends (R-310); an action whose output is not optional and whose input is a single whole-call target keeps raising `ActionNotFound` instead.
+16. If the handler supports streaming: it sends partials without checking whether they are observed, and token and no-token runs return the same final result (R-312).
+17. *Candidate:* facts about what the run did that a caller could act on are in the result, not only in context state; later handlers read them from `current_result` (R-206).
+18. *Candidate:* if the action may write files: the result reports each targeted file's path and on-disk status, including dry-run and refused writes (R-110).

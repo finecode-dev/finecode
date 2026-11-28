@@ -1,6 +1,14 @@
 # Creating an Extension
 
-An extension is a Python package that implements one or more **ActionHandlers**. Each handler provides the logic for executing a specific action (e.g. running a linter, formatter, or build tool).
+An extension is a distributable capability package. Its capabilities are
+handlers, services, action contracts, and explicitly selected reusable
+configuration (`preset.toml`). Installing the package makes its code
+available; activating its configuration requires explicit selection in
+`pyproject.toml`. A preset-only extension may own shared contracts and generic
+orchestration handlers, and the same package may supply both handlers and a
+preset resource.
+
+An extension package implements one or more **ActionHandlers**. Each handler provides the logic for executing a specific action (e.g. running a linter, formatter, or build tool).
 
 ## 1. Create the package
 
@@ -19,7 +27,7 @@ my_linter/
 name = "my_linter"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["finecode_extension_api~=0.4.0"]
+dependencies = ["finecode_extension_api~=0.5.0"]
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -33,35 +41,31 @@ Import the action you want to handle and subclass `ActionHandler`:
 ```python
 # my_linter/handler.py
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.lint_files_action import (
+from finecode_extension_api.resource_uri import ResourceUri
+from fine_inspect_code import Diagnostic
+from fine_lint.lint_files_action import (
     LintFilesAction,
-    LintFilesRunPayload,
     LintFilesRunContext,
+    LintFilesRunPayload,
     LintFilesRunResult,
-    LintMessage,
 )
 
 
 class MyLinterHandler(
-    code_action.ActionHandler[
-        LintFilesRunPayload,
-        LintFilesRunContext,
-        LintFilesRunResult,
-    ]
+    code_action.ActionHandler[LintFilesAction, code_action.ActionHandlerConfig]
 ):
     action = LintFilesAction
 
     async def run(
-        self, payload: LintFilesRunPayload, context: LintFilesRunContext
+        self, payload: LintFilesRunPayload, run_context: LintFilesRunContext
     ) -> LintFilesRunResult:
-        diagnostics: list[LintMessage] = []
+        messages: dict[ResourceUri, list[Diagnostic]] = {}
 
         for file_path in payload.file_paths:
             # run your tool and collect results
-            messages = run_my_tool(file_path)
-            diagnostics.extend(messages)
+            messages[file_path] = run_my_tool(file_path)
 
-        return LintFilesRunResult(diagnostics=diagnostics)
+        return LintFilesRunResult(messages=messages)
 ```
 
 ## 3. Export from `__init__.py`
@@ -73,13 +77,16 @@ from my_linter.handler import MyLinterHandler
 __all__ = ["MyLinterHandler"]
 ```
 
+The handler class is public; its config record stays in its defining module
+and is not exported. See [Package Exports](package-exports.md).
+
 ## 4. Register the handler in a project
 
 Add the handler to the target action in `pyproject.toml`:
 
 ```toml
 [tool.finecode.action.lint]
-source = "finecode_extension_api.actions.LintAction"
+source = "fine_lint.LintAction"
 handlers = [
     {
         name = "my_linter",
@@ -96,10 +103,11 @@ Then run `python -m finecode prepare-envs` to install your handler into the venv
 
 Every `source =` value in TOML config is resolved at runtime as import path.
 
-**Built-in action classes** are all re-exported from `finecode_extension_api.actions`, so
-their source strings take the short form `finecode_extension_api.actions.<ClassName>` — you
-do not need to know which subgroup (`code_quality/`, `environments/`, etc.) a class lives in.
-See the [Built-in Actions reference](../reference/actions.md) for the full list.
+Action classes live in the extension that owns them, and their `source` uses
+that package's facade (for example `fine_lint.LintAction`). See the
+[Built-in Actions reference](../reference/actions.md) for each action's source.
+How the runner resolves a `source` value is described in
+[Package Exports](package-exports.md#extension-and-preset-rules), rule 10.
 
 **Handler classes** are referenced by their full import path:
 `my_linter.MyLinterHandler` (module `my_linter`, member `MyLinterHandler`).
@@ -111,33 +119,36 @@ To make your handler configurable, define a config model and declare `CONFIG_TYP
 ```python
 import dataclasses
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.lint_files_action import (
-    LintFilesAction, LintFilesRunPayload, LintFilesRunContext, LintFilesRunResult,
+from finecode_extension_api.resource_uri import ResourceUri
+from fine_inspect_code import Diagnostic
+from fine_lint.lint_files_action import (
+    LintFilesAction,
+    LintFilesRunContext,
+    LintFilesRunPayload,
+    LintFilesRunResult,
 )
 
 
 @dataclasses.dataclass
-class MyLinterConfig:
+class MyLinterConfig(code_action.ActionHandlerConfig):
     line_length: int = 88
     extend_ignore: list[str] = dataclasses.field(default_factory=list)
 
 
-class MyLinterHandler(
-    code_action.ActionHandler[
-        LintFilesRunPayload,
-        LintFilesRunContext,
-        LintFilesRunResult,
-    ]
-):
+class MyLinterHandler(code_action.ActionHandler[LintFilesAction, MyLinterConfig]):
     action = LintFilesAction
-    CONFIG_TYPE = MyLinterConfig
+
+    def __init__(self, config: MyLinterConfig) -> None:
+        self.config = config
 
     async def run(
-        self, payload: LintFilesRunPayload, context: LintFilesRunContext
+        self, payload: LintFilesRunPayload, run_context: LintFilesRunContext
     ) -> LintFilesRunResult:
-        config: MyLinterConfig = context.handler_config
-        # use config.line_length, config.extend_ignore, ...
-        ...
+        messages: dict[ResourceUri, list[Diagnostic]] = {}
+        for file_path in payload.file_paths:
+            # use self.config.line_length, self.config.extend_ignore, ...
+            messages[file_path] = run_my_tool(file_path)
+        return LintFilesRunResult(messages=messages)
 ```
 
 Users can then configure it in `pyproject.toml`:
@@ -190,6 +201,28 @@ class MyToolHandler(code_action.ActionHandler[...]):
 
 The framework logs the full action payload at `TRACE` level before calling your handler. Enable it with `"finecode_extension_runner" = "TRACE"` in your ER log groups config. Do not repeat this in the handler — it creates noise without adding value (R-504).
 
+### Timing synchronous work
+
+A handler can time one synchronous phase of its work with
+`synchronous_phase` from `finecode_extension_api.phase_timing`:
+
+```python
+from finecode_extension_api.phase_timing import synchronous_phase
+
+with synchronous_phase("render", input_counts=lambda: {"items": len(items)}) as phase:
+    content = render(items)
+    phase.completion_counts(lambda: {"output_chars": len(content)})
+```
+
+The contract: the scope runs synchronously on one thread -- no `await`, no
+suspension, no thread hop inside. The runtime records one span per phase with
+elapsed and thread-CPU time separately; thread CPU covers only the calling
+thread, so worker threads and subprocesses are unattributed elapsed time, and
+nested scopes each measure their own span. Count names match
+`^[a-z][a-z0-9_]{0,63}$` with values >= 0; a count the provider cannot
+produce is recorded as unavailable, never zero. The body's result, exception
+and cancellation pass through unchanged.
+
 ### What handlers should log
 
 For handlers that spawn an external process, log the following at `DEBUG`:
@@ -201,8 +234,8 @@ For handlers that spawn an external process, log the following at `DEBUG`:
 Emit a `WARNING` when the handler's primary job is to produce results but returns nothing:
 
 ```python
-process = await self.command_runner.run(cmd, cwd=project_dir)
-await process.wait_for_end()
+cmd = ["my_tool", "--format", "json"]
+process = await self.command_runner.run_to_completion(cmd, cwd=project_dir)
 
 exit_code = process.get_exit_code()
 stdout = process.get_output()
@@ -338,8 +371,9 @@ If you genuinely need different versions of the same tool for different extensio
 
 ## Package naming
 
-Extension package names follow the pattern `fine_<lang>_<qualifier>`.
-Use a tool name or capability descriptor as the qualifier, and keep bare
-`fine_<word>` names reserved for presets.
+Extension packages carry capabilities under `fine_<domain>_<qualifier>` for
+concrete integrations and `fine_<domain?>_<role>` for feature/composition
+packages; `fine_format` remains valid. A name alone does not decide the
+capabilities a package supplies.
 
-See [Package Naming](package-naming.md) for the shared extension and preset naming convention.
+See [Package Naming](package-naming.md) for the shared extension and preset naming convention and proposed [ADR-0115](../../finecode_internal_docs/adr/0115-extension-capabilities-share-terminology-and-repository-directory.md) for the umbrella terminology.

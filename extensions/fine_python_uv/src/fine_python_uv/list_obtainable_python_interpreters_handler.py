@@ -1,14 +1,13 @@
 import dataclasses
 import json
 
-from packaging.version import InvalidVersion, Version
-
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger
 from fine_envs.list_obtainable_toolchains_action import (
     ListObtainableToolchainsRunResult,
 )
 from fine_python_lang import list_obtainable_python_interpreters_action
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import icommandrunner, ilogger
+from packaging.version import InvalidVersion, Version
 
 from ._uv_common import get_uv_executable
 
@@ -55,12 +54,16 @@ class UvListObtainablePythonInterpretersHandler(
         run_context: list_obtainable_python_interpreters_action.ListObtainablePythonInterpretersRunContext,
     ) -> ListObtainableToolchainsRunResult:
         uv_executable = get_uv_executable()
-        command = (
-            f"{uv_executable} python list --only-downloads --all-versions"
-            " --output-format json"
-        )
-        process = await self.command_runner.run(cmd=command)
-        await process.wait_for_end()
+        command = [
+            str(uv_executable),
+            "python",
+            "list",
+            "--only-downloads",
+            "--all-versions",
+            "--output-format",
+            "json",
+        ]
+        process = await self.command_runner.run_to_completion(cmd=command)
 
         if process.get_exit_code() != 0:
             raise code_action.ActionFailedException(

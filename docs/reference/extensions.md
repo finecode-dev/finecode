@@ -1,6 +1,6 @@
 # Extensions
 
-Extensions provide concrete implementations of actions as handlers. All extensions listed here are maintained in the FineCode repository under `extensions/`.
+Extensions are distributable capability packages: handlers, services, action contracts, and explicitly selected reusable configuration. All extensions listed here are maintained in the FineCode repository under `extensions/`.
 
 To use an extension, add its handler to an action in your `pyproject.toml` or use a [preset](../guides/creating-preset.md) that includes it. The extension package is installed automatically into the handler's virtual environment by `prepare-envs`.
 
@@ -55,7 +55,7 @@ Type checking via [Mypy](https://mypy-lang.org/).
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_mypy.MypyLintFilesHandler` | `lint_python_files` | Type-check Python files |
+| `fine_python_mypy.MypyTypeCheckFilesHandler` | `type_check_python_files` | Type-check Python files |
 
 ---
 
@@ -65,7 +65,7 @@ Architecture validation via [import-linter](https://import-linter.readthedocs.io
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_import_linter.ImportLinterHandler` | `lint` | Validate import contracts |
+| `fine_python_import_linter.ImportLinterCheckPythonImportsHandler` | `check_python_imports` | Validate import contracts |
 
 Reads contract definitions from `[tool.importlinter]` in `pyproject.toml`.
 
@@ -77,7 +77,62 @@ Type checking and LSP integration via [Pyrefly](https://pyrefly.org/).
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_pyrefly.PyreflyLintFilesHandler` | `lint_files` | Type-check with Pyrefly |
+| `fine_python_pyrefly.PyreflyTypeCheckFilesHandler` | `type_check_python_files` | Type-check Python files |
+
+**Config:**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `python_version` | `str \| None` | Target Python version (e.g. `"3.12"`); CLI mode only, ignored in LSP mode. Default is the interpreter's own version. |
+| `use_cli` | `bool` | Check with a `pyrefly check` subprocess instead of the shared LSP server. |
+| `recheck_barrier_sec` | `float` | LSP mode only: how long a run waits for the watched-file recheck to land. |
+
+**Service: `PyreflyConfig`**
+
+Server-wide settings live in the self-bound
+`fine_python_pyrefly.pyrefly_config.PyreflyConfig` service, not on the handler: 15
+pyrefly handlers (type-check, hover, symbol info, code hierarchy, inlay hints,
+semantic tokens) share one LSP server per runner, so a per-handler surface would let
+them disagree and would apply the setting late.
+
+| Config field | Type | Meaning |
+|---|---|---|
+| `errors` | `dict[str, "error" \| "warn" \| "info" \| "ignore"]` | Pyrefly error kinds and the severity to give each. |
+
+Keys are pyrefly error kinds (`implicit-any-type-argument`, `bad-assignment`, ...)
+and the values are the same four severities pyrefly's own `[errors]` table accepts.
+Severity does not change the run outcome: `type_check` fails on any diagnostic, so a
+`warn` entry still turns the run red. In CLI mode the table becomes
+`--error`/`--warn`/`--info`/`--ignore` flags (plus `--min-severity` when needed); in
+LSP mode the service writes a generated `pyrefly.toml` in its cache directory,
+validates it with `pyrefly dump-config`, and passes it to the server as `configPath`
+before the server starts.
+
+Configuring the service is not a binding override: an entry may carry the interface
+and config alone (S-207). The alias used by env-var overrides is `pyrefly_config`.
+Because pyrefly kinds contain `-`, a single kind cannot be addressed by an env var;
+set the whole table as JSON instead:
+
+```bash
+FINECODE_SERVICE_CONFIG_PYREFLY_CONFIG__ERRORS='{"implicit-any-type-argument":"warn"}' \
+  python -m finecode run type_check
+```
+
+A project pyrefly config (`pyrefly.toml`, or `[tool.pyrefly]` in `pyproject.toml`)
+cannot be combined with a non-empty `errors`: pyrefly would silently ignore one of
+the two, so the run fails and names the file to remove. The generated file is
+written and validated once per runner (in CLI mode too), so a broken `errors` table
+or an unresolvable conflict fails **every** pyrefly handler — type-check, hover,
+definition and the rest — not only the type-check run. That is the setting's real
+blast radius: it configures the server they all share.
+
+**Example config:**
+
+```toml
+[[tool.finecode.service]]
+interface = "fine_python_pyrefly.pyrefly_config.PyreflyConfig"
+config.errors = { implicit-any-type-argument = "warn" }
+```
 
 ---
 
@@ -85,9 +140,9 @@ Type checking and LSP integration via [Pyrefly](https://pyrefly.org/).
 
 AST-based analysis for Python source files.
 
-| Handler | Action | Description |
+| Service interface | Implemented by | Description |
 |---|---|---|
-| `fine_python_ast.AstHandler` | Various | AST traversal and analysis |
+| `fine_python_ast.iast_provider.IPythonSingleAstProvider` | `fine_python_ast.ast_provider.PythonSingleAstProvider` | AST traversal and analysis |
 
 ---
 
@@ -99,7 +154,7 @@ Code formatting via [Black](https://black.readthedocs.io/).
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_black.BlackFormatFilesHandler` | `format_files` | Format Python files with Black |
+| `fine_python_black.BlackFormatFileHandler` | `format_python_file` | Format Python files with Black |
 
 ---
 
@@ -150,7 +205,7 @@ Virtual environment creation.
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_virtualenv.VirtualenvPrepareEnvHandler` | `prepare_envs` | Create virtualenvs |
+| `fine_python_virtualenv.VirtualenvCreateEnvHandler` | `create_env` | Create virtualenvs |
 
 ---
 

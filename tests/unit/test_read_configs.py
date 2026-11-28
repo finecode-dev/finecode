@@ -4,12 +4,19 @@ from typing import Any
 
 import pytest
 
+from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models
+from finecode.wm_server.config.interpreter_matrix import MATRIX_ENV_KEY
 from finecode.wm_server.config.read_configs import (
-    _merge_projects_configs,
-    read_project_user_config,
+    merge_projects_configs,
     read_preset_config,
+    read_project_config,
+    read_project_user_config,
+    read_wm_telemetry_config,
+    read_workspace_extra_selection,
     resolve_interpreter_matrices,
+    resolve_workspace_packages,
+    resolve_workspace_packages_install_mode,
 )
 
 
@@ -49,7 +56,7 @@ def test_project_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
 
     finecode-user.toml is unwrapped (no [tool.finecode] prefix); writing
     [tool.finecode.action.x] instead of [action.x] used to reach
-    `_merge_projects_configs` and crash there with a bare `KeyError('tool')`
+    `merge_projects_configs` and crash there with a bare `KeyError('tool')`
     surfaced to the client as `API error (-32603): 'tool'`. Reject it eagerly
     with an actionable message instead.
     """
@@ -81,7 +88,7 @@ def test_project_user_config_returns_flat_dict(tmp_path: pathlib.Path) -> None:
     """
     _write_toml(
         tmp_path / "finecode-user.toml",
-        '[action.lint]\nhandlers = []\n',
+        "[action.lint]\nhandlers = []\n",
     )
     result = read_project_user_config(tmp_path)
     assert result is not None
@@ -90,7 +97,7 @@ def test_project_user_config_returns_flat_dict(tmp_path: pathlib.Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _merge_projects_configs — user config priority
+# merge_projects_configs — user config priority
 # ---------------------------------------------------------------------------
 
 
@@ -135,7 +142,7 @@ def test_project_user_config_handler_override(tmp_path: pathlib.Path) -> None:
         }
     }
     wrapped_user: dict[str, Any] = {"tool": {"finecode": user_config_raw}}
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         wrapped_user,
@@ -162,7 +169,9 @@ def test_project_user_config_dep_groups_merged(tmp_path: pathlib.Path) -> None:
         "dependency-groups": {"dev_workspace": ["my_personal_preset>=1.0"]},
     }
 
-    dep_groups: dict[str, list[Any]] = project_config.setdefault("dependency-groups", {})
+    dep_groups: dict[str, list[Any]] = project_config.setdefault(
+        "dependency-groups", {}
+    )
     for group_name, packages in user_config_raw["dependency-groups"].items():
         if group_name not in dep_groups:
             dep_groups[group_name] = list(packages)
@@ -200,7 +209,7 @@ def test_project_user_config_new_action(tmp_path: pathlib.Path) -> None:
         }
     }
     wrapped_user: dict[str, Any] = {"tool": {"finecode": user_config_raw}}
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         wrapped_user,
@@ -213,11 +222,13 @@ def test_project_user_config_new_action(tmp_path: pathlib.Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _merge_projects_configs — env.install_project (ADR-0046)
+# merge_projects_configs — env.install_project (ADR-0046)
 # ---------------------------------------------------------------------------
 
 
-def test_preset_install_project_merges_into_existing_env_config(tmp_path: pathlib.Path) -> None:
+def test_preset_install_project_merges_into_existing_env_config(
+    tmp_path: pathlib.Path,
+) -> None:
     """A preset's install_project=true for an env survives merging into project config.
 
     Test-runner presets rely on this to make the project importable in the env
@@ -230,7 +241,7 @@ def test_preset_install_project_merges_into_existing_env_config(tmp_path: pathli
     preset_config: dict[str, Any] = {
         "tool": {"finecode": {"env": {"dev": {"install_project": True}}}},
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         preset_config,
@@ -253,7 +264,7 @@ def test_project_config_disables_preset_install_project(tmp_path: pathlib.Path) 
     project_override: dict[str, Any] = {
         "tool": {"finecode": {"env": {"dev": {"install_project": False}}}},
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         project_override,
@@ -264,7 +275,7 @@ def test_project_config_disables_preset_install_project(tmp_path: pathlib.Path) 
 
 
 # ---------------------------------------------------------------------------
-# _merge_projects_configs — env.interpreters (ADR-0047)
+# merge_projects_configs — env.interpreters (ADR-0047)
 # ---------------------------------------------------------------------------
 
 
@@ -289,7 +300,7 @@ def test_interpreters_merge_survives_env_already_exists_from_preset(
             }
         },
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         preset_config,
@@ -319,7 +330,7 @@ def test_interpreters_merge_project_overrides_preset(tmp_path: pathlib.Path) -> 
     project_override: dict[str, Any] = {
         "tool": {"finecode": {"env": {"testing": {"interpreters": ["pypy@3.11"]}}}},
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         project_override,
@@ -329,6 +340,54 @@ def test_interpreters_merge_project_overrides_preset(tmp_path: pathlib.Path) -> 
     assert project_config["tool"]["finecode"]["env"]["testing"]["interpreters"] == [
         "pypy@3.11"
     ]
+
+
+def test_project_interpreter_pin_survives_env_already_exists_from_preset(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A project's singular `interpreter` pin survives merging into an env the
+    preset already declares, with the same override-wins rule as
+    `install_project`.
+
+    Without it, a project could not pin the interpreter of a preset-owned env
+    such as `dev`, and had to fall back to a one-interpreter `interpreters`
+    matrix, which turns every action in that env into a matrix action.
+    """
+    preset_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"install_project": True}}}},
+    }
+    project_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"interpreter": "cpython@3.14"}}}},
+    }
+    merge_projects_configs(
+        preset_config,
+        tmp_path / "preset.toml",
+        project_config,
+        tmp_path / "pyproject.toml",
+    )
+
+    dev_env = preset_config["tool"]["finecode"]["env"]["dev"]
+    assert dev_env["interpreter"] == "cpython@3.14"
+    assert dev_env["install_project"] is True
+
+
+def test_project_interpreter_pin_overrides_preset_pin(tmp_path: pathlib.Path) -> None:
+    preset_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"interpreter": "cpython@3.13"}}}},
+    }
+    project_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"interpreter": "cpython@3.14"}}}},
+    }
+    merge_projects_configs(
+        preset_config,
+        tmp_path / "preset.toml",
+        project_config,
+        tmp_path / "pyproject.toml",
+    )
+
+    assert preset_config["tool"]["finecode"]["env"]["dev"]["interpreter"] == (
+        "cpython@3.14"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -371,9 +430,9 @@ def _matrix_env_project_config() -> dict[str, Any]:
 
 
 _TESTING_CONCRETE_ENV_NAMES = {
-    "testing@cpython-3.11",
-    "testing@cpython-3.12",
-    "testing@pypy-3.11",
+    "testing-cpython-3.11",
+    "testing-cpython-3.12",
+    "testing-pypy-3.11",
 }
 
 
@@ -431,6 +490,302 @@ def test_single_env_with_non_matrix_env_handler_is_untouched() -> None:
     assert handler["env"] == "dev_no_runtime"
 
 
+def test_config_served_to_extensions_has_matrices_already_expanded(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The config stored for serving is expanded, not the file's own env table.
+
+    Extensions read the env table out of `IProjectInfoProvider.get_project_raw_config`,
+    which is served straight from `ws_projects_raw_configs`
+    (`runner_manager.get_project_raw_config`). They rely on a matrix env arriving as its
+    concrete `<base>-<impl>-<version>` children rather than as an `interpreters` list --
+    `fine_python_package_info`'s sync_python_interpreters handler uses exactly this to
+    tell "this env has an axis from somewhere" from "this env has no axis at all".
+
+    Every other matrix test calls `resolve_interpreter_matrices` directly, which pins
+    what expansion *produces* but not that the read path runs it *before* storing the
+    result. Move that call after the store and those tests all still pass while every
+    extension silently starts receiving an unexpanded env table.
+    """
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        """
+[project]
+name = "sample"
+requires-python = ">=3.11"
+
+[dependency-groups]
+testing = ["pytest"]
+
+[tool.finecode.env.testing]
+interpreters = ["cpython@3.11", "cpython@3.12"]
+""",
+    )
+    project = domain.Project(
+        name="sample",
+        dir_path=tmp_path,
+        def_path=tmp_path / "pyproject.toml",
+        status=domain.ProjectStatus.CONFIG_VALID,
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    # read_project_config contributes nothing from presets, so this exercises the
+    # project's own config through the real read path
+    read_project_config(project, ws_context)
+
+    served_config = ws_context.ws_projects_raw_configs[tmp_path]
+    env_table = served_config["tool"]["finecode"]["env"]
+    assert "testing" not in env_table
+    assert {"testing-cpython-3.11", "testing-cpython-3.12"} <= set(env_table)
+    assert env_table["testing-cpython-3.11"]["interpreter"] == "cpython@3.11"
+    assert "interpreters" not in env_table["testing-cpython-3.11"]
+
+
+def _make_project(
+    tmp_path: pathlib.Path,
+    name: str,
+    pyproject: str,
+) -> tuple[domain.Project, context.WorkspaceContext]:
+    _write_toml(tmp_path / "pyproject.toml", pyproject)
+    project = domain.Project(
+        name=name,
+        dir_path=tmp_path,
+        def_path=tmp_path / "pyproject.toml",
+        status=domain.ProjectStatus.CONFIG_VALID,
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    return project, ws_context
+
+
+def test_workspace_extra_selection_absent_is_empty(tmp_path: pathlib.Path) -> None:
+    """No selection file is a safe no-op."""
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    assert read_workspace_extra_selection(ws_context) == {}
+
+
+def test_workspace_extra_selection_parses_and_canonicalizes(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Package keys are canonicalized, so the two PEP 503 spellings select the
+    same package."""
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { finecode-dev-common-preset = ["a", "b"] }\n',
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    result = read_workspace_extra_selection(ws_context)
+
+    assert result == {"finecode-dev-common-preset": ["a", "b"]}
+
+
+def test_workspace_extra_selection_rejects_unknown_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'presets = [{ source = "x" }]\n',
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    with pytest.raises(config_models.ConfigurationError, match="presets"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_rejects_non_list_value(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { pkg = "not-a-list" }\n',
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    with pytest.raises(config_models.ConfigurationError, match="list"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_rejects_malformed_toml(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "finecode-workspace-user.toml").write_bytes(b"[bad toml\n")
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    with pytest.raises(config_models.ConfigurationError, match="Failed to parse"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_rejects_undeclared_extra(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Selecting an extra a workspace package does not declare is fatal."""
+    project, ws_context = _make_project(
+        tmp_path,
+        "pkg",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+    ws_context.ws_projects[project.dir_path] = project
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { pkg = ["unknown"] }\n',
+    )
+
+    with pytest.raises(config_models.ConfigurationError, match="unknown"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_accepts_declared_extra(
+    tmp_path: pathlib.Path,
+) -> None:
+    project, ws_context = _make_project(
+        tmp_path,
+        "pkg",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+    ws_context.ws_projects[project.dir_path] = project
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { pkg = ["lint_fix"] }\n',
+    )
+
+    assert read_workspace_extra_selection(ws_context) == {"pkg": ["lint_fix"]}
+
+
+def _selection_rewrites_spec(tmp_path: pathlib.Path, spec: str) -> list[str]:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { finecode_dev_common_preset = ["lint_fix"] }\n',
+    )
+    project, ws_context = _make_project(
+        tmp_path,
+        "consumer",
+        f'[project]\nname = "consumer"\n[dependency-groups]\nruntime = ["{spec}"]\n',
+    )
+    read_project_config(project, ws_context)
+    return ws_context.ws_projects_raw_configs[project.dir_path]["dependency-groups"][
+        "runtime"
+    ]
+
+
+def test_extra_selection_rewrites_matching_spec(tmp_path: pathlib.Path) -> None:
+    """A spec naming a selected package gains the extra in its bracket group."""
+    assert _selection_rewrites_spec(
+        tmp_path, "finecode_dev_common_preset~=0.3.0a0"
+    ) == ["finecode_dev_common_preset[lint_fix]~=0.3.0a0"]
+
+
+def test_extra_selection_rewrites_bare_spec(tmp_path: pathlib.Path) -> None:
+    assert _selection_rewrites_spec(tmp_path, "finecode_dev_common_preset") == [
+        "finecode_dev_common_preset[lint_fix]"
+    ]
+
+
+def test_extra_selection_preserves_marker(tmp_path: pathlib.Path) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { finecode_dev_common_preset = ["lint_fix"] }\n',
+    )
+    project, ws_context = _make_project(
+        tmp_path,
+        "consumer",
+        '[project]\nname = "consumer"\n'
+        "[dependency-groups]\n"
+        "runtime = ['finecode_dev_common_preset~=0.3.0a0; python_version<\"3.12\"']\n",
+    )
+
+    read_project_config(project, ws_context)
+
+    runtime = ws_context.ws_projects_raw_configs[project.dir_path]["dependency-groups"][
+        "runtime"
+    ]
+    assert runtime == [
+        'finecode_dev_common_preset[lint_fix]~=0.3.0a0; python_version<"3.12"'
+    ]
+
+
+def test_extra_selection_rewrites_direct_reference(tmp_path: pathlib.Path) -> None:
+    assert _selection_rewrites_spec(
+        tmp_path, "finecode_dev_common_preset @ file:///tmp/pkg"
+    ) == ["finecode_dev_common_preset[lint_fix] @ file:///tmp/pkg"]
+
+
+def test_extra_selection_preserves_existing_extra(tmp_path: pathlib.Path) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { fine_envs = ["x"] }\n',
+    )
+    project, ws_context = _make_project(
+        tmp_path,
+        "consumer",
+        '[project]\nname = "consumer"\n'
+        '[dependency-groups]\nruntime = ["fine_envs[audit]~=0.1.0a0"]\n',
+    )
+
+    read_project_config(project, ws_context)
+
+    runtime = ws_context.ws_projects_raw_configs[project.dir_path]["dependency-groups"][
+        "runtime"
+    ]
+    assert runtime == ["fine_envs[audit,x]~=0.1.0a0"]
+
+
+def test_read_preset_config_folds_selected_gate(tmp_path: pathlib.Path) -> None:
+    _write_toml(
+        tmp_path / "preset.toml",
+        '[tool.finecode]\npresets = [{ source = "base" }]\n'
+        "[tool.finecode.extra.lint_fix]\n"
+        'presets = [{ source = "fine_lint_fix" }]\n',
+    )
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+
+    _, preset_config = read_preset_config(
+        tmp_path / "preset.toml", "pkg", selected_extras=("lint_fix",)
+    )
+
+    assert [extend.source for extend in preset_config.extends] == [
+        "base",
+        "fine_lint_fix",
+    ]
+
+
+def test_read_preset_config_does_not_fold_unselected_gate(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "preset.toml",
+        '[tool.finecode]\npresets = [{ source = "base" }]\n'
+        "[tool.finecode.extra.lint_fix]\n"
+        'presets = [{ source = "fine_lint_fix" }]\n',
+    )
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+
+    _, preset_config = read_preset_config(tmp_path / "preset.toml", "pkg")
+
+    assert [extend.source for extend in preset_config.extends] == ["base"]
+
+
+def test_read_preset_config_gate_without_extra_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "preset.toml",
+        '[tool.finecode.extra.lint_fix]\npresets = [{ source = "fine_lint_fix" }]\n',
+    )
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "pkg"\n',
+    )
+
+    with pytest.raises(config_models.ConfigurationError, match="optional-dependencies"):
+        read_preset_config(tmp_path / "preset.toml", "pkg")
+
+
 def test_matrix_env_expands_to_one_concrete_env_per_interpreter() -> None:
     """A matrix environment's env-table entry is replaced by one concrete
     child per interpreter, each carrying the matrix environment's other
@@ -449,15 +804,202 @@ def test_matrix_env_expands_to_one_concrete_env_per_interpreter() -> None:
     assert set(env_table.keys()) == _TESTING_CONCRETE_ENV_NAMES
 
     expected_interpreters = {
-        "testing@cpython-3.11": "cpython@3.11",
-        "testing@cpython-3.12": "cpython@3.12",
-        "testing@pypy-3.11": "pypy@3.11",
+        "testing-cpython-3.11": "cpython@3.11",
+        "testing-cpython-3.12": "cpython@3.12",
+        "testing-pypy-3.11": "pypy@3.11",
     }
     for concrete_name, expected_interpreter in expected_interpreters.items():
         child = env_table[concrete_name]
         assert child["install_project"] is True
         assert child["interpreter"] == expected_interpreter
+        assert child[MATRIX_ENV_KEY] == "testing"
         assert "interpreters" not in child
+
+
+def test_generated_child_names_are_pep735_valid_and_match_base_group() -> None:
+    """Generated children use `<base>-<impl>-<version>` and stay PEP 735-valid.
+
+    The resolved `[dependency-groups]` has no `testing` key. It has one key per
+    child, each equal to the base group's content, and every key matches the
+    PEP 735 / PEP 508 name pattern.
+    """
+    import re
+
+    project_config: dict[str, Any] = {
+        "dependency-groups": {"testing": ["pytest"]},
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {
+                        "interpreters": [
+                            "cpython@3.11",
+                            "cpython@3.12",
+                            "pypy@3.11",
+                        ]
+                    }
+                }
+            }
+        },
+    }
+
+    resolve_interpreter_matrices(project_config)
+
+    deps_groups = project_config["dependency-groups"]
+    assert "testing" not in deps_groups
+    assert set(deps_groups.keys()) == {
+        "testing-cpython-3.11",
+        "testing-cpython-3.12",
+        "testing-pypy-3.11",
+    }
+    for name, group in deps_groups.items():
+        assert group == ["pytest"]
+    pattern = re.compile("^([A-Z0-9]|[A-Z0-9][A-Z0-9._-]*[A-Z0-9])$", re.IGNORECASE)
+    for name in deps_groups.keys():
+        assert pattern.match(name) is not None
+
+
+def test_generated_child_name_clashes_raise_configuration_error() -> None:
+    """Exact and normalized clashes with generated child names raise."""
+    import pytest as _pytest
+
+    cases: list[dict[str, Any]] = [
+        {"dependency-groups": {"testing-cpython-3.11": ["x"]}},
+        {"dependency-groups": {"Testing_CPython-3.11": ["x"]}},
+        {
+            "tool": {
+                "finecode": {"env": {"testing-cpython-3.11": {}}},
+            }
+        },
+        {
+            "tool": {
+                "finecode": {
+                    "action": {
+                        "run_tests": {
+                            "source": "myext.RunTests",
+                            "handlers": [
+                                {
+                                    "name": "pytest",
+                                    "source": "myext.Pytest",
+                                    "env": "testing-cpython-3.11",
+                                    "dependencies": [],
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        },
+    ]
+    for extra in cases:
+        project_config: dict[str, Any] = {
+            "dependency-groups": {"testing": ["pytest"]},
+            "tool": {
+                "finecode": {
+                    "env": {
+                        "testing": {"interpreters": ["cpython@3.11"]},
+                    }
+                }
+            },
+        }
+        # merge extra keys in
+        if "dependency-groups" in extra:
+            project_config["dependency-groups"].update(extra["dependency-groups"])
+        if "tool" in extra:
+            finecode_extra = extra["tool"]["finecode"]
+            base_fc = project_config["tool"]["finecode"]
+            for key, value in finecode_extra.items():
+                if key == "env":
+                    base_fc.setdefault("env", {}).update(value)
+                elif key == "action":
+                    base_fc.update({"action": value})
+        with _pytest.raises(config_models.ConfigurationError) as excinfo:
+            resolve_interpreter_matrices(project_config)
+        message = str(excinfo.value)
+        assert "testing" in message
+        assert "cpython@3.11" in message
+
+
+def test_duplicate_generated_child_names_raise_configuration_error() -> None:
+    """Two axis entries normalizing to the same child name raise."""
+    project_config: dict[str, Any] = {
+        "dependency-groups": {"testing": ["pytest"]},
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {"interpreters": ["cpython@3.11", "3.11"]},
+                }
+            }
+        },
+    }
+    with pytest.raises(config_models.ConfigurationError) as excinfo:
+        resolve_interpreter_matrices(project_config)
+    message = str(excinfo.value)
+    assert "testing" in message
+    assert "cpython@3.11" in message
+
+
+def test_invalid_generated_child_name_raises_configuration_error() -> None:
+    """An axis entry producing a PEP 735-invalid child name raises."""
+    project_config: dict[str, Any] = {
+        "dependency-groups": {"testing": ["pytest"]},
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {"interpreters": ["cpython@3.14+ft"]},
+                }
+            }
+        },
+    }
+    with pytest.raises(config_models.ConfigurationError) as excinfo:
+        resolve_interpreter_matrices(project_config)
+    message = str(excinfo.value)
+    assert "testing" in message
+    assert "cpython@3.14+ft" in message
+    assert "testing-cpython-3.14+ft" in message
+
+
+def test_interpreter_pin_env_is_not_marked_as_matrix_child() -> None:
+    """A singular `interpreter` pin only selects the venv's interpreter. Unlike
+    an expansion child, the pinned env carries no matrix-base marker, so its
+    actions stay non-matrixed."""
+    project_config = _matrix_env_project_config()
+    project_config["tool"]["finecode"]["env"]["dev"] = {"interpreter": "cpython@3.14"}
+
+    resolve_interpreter_matrices(project_config)
+
+    dev_env = project_config["tool"]["finecode"]["env"]["dev"]
+    assert dev_env == {"interpreter": "cpython@3.14"}
+
+
+def test_regular_env_sharing_a_matrix_base_prefix_is_not_a_child() -> None:
+    """A regular env whose name shares a matrix base prefix is not a child.
+
+    Child detection reads the expansion's base marker rather than parsing the
+    env name, so a sibling env that merely starts with the same prefix keeps
+    its own settings and gains no child marker.
+    """
+    project_config: dict[str, Any] = {
+        "dependency-groups": {
+            "testing": ["pytest"],
+            "testing-extra": ["hypothesis"],
+        },
+        "tool": {
+            "finecode": {
+                "env": {
+                    "testing": {"interpreters": ["cpython@3.11"]},
+                    "testing-extra": {"install_project": False},
+                },
+            }
+        },
+    }
+
+    resolve_interpreter_matrices(project_config)
+
+    env_table = project_config["tool"]["finecode"]["env"]
+    assert MATRIX_ENV_KEY not in env_table["testing-extra"]
+    assert env_table["testing-extra"]["install_project"] is False
+    assert "hypothesis" in project_config["dependency-groups"]["testing-extra"]
+    assert env_table["testing-cpython-3.11"][MATRIX_ENV_KEY] == "testing"
 
 
 def test_matrix_env_handler_ref_rewritten_to_concrete_children() -> None:
@@ -522,7 +1064,9 @@ def test_matrix_env_disappears_from_dependency_groups() -> None:
     assert "testing" not in project_config["dependency-groups"]
 
 
-def test_matrix_env_with_no_explicit_deps_still_gets_discoverable_child_entries() -> None:
+def test_matrix_env_with_no_explicit_deps_still_gets_discoverable_child_entries() -> (
+    None
+):
     """A matrix environment with no matching `dependency-groups` entry and no
     handler dependencies still produces a `[]` entry per concrete child.
 
@@ -795,7 +1339,7 @@ def test_preset_user_config_absent_is_noop(tmp_path: pathlib.Path) -> None:
     config without any modification or error.
     """
     _write_minimal_preset(tmp_path)
-    preset_toml, preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
+    preset_toml, _preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
     assert "lint" in preset_toml["tool"]["finecode"]["action"]
     # No extra keys injected
     action = preset_toml["tool"]["finecode"]["action"]["lint"]
@@ -812,7 +1356,7 @@ def test_preset_user_config_merges_handler(tmp_path: pathlib.Path) -> None:
     _write_minimal_preset(tmp_path)
     _write_toml(
         tmp_path / "finecode-user.toml",
-        '[action.lint.handlers.ruff]\nconfig.line_length = 120\n',
+        "[action.lint.handlers.ruff]\nconfig.line_length = 120\n",
     )
     preset_toml, _ = read_preset_config(tmp_path / "preset.toml", "mypkg")
 
@@ -828,7 +1372,9 @@ def test_preset_user_config_merges_handler(tmp_path: pathlib.Path) -> None:
         assert ruff["config"]["line_length"] == 120
 
 
-def test_preset_user_config_presets_appends_not_replaces(tmp_path: pathlib.Path) -> None:
+def test_preset_user_config_presets_appends_not_replaces(
+    tmp_path: pathlib.Path,
+) -> None:
     """A preset-level finecode-user.toml's `presets` list extends the preset's own
     list rather than replacing it.
 
@@ -840,14 +1386,14 @@ def test_preset_user_config_presets_appends_not_replaces(tmp_path: pathlib.Path)
     """
     _write_toml(
         tmp_path / "preset.toml",
-        '[tool.finecode]\n'
+        "[tool.finecode]\n"
         'presets = [{ source = "fine_dep_graph" }, { source = "fine_arch_facts" }]\n',
     )
     _write_toml(
         tmp_path / "finecode-user.toml",
         'presets = [{ source = "fine_python_aksem" }]\n',
     )
-    preset_toml, preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
+    _preset_toml, preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
 
     extends_sources = [p.source for p in preset_config.extends]
     assert extends_sources == ["fine_dep_graph", "fine_arch_facts", "fine_python_aksem"]
@@ -870,7 +1416,7 @@ def test_preset_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
 
     Same double-wrapping bug as at the project level — a preset's
     finecode-user.toml is unwrapped, so [tool.finecode.action.x] used to
-    reach `_merge_projects_configs` and crash with a bare `KeyError('tool')`
+    reach `merge_projects_configs` and crash with a bare `KeyError('tool')`
     instead of an actionable error.
     """
     _write_minimal_preset(tmp_path)
@@ -880,3 +1426,189 @@ def test_preset_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
     )
     with pytest.raises(config_models.ConfigurationError, match=r"\[tool\]"):
         read_preset_config(tmp_path / "preset.toml", "mypkg")
+
+
+# ---------------------------------------------------------------------------
+# read_wm_telemetry_config — otlp_endpoint precedence (PRD-0004-AC6)
+# ---------------------------------------------------------------------------
+
+
+def test_wm_telemetry_config_absent_file_and_env_is_none(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No finecode-workspace.toml and no env var leaves otlp_endpoint unset.
+
+    Observability must be off by default with no configuration anywhere —
+    this is the state that lets it be a true opt-in capability.
+    """
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None
+
+
+def test_wm_telemetry_config_reads_toml_value(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """otlp_endpoint from [workspace.wm.telemetry] is used when no env var is set."""
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.wm.telemetry]\notlp_endpoint = "http://otel-lgtm:4317"\n',
+    )
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint == "http://otel-lgtm:4317"
+
+
+def test_wm_telemetry_config_env_var_overrides_toml(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FINECODE_OTLP_ENDPOINT wins over a configured file value.
+
+    Matches the documented precedence (docs/guides/observability.md): the env
+    var is the highest-priority source.
+    """
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.wm.telemetry]\notlp_endpoint = "http://otel-lgtm:4317"\n',
+    )
+    monkeypatch.setenv("FINECODE_OTLP_ENDPOINT", "http://otel-collector:4318")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint == "http://otel-collector:4318"
+
+
+def test_wm_telemetry_config_empty_env_var_falls_back_to_toml(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty-string FINECODE_OTLP_ENDPOINT falls back to the file value
+    rather than silently disabling observability.
+
+    A devcontainer/Compose `environment:` block that always sets the var (e.g.
+    `${FINECODE_OTLP_ENDPOINT:-}`) leaves it present-but-empty rather than
+    unset whenever the developer hasn't opted in via .env. Treating an empty
+    string as "explicitly disable" would silently defeat a TOML-configured
+    endpoint any time such a wrapper is in play.
+    """
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.wm.telemetry]\notlp_endpoint = "http://otel-lgtm:4317"\n',
+    )
+    monkeypatch.setenv("FINECODE_OTLP_ENDPOINT", "")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint == "http://otel-lgtm:4317"
+
+
+def test_wm_telemetry_config_empty_env_var_no_toml_is_none(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty-string env var with no TOML value anywhere resolves to None,
+    not to an empty-string endpoint that would fail validation downstream."""
+    monkeypatch.setenv("FINECODE_OTLP_ENDPOINT", "")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None
+
+
+def test_wm_telemetry_config_no_telemetry_section_is_none(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finecode-workspace.toml with no [workspace.wm.telemetry] section at
+    all (e.g. only [workspace] and [workspace.wm.wal]) resolves to None.
+
+    Reproduces a real regression: a workspace config that once had telemetry
+    configured can lose the whole section (e.g. during an unrelated edit)
+    without any parse error, silently turning observability off.
+    """
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        "[workspace.workspace_packages]\nall_projects = true\n\n"
+        "[workspace.wm.wal]\nenabled = true\n",
+    )
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None
+
+
+def test_wm_telemetry_config_malformed_toml_is_swallowed(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed finecode-workspace.toml does not crash telemetry config
+    reading; it degrades to otlp_endpoint=None (env var can still apply).
+
+    Unlike finecode-user.toml (read_project_user_config), a parse error here
+    must not block WM startup — telemetry is best-effort configuration, not a
+    correctness-critical one.
+    """
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    (tmp_path / "finecode-workspace.toml").write_bytes(b"[bad toml\n")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_workspace_packages / resolve_workspace_packages_install_mode defaults
+# ---------------------------------------------------------------------------
+
+
+def _discovered_project(
+    tmp_path: pathlib.Path, name: str
+) -> tuple[domain.Project, context.WorkspaceContext]:
+    project_dir = tmp_path / name
+    project_dir.mkdir()
+    project = domain.Project(
+        name=name,
+        dir_path=project_dir,
+        def_path=project_dir / "pyproject.toml",
+        status=domain.ProjectStatus.CONFIG_VALID,
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    ws_context.ws_projects[project_dir] = project
+    return project, ws_context
+
+
+def test_workspace_packages_default_to_all_discovered_projects(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With no finecode-workspace.toml, every discovered project is a workspace
+    package. Without this default a monorepo that never wrote the table would
+    install its local packages from an index instead of from source."""
+    project, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages(ws_context) == {"pkg": project.dir_path}
+
+
+def test_workspace_packages_all_projects_false_excludes_projects(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`all_projects = false` opts out of the default project set; only explicit
+    `extra` paths remain."""
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        "[workspace.workspace_packages]\nall_projects = false\n",
+    )
+    _, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages(ws_context) == {}
+
+
+def test_workspace_packages_install_mode_defaults_by_dev_env(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With no config the mode is editable locally and wheel in CI, so a CI run
+    gets the wheelhouse without any workspace config while a developer keeps
+    editable installs."""
+    _, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages_install_mode(ws_context, "cli") == "editable"
+    assert resolve_workspace_packages_install_mode(ws_context, "ci") == "wheel"
+
+
+def test_workspace_packages_install_mode_exact_key_wins(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An exact dev-env key overrides the ci bucket default."""
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.workspace_packages_install]\nci = "editable"\n',
+    )
+    _, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages_install_mode(ws_context, "ci") == "editable"

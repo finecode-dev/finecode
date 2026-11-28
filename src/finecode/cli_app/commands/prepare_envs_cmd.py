@@ -2,16 +2,21 @@
 import pathlib
 
 import click
+from loguru import logger
 
+from finecode.cli_app import resource_usage
+from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
-from finecode.cli_app.log_render import render_log_records, user_message_log_level
-from loguru import logger
 
 
 class PrepareEnvsFailed(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
+
+
+async def _unreachable_poll() -> dict:
+    raise AssertionError("unreachable")
 
 
 async def prepare_envs(
@@ -20,11 +25,11 @@ async def prepare_envs(
     own_server: bool = True,
     log_level: str = "INFO",
     env_names: list[str] | None = None,
-    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
+    workspace_packages_mode: str | None = None,
     verbose: bool = False,
-    max_concurrent_projects: int | None = None,
+    resource_usage_interval: float | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -38,14 +43,12 @@ async def prepare_envs(
     5. Run ``create_envs`` to create all virtualenvs.
     6. Run ``install_envs`` to install all dependencies.
 
-    ``env_names`` and ``interpreter_names`` (together with each matrix env's
-    config-declared ``default_interpreters`` policy) select a subset of a
-    matrix env's interpreter axis (PRD-0003 AC8): unselected matrix children
-    are skipped in both step 5 and step 6. Non-matrix envs are always created
-    in step 5; they are only installed in step 6 if selected (or if selection
-    is inactive, in which case both steps cover every env). ``dev_env`` is
-    used to resolve each matrix env's config-declared default interpreter
-    subset when ``interpreter_names`` is not given.
+    ``env_names`` (together with each matrix base's
+    config-declared ``default_interpreters`` policy) selects a subset of
+    environments (ADR-0103): unselected envs are skipped in both step 5 and
+    step 6. ``dev_env`` is
+    used to resolve each matrix base's config-declared default interpreter
+    subset.
     When ``project_names`` is given only those projects are prepared in steps 3, 5, and 6.
     """
     port_file = None
@@ -65,8 +68,11 @@ async def prepare_envs(
 
         client = ApiClient()
         await client.connect("127.0.0.1", port)
+
         # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
-        async def _noop(_: object) -> None: pass
+        async def _noop(_: object) -> None:
+            pass
+
         client.on_notification("actions/treeChanged", _noop)
 
         async def _on_user_message(params: dict) -> None:
@@ -77,6 +83,7 @@ async def prepare_envs(
         client.on_notification("server/userMessage", _on_user_message)
 
         if verbose:
+
             async def _on_log_records(params: dict) -> None:
                 for line in render_log_records(params):
                     click.echo(line, err=True)
@@ -85,16 +92,36 @@ async def prepare_envs(
             # Stream WM+ER logs at the single general level (--log-level).
             await client.subscribe_logs(log_level)
         try:
-            await _run(
-                client,
-                workdir_path,
-                recreate,
-                env_names,
-                interpreter_names,
-                project_names,
-                dev_env,
-                max_concurrent_projects,
-            )
+            if resource_usage_interval is not None:
+                _reporter = resource_usage.RunReporter(
+                    client.get_resource_usage,
+                    lag_window_sec=resource_usage.lag_window_for(
+                        resource_usage_interval
+                    ),
+                )
+                _resource_poll = _reporter.poll
+                _resource_render = _reporter.render
+                _resource_summary_poll = _reporter.summary_poll
+            else:
+                _resource_poll = _unreachable_poll
+                _resource_render = resource_usage.format_line
+                _resource_summary_poll = None
+            async with resource_usage.periodic(
+                _resource_poll,
+                resource_usage_interval,
+                render=_resource_render,
+                summary_poll=_resource_summary_poll,
+                paused=None,
+            ):
+                await _run(
+                    client,
+                    workdir_path,
+                    recreate,
+                    env_names,
+                    project_names,
+                    dev_env,
+                    workspace_packages_mode,
+                )
         finally:
             await client.close()
     finally:
@@ -107,23 +134,21 @@ async def _run(
     workdir_path: pathlib.Path,
     recreate: bool,
     env_names: list[str] | None = None,
-    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
-    max_concurrent_projects: int | None = None,
+    workspace_packages_mode: str | None = None,
 ) -> None:
     try:
         await client.prepare_envs(
             workdir_path=workdir_path,
             recreate=recreate,
             env_names=env_names,
-            interpreter_names=interpreter_names,
             project_names=project_names,
             dev_env=dev_env,
-            max_concurrent_projects=max_concurrent_projects,
+            workspace_packages_mode=workspace_packages_mode,
         )
     except ApiError as exc:
         raise PrepareEnvsFailed(str(exc)) from exc
 
 
-__all__ = ["prepare_envs", "PrepareEnvsFailed"]
+__all__ = ["PrepareEnvsFailed", "prepare_envs"]

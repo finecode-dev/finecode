@@ -31,10 +31,10 @@ from finecode.wm_server import domain
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode.wm_server.runner import runner_client
+from finecode.wm_server.runner.delegated_child_stops import DelegatedChildStops
 from finecode.wm_server.runner.runner_client import RunActionResponse
-from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 
-__all__ = ["run_matrix_action", "is_matrixed"]
+__all__ = ["is_matrixed", "run_matrix_action", "selected_variants"]
 
 
 RunVariant = typing.Callable[..., typing.Awaitable[RunActionResponse]]
@@ -70,16 +70,37 @@ def _group_handlers_by_interpreter(
     return groups
 
 
+def selected_variants(
+    action: domain.Action, selected_envs: set[str] | None
+) -> dict[Interpreter, list[domain.ActionHandler]]:
+    """Variants of *action* selected by concrete env names (ADR-0103).
+
+    ``None`` selects the full declared axis. Otherwise a variant is kept when
+    any of its handlers' ``env`` is in *selected_envs*; the kept value is the
+    variant's full handler list (variants stay atomic).
+    """
+    groups = _group_handlers_by_interpreter(action)
+    if selected_envs is None:
+        return groups
+    return {
+        it: hs for it, hs in groups.items() if any(h.env in selected_envs for h in hs)
+    }
+
+
 async def _run_variant_safe(
     interpreter: Interpreter,
     variant_action: domain.Action,
     run_variant: RunVariant,
+    *,
+    child_stops: DelegatedChildStops | None,
     **kwargs: typing.Any,
 ) -> RunActionResponse:
     """Run one interpreter variant, converting any exception into a synthetic
     failed response so one variant's failure never aborts the others."""
     try:
-        return await run_variant(action=variant_action, **kwargs)
+        return await run_variant(
+            action=variant_action, child_stops=child_stops, **kwargs
+        )
     except Exception as exc:
         return RunActionResponse(
             result_by_format={"string": f"error: {exc}", "json": {"error": str(exc)}},
@@ -172,34 +193,19 @@ async def run_matrix_action(
     orchestration_depth: int,
     caller_kwargs: dict | None,
     run_variant: RunVariant,
-    selected_interpreters: set[str] | None = None,
+    selected_envs: set[str] | None = None,
+    child_stops: DelegatedChildStops | None,
 ) -> RunActionResponse:
     """Fan a matrixed action out to one run per interpreter and combine the results.
 
-    Runs the FULL declared interpreter axis, unless *selected_interpreters* is
-    given (PRD-0003 AC8) — a set of interpreter canonicals (``"<impl>@<version>"``)
+    Runs the FULL declared interpreter axis, unless *selected_envs* is
+    given (ADR-0103) — a set of selected concrete env names
     to restrict the fan-out to. Each interpreter's handler subset is run via
     *run_variant* (``proxy_utils._execute_action``, passed in to avoid a
     circular import) in its own ER process, concurrently; a variant that
     raises never aborts the others (see ``_run_variant_safe``).
-
-    Raises:
-        ActionRunFailed: *selected_interpreters* names an interpreter not in
-            the action's declared axis.
     """
-    groups = _group_handlers_by_interpreter(action)
-
-    if selected_interpreters is None:
-        selected = groups
-    else:
-        unknown = selected_interpreters - {it.canonical for it in groups}
-        if unknown:
-            raise ActionRunFailed(
-                f"selected interpreters not in axis: {sorted(unknown)}"
-            )
-        selected = {
-            it: hs for it, hs in groups.items() if it.canonical in selected_interpreters
-        }
+    selected = selected_variants(action, selected_envs)
 
     tasks = []
     interpreters: list[Interpreter] = []
@@ -227,13 +233,14 @@ async def run_matrix_action(
                 orchestration_depth=orchestration_depth,
                 caller_kwargs=caller_kwargs,
                 allow_no_handlers=False,
+                child_stops=child_stops,
             )
         )
 
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     variants: dict[Interpreter, RunActionResponse] = {}
-    for interpreter, result in zip(interpreters, raw_results):
+    for interpreter, result in zip(interpreters, raw_results, strict=False):
         if isinstance(result, BaseException):
             variants[interpreter] = RunActionResponse(
                 result_by_format={

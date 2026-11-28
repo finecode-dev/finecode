@@ -5,8 +5,7 @@ import sys
 from loguru import logger
 
 import finecode_extension_runner.er_server as extension_runner_er
-import finecode_extension_runner.global_state as global_state
-from finecode_extension_runner import er_wal
+from finecode_extension_runner import er_wal, global_state
 
 
 def start_runner_sync(wal_writer: er_wal.ErWalWriter | None = None) -> None:

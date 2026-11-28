@@ -2,13 +2,14 @@
 
 Used by definition, type_definition, implementation, and references handlers.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
+from fine_symbol_info.types import Location
 from finecode_extension_api import common_types
 from finecode_extension_api.resource_uri import ResourceUri
-from fine_symbol_info.types import Location
 
 
 def _range_from_lsp(d: dict[str, Any]) -> common_types.Range:
@@ -33,7 +34,9 @@ def location_from_lsp(d: dict[str, Any]) -> Location:
     )
 
 
-def locations_from_lsp(result: list[dict[str, Any]] | dict[str, Any] | None) -> list[Location]:
+def locations_from_lsp(
+    result: list[dict[str, Any]] | dict[str, Any] | None,
+) -> list[Location]:
     """Normalise any LSP definition/typeDefinition/implementation/references result.
 
     Handles: null, single Location, Location[], LocationLink[].
@@ -48,10 +51,14 @@ def locations_from_lsp(result: list[dict[str, Any]] | dict[str, Any] | None) -> 
     for item in result:
         if "targetUri" in item:
             # LocationLink
-            locations.append(Location(
-                uri=ResourceUri(item["targetUri"]),
-                range=_range_from_lsp(item.get("targetSelectionRange") or item["targetRange"]),
-            ))
+            locations.append(
+                Location(
+                    uri=ResourceUri(item["targetUri"]),
+                    range=_range_from_lsp(
+                        item.get("targetSelectionRange") or item["targetRange"]
+                    ),
+                )
+            )
         else:
             locations.append(location_from_lsp(item))
     return locations

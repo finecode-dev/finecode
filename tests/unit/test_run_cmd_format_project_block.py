@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pathlib
 
-from finecode.cli_app.commands.run_cmd import _build_streaming_result, _format_project_block
+from finecode.cli_app.commands.run_cmd import (
+    _build_streaming_result,
+    _format_project_block,
+)
 
 
 def _action_result(text: str, return_code: int = 0) -> dict:
@@ -67,20 +70,33 @@ def test_build_streaming_result_extracts_result_by_format_and_return_code() -> N
     merged = {
         "/proj": {
             "src.A": {
-                "resultByFormat": {"json": {"messages": {"f": []}}},
+                "resultByFormat": {
+                    "json": {"messages": {"f": []}},
+                    "string": "All checks passed.",
+                },
                 "returnCode": 2,
             }
         }
     }
 
-    result = _build_streaming_result(merged, overall_return_code=2)
+    result = _build_streaming_result(
+        merged,
+        overall_return_code=2,
+        scope_by_action_source={"src.A": "project"},
+        project_paths_requested=["/proj"],
+        resolved_payload={"target": "files"},
+    )
 
     assert result.output == ""
     assert result.return_code == 2
+    assert result.scope_by_action_source == {"src.A": "project"}
+    assert result.project_paths_requested == ["/proj"]
+    assert result.resolved_payload == {"target": "files"}
     project_path = pathlib.Path("/proj")
     assert project_path in result.result_by_project
     response = result.result_by_project[project_path]["src.A"]
     assert response.json() == {"messages": {"f": []}}
+    assert response.text() == "All checks passed."
     assert response.return_code == 2
 
 

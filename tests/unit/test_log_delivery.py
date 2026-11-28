@@ -1,4 +1,5 @@
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from finecode.wm_server.services.log_delivery import (
     ClientLogRecord,
@@ -35,9 +36,9 @@ def _make_record(
     )
 
 
-def _make_recorder() -> (
-    tuple[list[RecordedCall], Callable[[Any, list[dict[str, Any]], int], None]]
-):
+def _make_recorder() -> tuple[
+    list[RecordedCall], Callable[[Any, list[dict[str, Any]], int], None]
+]:
     calls: list[RecordedCall] = []
 
     def callback(conn: Any, records: list[dict[str, Any]], dropped: int) -> None:

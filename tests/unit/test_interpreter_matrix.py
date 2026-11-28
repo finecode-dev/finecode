@@ -76,7 +76,9 @@ class TestParseInterpreter:
 
     def test_interpreters_with_same_implementation_and_version_hash_equal(self) -> None:
         """Equal interpreter values hash equal, which is required for them to behave correctly as dict keys or set members when the matrix logic deduplicates or indexes by interpreter."""
-        assert hash(Interpreter("cpython", "3.11")) == hash(Interpreter("cpython", "3.11"))
+        assert hash(Interpreter("cpython", "3.11")) == hash(
+            Interpreter("cpython", "3.11")
+        )
 
     def test_interpreters_with_different_implementation_are_not_equal(self) -> None:
         """Interpreters that differ only by implementation are treated as genuinely distinct, so a CPython and PyPy entry are never silently merged into one matrix slot."""
@@ -94,7 +96,9 @@ class TestParseInterpreter:
 
 
 class TestExpand:
-    def test_worked_example_expands_matrix_environment_and_rewrites_its_handlers(self) -> None:
+    def test_worked_example_expands_matrix_environment_and_rewrites_its_handlers(
+        self,
+    ) -> None:
         """A matrix environment declared once in config becomes one concrete venv per interpreter, and every handler that targeted it is rewritten to target each concrete venv — this is the mechanism that lets a single action run under multiple interpreters without hand-duplicated config."""
         envs = [
             EnvSpec(
@@ -116,15 +120,21 @@ class TestExpand:
 
         assert result == ExpansionResult(
             concrete_envs=[
-                ConcreteEnv("testing@cpython-3.11", Interpreter("cpython", "3.11")),
-                ConcreteEnv("testing@cpython-3.12", Interpreter("cpython", "3.12")),
-                ConcreteEnv("testing@pypy-3.11", Interpreter("pypy", "3.11")),
-                ConcreteEnv("lint", None),
+                ConcreteEnv(
+                    "testing-cpython-3.11", Interpreter("cpython", "3.11"), "testing"
+                ),
+                ConcreteEnv(
+                    "testing-cpython-3.12", Interpreter("cpython", "3.12"), "testing"
+                ),
+                ConcreteEnv(
+                    "testing-pypy-3.11", Interpreter("pypy", "3.11"), "testing"
+                ),
+                ConcreteEnv("lint", None, None),
             ],
             handlers=[
-                HandlerRef("run_tests", "pytest", "testing@cpython-3.11"),
-                HandlerRef("run_tests", "pytest", "testing@cpython-3.12"),
-                HandlerRef("run_tests", "pytest", "testing@pypy-3.11"),
+                HandlerRef("run_tests", "pytest", "testing-cpython-3.11"),
+                HandlerRef("run_tests", "pytest", "testing-cpython-3.12"),
+                HandlerRef("run_tests", "pytest", "testing-pypy-3.11"),
                 HandlerRef("lint", "ruff", "lint"),
             ],
             matrix_environments={
@@ -143,11 +153,14 @@ class TestExpand:
 
         result = expand(envs, handlers)
 
-        assert result.concrete_envs == [ConcreteEnv("lint", None)]
+        assert result.concrete_envs == [ConcreteEnv("lint", None, None)]
+        assert result.concrete_envs[0].matrix_env is None
         assert result.handlers == [HandlerRef("lint", "ruff", "lint")]
         assert result.matrix_environments == {}
 
-    def test_matrix_environment_with_single_interpreter_expands_to_one_concrete_env(self) -> None:
+    def test_matrix_environment_with_single_interpreter_expands_to_one_concrete_env(
+        self,
+    ) -> None:
         """A matrix environment that happens to declare only one interpreter still expands through the matrix machinery rather than being special-cased, keeping the config format and its expansion consistent regardless of axis size."""
         envs = [EnvSpec("solo", [Interpreter("cpython", "3.11")])]
         handlers = [HandlerRef("build", "build_wheel", "solo")]
@@ -155,10 +168,11 @@ class TestExpand:
         result = expand(envs, handlers)
 
         assert result.concrete_envs == [
-            ConcreteEnv("solo@cpython-3.11", Interpreter("cpython", "3.11"))
+            ConcreteEnv("solo-cpython-3.11", Interpreter("cpython", "3.11"), "solo")
         ]
+        assert result.concrete_envs[0].matrix_env == "solo"
         assert result.handlers == [
-            HandlerRef("build", "build_wheel", "solo@cpython-3.11")
+            HandlerRef("build", "build_wheel", "solo-cpython-3.11")
         ]
         assert result.matrix_environments == {"solo": [Interpreter("cpython", "3.11")]}
 
@@ -171,7 +185,9 @@ class TestValidate:
 
         assert validate(envs, handlers) == {"lint": "single"}
 
-    def test_action_referencing_one_matrix_environment_is_classified_matrixed(self) -> None:
+    def test_action_referencing_one_matrix_environment_is_classified_matrixed(
+        self,
+    ) -> None:
         """An action whose handler targets a matrix environment is classified as matrixed even with just one matrix environment involved, signalling downstream that this action must fan out across its interpreter axis."""
         envs = [
             EnvSpec(
@@ -196,7 +212,9 @@ class TestValidate:
 
         assert validate(envs, handlers) == {"type_check": "matrixed"}
 
-    def test_action_spanning_matrix_environments_with_a_subset_mismatch_is_rejected(self) -> None:
+    def test_action_spanning_matrix_environments_with_a_subset_mismatch_is_rejected(
+        self,
+    ) -> None:
         """An action whose matrix environments cover different interpreter sets is rejected at config-validation time, so a project misconfiguration surfaces immediately instead of causing an interpreter's handler to silently never run."""
         envs = [
             EnvSpec(
@@ -220,7 +238,9 @@ class TestValidate:
         with pytest.raises(MatrixSetMismatchError):
             validate(envs, handlers)
 
-    def test_action_spanning_matrix_environments_with_a_superset_mismatch_is_rejected(self) -> None:
+    def test_action_spanning_matrix_environments_with_a_superset_mismatch_is_rejected(
+        self,
+    ) -> None:
         """A matrix environment that covers extra interpreters beyond what a sibling matrix environment in the same matrixed action declares is just as invalid as a missing one — validation must not treat "more interpreters" as automatically compatible."""
         envs = [
             EnvSpec("testing", [Interpreter("cpython", "3.11")]),

@@ -1,12 +1,12 @@
 # docs: docs/reference/actions.md
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_envs.list_obtainable_toolchains_action import (
     ListObtainableToolchainsAction,
     ListObtainableToolchainsRunPayload,
     ListObtainableToolchainsRunResult,
 )
+from finecode_extension_api import code_action
 
 
 @dataclasses.dataclass

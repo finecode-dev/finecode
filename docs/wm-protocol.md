@@ -1,6 +1,6 @@
 # FineCode WM Server Protocol
 
-The FineCode Workspace Manager Server (WM Server) is a TCP JSON-RPC 2.0 service that manages the workspace state
+The FineCode Workspace Manager Server (WM Server) is a TCP JSON-RPC 2.0 service that manages the WM state
 (projects, configs, extension runners). Any client — LSP server, MCP server, or CLI — can
 connect to it.
 
@@ -30,6 +30,13 @@ connect to it.
 ```json
 {"jsonrpc": "2.0", "id": 1, "error": {"code": -32002, "message": "Not yet implemented"}}
 ```
+
+Run failures (`ActionRunFailed`, `StartingEnvironmentsFailed`, and ER boot stalls
+that arrive as `ServerFailedToStart`) carry a `[host under memory pressure: …]`
+suffix on the message while the host is under memory pressure, so the CLI's
+`API error` line names the host state beside the failure. The note is appended
+at the boundary where the failure becomes a client error; the log line always
+carries the same state as structured extras either way.
 
 **Notification** (no `id` field, no response expected):
 
@@ -124,7 +131,7 @@ Actions are still available in the result so clients can validate the workspace.
 
 `projects` is optional. When provided, only the listed projects (by name) will
 be config-initialized and have their runners started. All other projects in the
-directory are still discovered (added to workspace state) but skipped for
+directory are still discovered (added to WM state) but skipped for
 initialization. This avoids the cost of reading configs and spawning runner
 processes for projects that are not needed.
 
@@ -183,6 +190,59 @@ missing runners without resolving presets, so project action lists are not
 refreshed by this call.
 
 **Result:** `{}`
+
+---
+
+#### `workspace/reloadConfig`
+
+Make the configuration on disk take effect for a project or the whole workspace.
+
+The caller states that outcome, never a mechanism (ADR-0073). Today the WM re-reads
+the project's configuration, re-collects its actions and resolves its presets, and
+then replaces that project's runners — the mechanism whose coverage holds without
+conditions. It may be replaced by a cheaper one without an API change.
+
+- **Type:** request
+- **Clients:** MCP
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"project": "/abs/path/to/project", "rescan": false}
+```
+
+Exactly one of `project` and `allProjects` (boolean) must be supplied — neither, or
+both, is a validation error (ADR-0078). `rescan` is optional (default `false`): when
+`true`, the workspace directories are walked again first, so projects created since
+the server started are discovered and included. `killInFlightRuns` is optional
+(default `false`) — see the refusal below.
+
+**Result:**
+
+```json
+{
+  "projects": [
+    {
+      "project": "/abs/path/to/project",
+      "status": "recovered",
+      "actionsAdded": ["typecheck"],
+      "actionsRemoved": []
+    }
+  ]
+}
+```
+
+One entry per target project. A project that could not be recovered carries
+`"status": "failed"` and an `error` instead of the two action lists, and the
+configuration that was already in effect stays in effect for it.
+
+A project with an action run in flight carries `"status": "refused"` with an `error`
+naming the runs and an `inFlight` list of `{runId, action, startedAt}`: replacing its
+runners would kill those runs, so it is not attempted (ADR-0079). Refusal is
+per-project, so the other targets of a workspace-wide recovery still proceed, and it
+never waits. `killInFlightRuns: true` proceeds anyway and kills them — the remedy for
+a run that is hung, since a hung run is indistinguishable from a working one.
 
 ---
 
@@ -250,9 +310,9 @@ from context.
 
 ---
 
-#### `workspace/getWorkspaceEditablePackages`
+#### `workspace/getWorkspacePackages`
 
-Return the resolved workspace editable-package map from `finecode-workspace.toml`.
+Return the resolved workspace-package map from `finecode-workspace.toml`.
 
 - **Type:** request
 - **Clients:** CLI
@@ -265,17 +325,22 @@ Return the resolved workspace editable-package map from `finecode-workspace.toml
 ```json
 {
   "packages": {
-    "finecode": "/abs/path/to/finecode",
-    "fine_python_ruff": "/abs/path/to/extensions/fine_python_ruff"
+    "finecode": {"dir": "/abs/path/to/finecode", "wheel": null, "editable": true},
+    "fine_python_ruff": {"dir": "/abs/path/to/extensions/fine_python_ruff", "wheel": "/abs/path/to/.venvs/dev_workspace/cache/wheelhouse/fine_python_ruff-0.2.0a0-py3-none-any.whl", "editable": false}
   }
 }
 ```
 
-Each entry maps a package name (from `[project].name` in the target's `pyproject.toml`)
-to its absolute POSIX path. The map is the union of every discovered project when
-`all_workspace_packages_editable = true` in `finecode-workspace.toml` and any explicit
-`editable_packages` entries. Returns `{"packages": {}}` when no workspace config is found
-or the `[workspace]` table is absent.
+Each entry names a package (from `[project].name` in the target's `pyproject.toml`),
+its absolute POSIX source directory, and the resolved install decision for the
+active mode. ``editable`` is true when the package installs from its source
+directory (editable mode, or an excluded package); otherwise it installs from
+``wheel``, which is null when the wheelhouse has no entry — the consumer reports
+that as the stale/absent-manifest error rather than falling back to editable.
+The set is the union of every discovered project unless
+`[workspace.workspace_packages].all_projects = false` in `finecode-workspace.toml`
+(it defaults to true) and any explicit `extra` entries. Returns
+`{"packages": {}}` when there is no workspace root.
 
 ---
 
@@ -338,7 +403,7 @@ All fields optional. If `project` is omitted, returns actions from all projects.
   "actions": [
     {
       "name": "lint",
-      "source": "finecode_extension_api.actions.LintAction",
+      "source": "fine_lint.LintAction",
       "project": "/abs/path/to/project",
       "handlers": [
         {"name": "ruff", "source": "fine_python_ruff.RuffLintFilesHandler", "env": "runtime"}
@@ -359,21 +424,36 @@ Return payload schemas for the specified actions in a project. Used by the MCP
 server to build accurate `inputSchema` entries for each tool.
 
 - **Type:** request
-- **Clients:** MCP
+- **Clients:** MCP, CLI
 - **Status:** implemented
 
 **Params:**
 
 ```json
-{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction", "fine_format.FormatAction"]}
+{"project": "/abs/path/to/project", "actionSources": ["fine_lint.LintAction", "fine_format.FormatAction"], "startRunners": false}
 ```
+
+`startRunners` (optional, default `false`): when `true`, the WM starts the
+handler environments for actions whose schema is not yet available, then
+probes them again. The CLI sets it so payload values with a path type can be
+converted before dispatch; MCP leaves it off so listing tools never starts
+environments.
+
+`runOptions` (optional, honoured only with `startRunners`): the selection
+inputs the run itself will use — `devEnv` and
+`interpreterSelectors` (same shapes as the `actions/runBatch` run options).
+The fetch computes the same per-project interpreter selection as the run, so
+it starts only the interpreter instances the run will select. Selectors are
+never validated here: a selector valid in another in-scope project but not in
+the schema project must not fail the fetch; the run's own validation reports
+bad selectors a moment later.
 
 **Result:**
 
 ```json
 {
   "schemas": {
-    "finecode_extension_api.actions.LintAction": {
+    "fine_lint.LintAction": {
       "properties": {
         "file_paths": {"type": "array", "items": {"type": "string"}},
         "target": {"type": "string", "enum": ["project", "files"]}
@@ -432,9 +512,9 @@ Get the hierarchical action tree for IDE sidebar display.
               "status": "",
               "subnodes": [
                 {
-                  "nodeId": "/path/to/my_project::finecode_extension_api.actions.LintAction",
+                  "nodeId": "/path/to/my_project::fine_lint.LintAction",
                   "name": "lint",
-                  "source": "finecode_extension_api.actions.LintAction",
+                  "source": "fine_lint.LintAction",
                   "nodeType": 2,
                   "status": "",
                   "subnodes": []
@@ -471,7 +551,7 @@ Node ID format:
 
 - Directory/project: absolute path string (e.g. `"/path/to/project"`)
 - Action group: `"<project_path>::actions"`
-- Action: `"<project_path>::<actionSource>"` (e.g. `"/path/to/project::finecode_extension_api.actions.LintAction"`)
+- Action: `"<project_path>::<actionSource>"` (e.g. `"/path/to/project::fine_lint.LintAction"`)
 - Handler: `"<project_path>::<actionSource>::<handlerName>"`
 - Env group: `"<project_path>::envs"`
 - Env: `"<project_path>::envs::<envName>"`
@@ -490,7 +570,7 @@ Execute a single action on a project.
 
 ```json
 {
-  "actionSource": "finecode_extension_api.actions.LintAction",
+  "actionSource": "fine_lint.LintAction",
   "project": "/abs/path/to/project",
   "params": {"file_paths": ["/path/to/file.py"]},
   "options": {
@@ -505,8 +585,8 @@ Required: `actionSource`, `project`. All other fields optional.
 
 `actionSource` is an import-path alias identifying the action class (ADR-0019).
 Any valid import path resolving to the same registered action class is accepted
-(e.g. the short alias `"finecode_extension_api.actions.LintAction"` or the canonical
-`"finecode_extension_api.actions.code_quality.lint_action.LintAction"` both work).
+(e.g. the short alias `"fine_lint.LintAction"` or the canonical
+`"fine_lint.lint_action.LintAction"` both work).
 
 `trigger` values: `"user"`, `"system"`, `"unknown"` (default: `"unknown"`)
 
@@ -559,7 +639,7 @@ Execute multiple actions across multiple projects. Used for batch operations.
 ```json
 {
   "actionSources": [
-    "finecode_extension_api.actions.LintAction",
+    "fine_lint.LintAction",
     "fine_format.FormatAction"
   ],
   "projects": ["/abs/path/to/project_a", "/abs/path/to/project_b"],
@@ -567,6 +647,7 @@ Execute multiple actions across multiple projects. Used for batch operations.
   "options": {
     "concurrently": false,
     "resultFormats": ["json", "string"],
+    "mergeResults": true,
     "trigger": "user",
     "devEnv": "cli"
   }
@@ -581,9 +662,15 @@ requested actions.
 - `partialResultToken` — when present, the server emits one `actions/partialResult`
   notification per completed project in completion order.  Each notification carries
   the full result block for that project (see `actions/partialResult` below).  The
-  final response contains only `returnCode` as a completion signal.
+  final response contains `returnCode` as a completion signal. When `mergeResults`
+  is enabled, it also contains the merged `results` described below.
 - `progressToken` — when present (and `partialResultToken` is absent), the server
   sends aggregated `actions/progress` notifications across all (project × action) slots.
+- `mergeResults` — when `true`, the final response includes a merged result for each
+  project/action slot in `results`. Each slot has `resultByFormat` and `returnCode`.
+  A successful result may contain `json`, `string`, or `styled_text_json` according
+  to `resultFormats`. A failed text merge has an empty `resultByFormat` and a nonzero
+  `returnCode`; the batch continues and other slots remain in `results`.
 
 **Result (without `partialResultToken`):**
 
@@ -591,7 +678,7 @@ requested actions.
 {
   "results": {
     "/abs/path/to/project_a": {
-      "finecode_extension_api.actions.LintAction": {"resultByFormat": {"...": "..."}, "returnCode": 0},
+      "fine_lint.LintAction": {"resultByFormat": {"...": "..."}, "returnCode": 0},
       "fine_format.FormatAction": {"resultByFormat": {"...": "..."}, "returnCode": 0}
     }
   },
@@ -600,15 +687,29 @@ requested actions.
 ```
 
 Result is keyed by project path, then by action source. `returnCode` at the top level
-is the bitwise OR of all individual return codes.
+is the bitwise OR of all individual return codes. Project and action keys retain the
+request's resolved project and action order, even when slots finish in a different order.
 
 **Result (with `partialResultToken`):**
 
 ```json
-{"returnCode": 0}
+{
+  "results": {
+    "/abs/path/to/project_a": {
+      "fine_lint.LintAction": {
+        "resultByFormat": {"json": {"messages": {"file.py": []}}, "string": "All checks passed."},
+        "returnCode": 0
+      }
+    }
+  },
+  "returnCode": 0
+}
 ```
 
-All per-project result data is carried by `actions/partialResult` notifications.
+With `mergeResults` enabled, `results` is included in the final response as above;
+otherwise the final response contains only `returnCode`. Per-project progress data is
+still carried by `actions/partialResult` notifications. Failed non-matrix text merges
+have an empty `resultByFormat` and a nonzero slot `returnCode` and produce no text block.
 
 ---
 
@@ -619,19 +720,34 @@ All per-project result data is carried by `actions/partialResult` notifications.
 Hot-reload handler code for an action without restarting runners.
 
 - **Type:** request
-- **Clients:** LSP
+- **Clients:** LSP, MCP
 - **Status:** implemented
 
 **Params:**
 
 ```json
-{"actionNodeId": "/abs/path/to/project::finecode_extension_api.actions.LintAction"}
+{"action": "fine_lint.LintAction", "project": "/abs/path/to/project"}
 ```
 
-`actionNodeId` uses the same `<project_path>::<actionSource>` format as the node IDs
-in the `actions/getTree` response.
+`action` is an import-path alias (ADR-0019), the `<actionSource>` half of the node
+IDs in the `actions/getTree` response. `project` is optional: omitted, the action is
+reloaded in every project that exposes it (ADR-0078). An `env` parameter is rejected
+— an action is reloaded in every environment of a project, so it would narrow
+nothing.
 
-**Result:** `{}`
+**Result:**
+
+```json
+{
+  "reloaded": [{"project": "/abs/path/to/project", "envs": ["dev_no_runtime"]}],
+  "failed": []
+}
+```
+
+`envs` names only the runners the reload reached, and every runner it did not reach
+appears in `failed` with an `error` — one runner that cannot be reached does not
+cancel the reload of the others. A runner that is not running is reported there too:
+it is skipped, not reloaded. Errors only if no target project has the action.
 
 ---
 
@@ -718,10 +834,10 @@ List extension runners and their statuses.
 {
   "runners": [
     {
-      "project": "/abs/path/to/project",
-      "env": "runtime",
+      "projectPath": "/abs/path/to/project",
+      "envName": "runtime",
       "status": "RUNNING",
-      "readable_id": "my_project::runtime"
+      "readableId": "/abs/path/to/project (runtime)"
     }
   ]
 }
@@ -733,10 +849,10 @@ List extension runners and their statuses.
 
 #### `runners/restart`
 
-Restart an extension runner. Optionally start in debug mode.
+Restart extension runners. Optionally start in debug mode.
 
 - **Type:** request
-- **Clients:** LSP
+- **Clients:** LSP, MCP
 - **Status:** implemented
 
 **Params:**
@@ -745,9 +861,34 @@ Restart an extension runner. Optionally start in debug mode.
 {"project": "/abs/path/to/project", "env": "runtime", "debug": false}
 ```
 
-`debug` is optional, defaults to `false`.
+Exactly one of `project` and `allProjects` (boolean) must be supplied — neither, or
+both, is a validation error, and workspace width is never reached by omission
+(ADR-0078). `env` is optional: omitted, every environment of each target project is
+restarted. `debug` and `killInFlightRuns` are optional, both defaulting to `false`.
+An `action` parameter is rejected — a runner carries every action of its project, so
+it would narrow nothing.
 
-**Result:** `{}`
+**Result:**
+
+```json
+{
+  "restarted": [{"project": "/abs/path/to/project", "env": "runtime", "status": "RUNNING"}],
+  "failed": [],
+  "refused": []
+}
+```
+
+One entry per target, so a partial failure stays attributable. A runner that did not
+come back up appears in `failed` with the same `status` field plus an `error` — the
+status is what distinguishes an environment that was never prepared (`NO_VENV`) from
+a runner that failed on its own code (`FAILED`). Only a target matching no runner at
+all is an error response.
+
+A project with an action run in flight appears in `refused` with an `error` naming the
+runs and an `inFlight` list, and none of its environments is restarted — a restart
+kills a live run just as a configuration recovery does (ADR-0079). Refusal is a
+property of the project, so it is reported once per project rather than once per
+environment. `killInFlightRuns: true` proceeds and kills them.
 
 ---
 
@@ -797,7 +938,7 @@ environment, it is stopped first.
 
 #### `server/getInfo`
 
-Return static information about the running WM Server instance.
+Return information about the running WM Server instance.
 
 - **Type:** request
 - **Clients:** LSP, MCP, CLI
@@ -809,12 +950,61 @@ Return static information about the running WM Server instance.
 
 ```json
 {
-  "logFilePath": "/abs/path/to/.venvs/dev_workspace/logs/wm_server/wm_server.log"
+  "logFilePath": "/abs/path/to/.venvs/dev_workspace/logs/wm_server/wm_server.log",
+  "pid": 12345,
+  "clients": ["lsp", "mcp-claude"]
 }
 ```
 
 `logFilePath` is the absolute path to the WM Server's log file for the current process.
 Clients can log or display this path so the user can open the file directly when troubleshooting.
+
+`clients` lists the label of every currently connected client — the `clientId` sent with
+`client/initialize`, or the peer address for a client that sent none — and `pid` is the
+server's process id. A client about to replace the server reads these to learn whose
+session it is disturbing. Replacement is disclosed rather than refused, because the
+other clients reconnect on their own (ADR-0074).
+
+---
+
+#### `server/getResourceUsage`
+
+Return one snapshot of what the WM is doing and what it costs.
+
+- **Type:** request
+- **Clients:** LSP, MCP, CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{
+  "includeProcesses": false,
+  "lagWindowSec": 30.0
+}
+```
+
+Both fields are optional. `includeProcesses` walks every runner's processes
+(slower, one walk at a time). `lagWindowSec` is the window for the recent-lag
+maximum, a finite number in `(0, 600]`; the default is 30.
+
+**Result:** see the implementation for the full shape — `wm` (pid, uptime,
+clients, lag), `projects` (total / running / active), `runners` (by status,
+running, starting, active, per env), `budget` (total, source), `workSlots`
+(used / free / waiting / stall escape / holders), `startupSlots` (used / free
+/ waiting, including one-shot metadata dumps), `actionMetaDumps` (`running` /
+`waiting` gauges; `spawned` counts every process started, retry attempts
+included; `ok` / `skew` / `envUnusable` / `timeout` count one per completed
+dump task; `skewFromCache` counts skew answers served from a persisted marker
+with no spawn), `inFlightRuns` (oldest first), `peaks` since server start
+(including `hostPsiMemoryFullMax`, the max PSI `memory full avg10` sampled),
+`host` (memory / swap / cgroup / PSI / load, plus `memoryPressure`: null when
+unevaluable, else `{"active", "reasons"}`), and `processes` (only with
+`includeProcesses`). Definitions: see `docs/guides/wm-server-internals.md`,
+"Resource-usage snapshot".
+
+The method never waits: no lock, no lease, no ER request, no runner start,
+no in-flight entry.
 
 ---
 
@@ -884,6 +1074,63 @@ subscription is dropped.
 
 ---
 
+### Server -> Client Requests
+
+The WM sends a request to one client when a run needs something only that client
+can provide. The client answers with a JSON-RPC response, like any other
+request. Requests are addressed to a single connection, never broadcast.
+
+#### `client/elicit`
+
+Puts a choice, text, or multi-select question to the person behind one client. Sent to the
+connection that started the run asking the question, and only if that client
+declared the shape in `client/initialize`:
+
+```json
+{"clientId": "cli", "capabilities": {"elicitation": {"choice": true, "text": true, "multiChoice": true}}}
+```
+
+A capability of `true` declares choice only. A dict declares a shape only when its key is exactly `true`: `{"choice": false, "text": true}` declares text (and choice, which is truthy), `1`, `"yes"` or `{}` declare nothing. A connection that did not declare the asked shape is never sent the question; the asking handler
+is told that nobody could be asked, without a round trip. The `client/initialize` response still echoes only `{"elicitation": true|false}`; it never reports shapes.
+
+- **Type:** request (server -> client)
+- **Clients:** CLI, MCP
+- **Status:** implemented
+
+**Params (choice):**
+
+```json
+{
+  "message": "Keep the generated files?",
+  "options": ["keep", "revert"],
+  "default": "keep",
+  "timeoutSec": 300.0
+}
+```
+
+`default` is a display field for pre-selection and may be `null`; the WM never applies it
+on a client's behalf. `descriptions` (option text to detail) is sent only when given. An older client sees a described choice as a plain choice. `timeoutSec` is informational: the WM owns the deadline and
+withdraws the question when it passes (see `client/elicitWithdrawn`). A client
+that holds its own pending request needs it to know when to stop holding it.
+
+**Params (text):** `{ "kind": "text", "message": ..., "timeoutSec": ... }`, plus `multiline`, `initialValue` and `placeholder` only when set. **`Params (multi-select):** `{ "kind": "multiChoice", "message": ..., "options": ..., "timeoutSec": ... }`, plus `default` (the offered pre-selection, in offered order) and `descriptions` (offered keys only) only when set. The WM rejects an unknown `kind`, a choice or multi-select with no options, and a prefill over 65,536 characters without sending anything.
+
+**Result:**
+
+```json
+{"outcome": "answered", "value": "revert"}
+```
+
+`outcome` is `"answered"` (choice: `value` is one of `options`; text: `value` is the exact string; multi-select: `values` is the offered-ordered selection), `"declined"` (the
+person was asked and refused) or `"unavailable"` (nobody could be asked). A
+client that cannot ask a person at all must not declare the capability rather
+than answer `"unavailable"`. A text `value` that is not a string, is over 65,536 characters, or is not valid UTF-8 is `unavailable`; a multi-select `values` that is missing, holds a non-string, repeats, or names an unoffered option is `unavailable`.
+
+A response that arrives after the question ended is discarded by the WM without
+error.
+
+---
+
 ### Server -> Client Notifications
 
 These are sent by the WM Server to connected clients. Clients must implement
@@ -941,7 +1188,7 @@ project each belongs to, allowing clients to group results by project.
   "value": {
     "project": "/abs/path/to/project_a",
     "results": {
-      "finecode_extension_api.actions.LintAction": {
+      "fine_lint.LintAction": {
         "resultByFormat": {"json": {}, "string": "..."},
         "returnCode": 0
       }
@@ -1074,3 +1321,51 @@ Delivery is batched (~200ms cadence by default) except records at `ERROR` or
 above, which are flushed immediately. Any buffered tail is force-flushed
 before the response to the request that triggered the logging and again on
 disconnect, so log ordering relative to the triggering request is preserved.
+
+---
+
+#### `client/elicitWithdrawn`
+
+Tells a client that the WM has stopped waiting for a `client/elicit` question it
+sent. The question must leave the person's screen and must not receive input
+meant for a later one.
+
+- **Type:** notification (server -> client)
+- **Clients:** CLI, MCP
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"id": 12, "reason": "expired"}
+```
+
+`id` is the `id` of the `client/elicit` request. `reason` says why the WM
+stopped waiting:
+
+| `reason` | Meaning |
+| --- | --- |
+| `"expired"` | The WM deadline passed. |
+| `"runCancelled"` | The WM cancelled the run that asked. |
+| `"noLongerNeeded"` | The asking action no longer wants an answer: it gave up the ask, finished, failed, or its runner exited. |
+
+More values may be added. A client treats an unknown `reason` as an ending with
+no stated cause.
+
+Client obligations:
+
+- Remove the question if it is shown, or drop it unshown if it is waiting, and
+  never show it later. Discard what was typed for it.
+- Do not reply: the notification is not acknowledged, and an answer to the
+  question would be discarded.
+- Ignore an `id` it does not hold.
+- A question read together with its withdrawal in one read must still be
+  withdrawn: hold a question from the moment its request is read.
+- On connection loss, end every held question, shown or waiting, before any
+  reconnection can carry a new one. The WM sends no withdrawal for a connection
+  it has lost.
+
+The WM writes the withdrawal before it writes anything that could make the
+client treat the question as still open: before the next `client/elicit` of the
+same run, and before the response of the run that asked. A client that ignores
+the notification keeps its previous behaviour: its late answer is discarded.

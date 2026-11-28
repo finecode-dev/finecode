@@ -1,152 +1,218 @@
 import contextlib
+import importlib.metadata
+import logging
+import socket
 import time
 from pathlib import Path
+
+from finecode_extension_runner.shared_telemetry import providers as shared_providers
+from finecode_extension_runner.shared_telemetry.health import (
+    HealthEmitter,
+    HealthTracker,
+    LogGroupLevel,
+    register_health_metrics,
+)
+from finecode_jsonrpc.tracing import IHopObserver
+
+from finecode_extension_runner import logs as er_logs
 
 # Metric instruments — populated by init_meter_provider(); None when OTel is disabled.
 _action_duration_hist = None
 _action_errors_counter = None
 _er_startup_hist = None
-_er_active_counter = None
+_er_running_counter = None
+
+# Process health: loss counts, signal availability and admission flags read by
+# the health summary emission. Owned here; the runner manager records per-ER
+# setup outcomes on it and the hop observer counts sampling decisions.
+_health = HealthTracker(process_role="wm")
 
 
-def init_otel_logging(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
-    if not endpoint:
+def _required_group_levels() -> list[LogGroupLevel]:
+    """Effective levels of the WM's required-record groups, read at writing."""
+    return [
+        {"group": group, "level": er_logs.effective_level_name(group)}
+        for group in (
+            "finecode_extension_runner.shared_telemetry.health",
+            "finecode_extension_runner.shared_telemetry.rpc_hops",
+            "finecode.wm_server.services.event_loop_lag_monitor",
+        )
+    ]
+
+
+_health.set_log_level_reader(_required_group_levels)
+
+
+def health_tracker() -> HealthTracker:
+    """The WM process's telemetry health tracker."""
+    return _health
+
+
+_emitter: HealthEmitter | None = None
+
+
+def emit_health_summary_initial() -> None:
+    """Attach the health emitter, mirror metrics if active, write the first summary.
+
+    Runs once, after the setup attempt completes. Disabled processes never
+    reach here; a failure here must never fail startup.
+    """
+    global _emitter
+    try:
+        emitter = HealthEmitter(_health)
+        emitter.attach()
+        _emitter = emitter
+        if _health.snapshot()["signals"]["metrics"]["availability"] == "active":
+            try:
+                from opentelemetry import metrics
+
+                register_health_metrics(
+                    metrics.get_meter("finecode.telemetry"), _health
+                )
+            except Exception:  # noqa: BLE001 - emission must not fail startup
+                _health.count("metrics", "contained_failure")
+        emitter.emit_initial()
+    except Exception:  # noqa: BLE001 - emission must not fail startup
+        _health.count("logs", "contained_failure")
+
+
+# Endpoints already probed for the one-time reachability heads-up, so the three
+# init_* functions log at most once per endpoint.
+_probed_endpoints: set[str] = set()
+
+
+def _validate_endpoint(endpoint: str) -> tuple[str, int]:
+    """Parse the OTLP endpoint into (host, port), raising on a malformed value.
+
+    ``otlp_endpoint`` is explicit configuration, so a value we cannot parse is a
+    developer error worth surfacing loudly rather than papering over with defaults.
+    The raised error never carries the endpoint value.
+    """
+    try:
+        return shared_providers._parse_endpoint(endpoint)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from None
+
+
+def _silence_otel_export_logs() -> None:
+    """Raise the OTel exporter logger threshold to ERROR.
+
+    A collector that is absent at startup — or that goes down mid-session —
+    otherwise produces a stream of gRPC export-retry warnings for the process
+    lifetime. The exporters buffer and retry regardless, so suppressing the retry
+    churn (while still surfacing genuine ERROR-level export failures) is safe.
+    """
+
+    logging.getLogger("opentelemetry.exporter").setLevel(logging.ERROR)
+
+
+def _probe_endpoint_once(endpoint: str, host: str, port: int) -> None:
+    """Log a one-time heads-up if the endpoint is not reachable at startup.
+
+    This does NOT gate exporter setup: the OTLP batch processors buffer and retry,
+    so a collector started after the WM (e.g. via ``scripts/observability.sh up`` or a
+    ``COMPOSE_PROFILES=otel`` stack that comes up alongside the container) is picked
+    up automatically. The probe only tells the developer whether signals are flowing
+    yet — useful when verifying an observability setup.
+    """
+    if endpoint in _probed_endpoints:
         return
+    _probed_endpoints.add(endpoint)
 
-    import importlib.metadata
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return
+    except OSError:
+        pass
 
     from loguru import logger
-    from opentelemetry._logs.severity import SeverityNumber
-    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-    from opentelemetry.sdk._logs import LoggerProvider
-    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-    from opentelemetry.sdk.resources import Resource
 
-    from finecode_extension_runner.logs import filter_logs
+    logger.warning(
+        "OTLP endpoint is not reachable yet; exporters will connect once "
+        "it is up (e.g. scripts/observability.sh up). WAL events are recorded regardless."
+    )
 
+
+def _wm_resource_attrs(
+    service_name: str, workspace_path: Path | None
+) -> dict[str, str]:
     try:
         version = importlib.metadata.version("finecode")
     except importlib.metadata.PackageNotFoundError:
         version = "unknown"
-
     resource_attrs: dict[str, str] = {
         "service.name": service_name,
         "service.version": version,
     }
     if workspace_path is not None:
         resource_attrs["workspace.path"] = str(workspace_path)
-
-    resource = Resource.create(resource_attrs)
-    provider = LoggerProvider(resource=resource)
-    insecure = not endpoint.startswith("https://")
-    exporter = OTLPLogExporter(endpoint=endpoint, insecure=insecure)
-    provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
-
-    otel_logger = provider.get_logger(service_name)
-
-    _severity_map = {
-        "TRACE": SeverityNumber.TRACE,
-        "DEBUG": SeverityNumber.DEBUG,
-        "INFO": SeverityNumber.INFO,
-        "SUCCESS": SeverityNumber.INFO2,
-        "WARNING": SeverityNumber.WARN,
-        "ERROR": SeverityNumber.ERROR,
-        "CRITICAL": SeverityNumber.FATAL,
-    }
-
-    def _otel_sink(message) -> None:
-        from opentelemetry import context as otel_context
-
-        rec = message.record
-        # Skip OTel's own logs to avoid a feedback loop: OTel export failure →
-        # InterceptHandler → Loguru → _otel_sink → export failure → …
-        if rec["name"].startswith("opentelemetry"):
-            return
-        sev = _severity_map.get(rec["level"].name, SeverityNumber.UNSPECIFIED)
-        otel_logger.emit(
-            timestamp=int(rec["time"].timestamp() * 1e9),
-            context=otel_context.get_current(),
-            severity_number=sev,
-            severity_text=rec["level"].name,
-            body=rec["message"],
-            attributes={
-                "logger.name": rec["name"],
-                "code.filepath": rec["file"].path if rec["file"] else None,
-                "code.lineno": rec["line"],
-                "code.function": rec["function"],
-                **rec["extra"],
-            },
-        )
-
-    logger.add(_otel_sink, level="TRACE", filter=filter_logs)
+    return resource_attrs
 
 
-def init_tracer_provider(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
+def init_otel_logging(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
     if not endpoint:
         return
 
-    import importlib.metadata
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
 
-    from opentelemetry import trace
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-    try:
-        version = importlib.metadata.version("finecode")
-    except importlib.metadata.PackageNotFoundError:
-        version = "unknown"
-
-    resource_attrs: dict[str, str] = {
-        "service.name": service_name,
-        "service.version": version,
-    }
-    if workspace_path is not None:
-        resource_attrs["workspace.path"] = str(workspace_path)
-
-    resource = Resource.create(resource_attrs)
-    provider = TracerProvider(resource=resource)
-    insecure = not endpoint.startswith("https://")
-    exporter = OTLPSpanExporter(endpoint=endpoint, insecure=insecure)
-    provider.add_span_processor(BatchSpanProcessor(exporter))
-    trace.set_tracer_provider(provider)
+    _ = shared_providers.setup_providers(
+        service_name=service_name,
+        resource_attrs=_wm_resource_attrs(service_name, workspace_path),
+        endpoint=endpoint,
+        health=_health,
+    )
 
 
-def init_meter_provider(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
-    global _action_duration_hist, _action_errors_counter, _er_startup_hist, _er_active_counter
+def init_tracer_provider(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
+    if not endpoint:
+        return
+
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
+
+    _ = shared_providers.setup_providers(
+        service_name=service_name,
+        resource_attrs=_wm_resource_attrs(service_name, workspace_path),
+        endpoint=endpoint,
+        health=_health,
+    )
+
+
+def init_meter_provider(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
+    global \
+        _action_duration_hist, \
+        _action_errors_counter, \
+        _er_startup_hist, \
+        _er_running_counter
 
     if not endpoint:
         return
 
-    import importlib.metadata
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
 
     from opentelemetry import metrics
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-    from opentelemetry.sdk.resources import Resource
 
-    try:
-        version = importlib.metadata.version("finecode")
-    except importlib.metadata.PackageNotFoundError:
-        version = "unknown"
+    result = shared_providers.setup_providers(
+        service_name=service_name,
+        resource_attrs=_wm_resource_attrs(service_name, workspace_path),
+        endpoint=endpoint,
+        health=_health,
+    )
+    if result.metrics != "active":
+        return
 
-    resource_attrs: dict[str, str] = {
-        "service.name": service_name,
-        "service.version": version,
-    }
-    if workspace_path is not None:
-        resource_attrs["workspace.path"] = str(workspace_path)
-
-    resource = Resource.create(resource_attrs)
-    insecure = not endpoint.startswith("https://")
-    exporter = OTLPMetricExporter(endpoint=endpoint, insecure=insecure)
-    reader = PeriodicExportingMetricReader(exporter)
-    provider = MeterProvider(resource=resource, metric_readers=[reader])
-    metrics.set_meter_provider(provider)
-
-    meter = provider.get_meter("finecode.wm")
+    meter = metrics.get_meter("finecode.wm")
     _action_duration_hist = meter.create_histogram(
         "finecode.action.duration",
         unit="s",
@@ -161,9 +227,9 @@ def init_meter_provider(service_name: str, workspace_path: Path | None = None, e
         unit="s",
         description="Duration of extension runner startup",
     )
-    _er_active_counter = meter.create_up_down_counter(
-        "finecode.er.active",
-        description="Number of active extension runners",
+    _er_running_counter = meter.create_up_down_counter(
+        "finecode.er.running",
+        description="Number of RUNNING extension runners",
     )
 
 
@@ -193,19 +259,17 @@ def er_startup_metrics(env_name: str):
         yield
     finally:
         if _er_startup_hist is not None:
-            _er_startup_hist.record(
-                time.perf_counter() - start, {"env.name": env_name}
-            )
+            _er_startup_hist.record(time.perf_counter() - start, {"env.name": env_name})
 
 
-def er_active_inc(env_name: str) -> None:
-    if _er_active_counter is not None:
-        _er_active_counter.add(1, {"env.name": env_name})
+def er_running_inc(env_name: str) -> None:
+    if _er_running_counter is not None:
+        _er_running_counter.add(1, {"env.name": env_name})
 
 
-def er_active_dec(env_name: str) -> None:
-    if _er_active_counter is not None:
-        _er_active_counter.add(-1, {"env.name": env_name})
+def er_running_dec(env_name: str) -> None:
+    if _er_running_counter is not None:
+        _er_running_counter.add(-1, {"env.name": env_name})
 
 
 @contextlib.contextmanager
@@ -270,7 +334,11 @@ def er_dispatch_span(env_name: str, runner_id: str, action_name: str):
     tracer = trace.get_tracer("finecode.wm")
     with tracer.start_as_current_span(
         "action.er_dispatch",
-        attributes={"env.name": env_name, "runner.id": runner_id, "action.name": action_name},
+        attributes={
+            "env.name": env_name,
+            "runner.id": runner_id,
+            "action.name": action_name,
+        },
         record_exception=True,
         set_status_on_exception=True,
     ) as span:
@@ -296,7 +364,9 @@ def _jsonrpc_server_span(method: str, traceparent: str | None):
     from opentelemetry import propagate, trace
 
     tracer = trace.get_tracer("finecode.jsonrpc")
-    parent_ctx = propagate.extract({"traceparent": traceparent}) if traceparent else None
+    parent_ctx = (
+        propagate.extract({"traceparent": traceparent}) if traceparent else None
+    )
     with tracer.start_as_current_span(
         f"jsonrpc.server/{method}",
         context=parent_ctx,
@@ -326,19 +396,42 @@ class JsonRpcTracingHooks:
 
     def notification_sent(self, method: str) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.sent", {"rpc.method": method})
 
     def notification_received(self, method: str, traceparent: str | None) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.received", {"rpc.method": method})
 
 
+_hop_observer: IHopObserver | None = None
+
+
+def hop_observer() -> IHopObserver:
+    """Process-wide hop observer for WM<->ER request timing.
+
+    Always returns the singleton: while traces are inactive every open
+    returns ``None`` and the transports perform no further hop work.
+    ``tracing=`` stays for notification hooks, which have no hop.
+    """
+    global _hop_observer
+    if _hop_observer is None:
+        from finecode_extension_runner.shared_telemetry.rpc_hops import (
+            OtelHopObserver,
+        )
+
+        _hop_observer = OtelHopObserver(role="wm", health=_health)
+    return _hop_observer
+
+
 def add_span_event(name: str, attributes: dict | None = None) -> None:
     from opentelemetry import trace
+
     span = trace.get_current_span()
     if span.is_recording():
         span.add_event(name, attributes or {})
@@ -384,7 +477,8 @@ def attach_incoming_traceparent(params: dict):
     if not incoming:
         yield
         return
-    from opentelemetry import context as otel_context, propagate
+    from opentelemetry import context as otel_context
+    from opentelemetry import propagate
 
     parent_ctx = propagate.extract({"traceparent": incoming})
     token = otel_context.attach(parent_ctx)

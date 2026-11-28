@@ -2,7 +2,6 @@ from types import TracebackType
 from typing import Any, Self
 
 import httpx
-
 from finecode_extension_api.interfaces import ihttpclient, ilogger
 
 

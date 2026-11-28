@@ -1,7 +1,7 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import get_src_artifact_language_action
+from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
 PYTHON_DEF_FILENAMES = {"pyproject.toml", "setup.py", "setup.cfg"}

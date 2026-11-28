@@ -18,7 +18,9 @@ class IWorkspaceActionRunner(service.Service, typing.Protocol):
     """Fan-out an action across all workspace projects that declare it.
 
     project_paths=None means all projects in the workspace that declare
-    the action.
+    the action — or, for a workspace-scoped action, the workspace root only,
+    since a workspace action runs once and does its own per-project fan-out.
+    Explicit project_paths are honoured as given for either scope.
     """
 
     async def run_action_in_projects(
@@ -29,3 +31,20 @@ class IWorkspaceActionRunner(service.Service, typing.Protocol):
         project_paths: list[pathlib.Path] | None = None,
         concurrently: bool = True,
     ) -> dict[pathlib.Path, ResultT]: ...
+
+    async def run_action_per_project(
+        self,
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        payload_by_project: dict[pathlib.Path, PayloadT],
+        meta: code_action.RunActionMeta,
+        concurrently: bool = True,
+    ) -> dict[pathlib.Path, ResultT]:
+        """Run one action in each named project, with a complete payload per
+        project.
+
+        The dict keys are the project set — there is no separate
+        ``project_paths`` argument, so a payload for an unlisted project
+        cannot exist. Each project receives exactly the payload it is given;
+        the WM performs no merging with a shared base payload.
+        """
+        ...

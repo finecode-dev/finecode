@@ -1,5 +1,5 @@
 import pathlib
-from typing import Callable
+from collections.abc import Callable
 
 from finecode_extension_api.interfaces import iextensionrunnerinfoprovider, ilogger
 
@@ -8,7 +8,10 @@ class ExtensionRunnerInfoProvider(
     iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider
 ):
     def __init__(
-        self, cache_dir_path_getter: Callable[[], pathlib.Path], logger: ilogger.ILogger, current_env_name_getter: Callable[[], str]
+        self,
+        cache_dir_path_getter: Callable[[], pathlib.Path],
+        logger: ilogger.ILogger,
+        current_env_name_getter: Callable[[], str],
     ) -> None:
         self.cache_dir_path_getter = cache_dir_path_getter
         self.logger = logger

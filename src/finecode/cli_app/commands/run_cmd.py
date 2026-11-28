@@ -1,18 +1,34 @@
 # docs: docs/cli.md
+import asyncio
+import contextlib
+import difflib
 import json
+import os
 import pathlib
+import signal
 import sys
 import time
 import typing
 import uuid
 
 import click
+from finecode_extension_runner.schema_utils import JsonValue
 from loguru import logger
-from finecode.wm_client import ApiClient, ApiError
+
+from finecode.cli_app import payload_uris, resource_usage, utils
+from finecode.cli_app.log_render import render_log_records, user_message_log_level
+from finecode.cli_app.terminal_questions import (
+    TerminalQuestions,
+    discard_pending_terminal_input,
+)
+from finecode.wm_client import (
+    ApiClient,
+    ApiError,
+    ReconnectPolicy,
+    question_capability_allowed,
+)
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_server.runner import runner_client
-from finecode.cli_app import utils
-from finecode.cli_app.log_render import render_log_records, user_message_log_level
 
 
 class RunFailed(Exception):
@@ -78,13 +94,19 @@ def _make_progress_handler(is_tty: bool) -> typing.Callable:
     return handler
 
 
+async def _unreachable_poll() -> dict:
+    raise AssertionError("unreachable")
+
+
 async def run_actions(
     workdir_path: pathlib.Path,
     projects_names: list[str] | None,
     actions: list[str],
     action_payload: dict[str, typing.Any],
+    raw_action_payload: dict[str, str],
     concurrently: bool,
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
+    service_config_overrides: dict[str, dict[str, typing.Any]] | None = None,
     save_results: bool = True,
     map_payload_fields: set[str] | None = None,
     own_server: bool = False,
@@ -92,8 +114,8 @@ async def run_actions(
     dev_env: str = "cli",
     wal_enabled: bool = False,
     verbose: bool = False,
-    env_selectors: list[str] | None = None,
     interpreter_selectors: list[str] | None = None,
+    resource_usage_interval: float | None = None,
 ) -> utils.RunActionsResult:
     port_file = None
     try:
@@ -115,168 +137,384 @@ async def run_actions(
                 raise RunFailed(str(exc)) from exc
 
         client = ApiClient()
-        await client.connect("127.0.0.1", port)
-        try:
-            if handler_config_overrides:
-                if own_server:
-                    await client.set_config_overrides(handler_config_overrides)
-                else:
-                    click.echo(
-                        "Warning: --config overrides are ignored in --shared-server mode. ",
-                        err=True,
-                    )
-            # Tree-change notifications are irrelevant in CLI (run-and-exit) mode;
-            # register a no-op before add_dir so notifications fired during project
-            # loading don't hit the "unhandled notification" fallback.
-            async def _ignore_tree_changed(params: dict) -> None:
-                pass
 
-            client.on_notification("actions/treeChanged", _ignore_tree_changed)
+        # Notification handlers are registered before connecting: connecting
+        # establishes the session, and anything the WM pushes during that must
+        # not hit the "unhandled notification" fallback.
+        # Tree-change notifications are irrelevant in CLI (run-and-exit) mode;
+        # a no-op keeps them off that path.
+        async def _ignore_tree_changed(params: dict) -> None:
+            pass
 
-            async def _on_user_message(params: dict) -> None:
-                value = params or {}
-                level = user_message_log_level(value.get("type", "INFO"))
-                logger.log(level, value.get("message", ""))
+        client.on_notification("actions/treeChanged", _ignore_tree_changed)
 
-            client.on_notification("server/userMessage", _on_user_message)
+        async def _on_user_message(params: dict) -> None:
+            value = params or {}
+            level = user_message_log_level(value.get("type", "INFO"))
+            logger.log(level, value.get("message", ""))
 
-            async def _on_log_records(params: dict) -> None:
-                for line in render_log_records(params):
-                    click.echo(line, err=True)
+        client.on_notification("server/userMessage", _on_user_message)
 
+        async def _on_log_records(params: dict) -> None:
+            for line in render_log_records(params):
+                click.echo(line, err=True)
+
+        if verbose:
+            client.on_notification("server/logRecords", _on_log_records)
+
+        # Whether this *connection* can put a question to a person, decided by
+        # the terminal rather than by the binary (ADR-0082 rule 2). In a
+        # pipeline or on CI nothing is declared, so every ask a run makes is
+        # answered "nobody could be asked" without a round trip — which is the
+        # difference between an interactive action that works unattended and one
+        # that hangs until its deadline.
+        can_answer_questions = sys.stdin.isatty() and question_capability_allowed(
+            client_label="cli"
+        )
+        # Set except while a question is on screen; the partial-result renderer
+        # waits on it so streamed output does not interleave with the prompt.
+        prompt_idle = asyncio.Event()
+        prompt_idle.set()
+        terminal_questions: TerminalQuestions | None = None
+        if can_answer_questions:
+            terminal_questions = TerminalQuestions(
+                prompt_idle=prompt_idle,
+                discard_pending_input=discard_pending_terminal_input,
+                # Ctrl-C reaches a raw-mode prompt as a key, not as a signal;
+                # re-delivering it takes the same path as Ctrl-C outside one.
+                on_interrupt=lambda: signal.raise_signal(signal.SIGINT),
+            )
+            client.on_request(
+                "client/elicit", terminal_questions.ask, pass_request_id=True
+            )
+            client.on_notification(
+                "client/elicitWithdrawn", terminal_questions.on_withdrawn
+            )
+
+        async def _attach_session(*, first_connect: bool) -> None:
+            """Establish the session state the WM holds for this client.
+
+            Called by ``ApiClient`` on first connect and again after every
+            reconnect, so a shared server that restarts mid-command does not
+            leave this one talking to a WM that has never heard of it.
+            """
             if verbose:
-                client.on_notification("server/logRecords", _on_log_records)
-                # Stream WM+ER logs at the single general level (--log-level).
                 await client.subscribe_logs(log_level)
-
-            # When a project filter is given and we own the server, discover
-            # projects first (no runners), resolve names to paths, then start
-            # runners only for the requested projects.  In shared-server mode
-            # runners are already running, so always use the normal path.
-            deferred_runner_start = own_server and projects_names is not None
             logger.info("Initializing workspace...")
-            try:
-                await client.add_dir(
-                    workdir_path,
-                    start_runners=not deferred_runner_start,
-                    initialize_all_handlers=not own_server,
-                )
-            except ApiError as exc:
+            await client.add_dir(workdir_path, start_runners=False)
+
+        client.configure_reconnect(
+            # A dedicated server was started for this command alone; if it is
+            # gone, resurrecting it would run against a different process than
+            # the one the command was given (ADR-0074 rule 4).
+            None if own_server else ReconnectPolicy(workdir=workdir_path),
+            on_reattach=_attach_session,
+            # Before any reconnect can carry a new question, so a question left
+            # on screen cannot take the answer meant for the next one.
+            on_session_lost=(
+                (lambda _recoverable: terminal_questions.end_all_on_connection_lost())
+                if terminal_questions is not None
+                else None
+            ),
+        )
+
+        try:
+            # Capabilities travel with `client/initialize`, which `connect` sends
+            # again on every reconnect — so a WM that restarted mid-run learns
+            # this client can answer without the re-attach hook repeating it.
+            await client.connect(
+                "127.0.0.1",
+                port,
+                capabilities={
+                    "elicitation": {"choice": True, "text": True, "multiChoice": True}
+                }
+                if can_answer_questions
+                else None,
+            )
+        except BaseException as exc:
+            # `connect` runs `_attach_session`, so a config error surfaces here
+            # rather than from a later call. The socket and its reader task are
+            # already up at that point and nothing else closes them: the block
+            # below owns that, and this never reaches it. A dedicated server
+            # would then wait out its whole disconnect timeout with no client.
+            await client.close()
+            if isinstance(exc, ApiError):
                 raise RunFailed(str(exc)) from exc
+            raise
+        try:
+            if resource_usage_interval is not None:
+                _reporter = resource_usage.RunReporter(
+                    client.get_resource_usage,
+                    lag_window_sec=resource_usage.lag_window_for(
+                        resource_usage_interval
+                    ),
+                )
+                _resource_poll = _reporter.poll
+                _resource_render = _reporter.render
+                _resource_summary_poll = _reporter.summary_poll
+            else:
+                _resource_poll = _unreachable_poll
+                _resource_render = resource_usage.format_line
+                _resource_summary_poll = None
+            async with resource_usage.periodic(
+                _resource_poll,
+                resource_usage_interval,
+                render=_resource_render,
+                summary_poll=_resource_summary_poll,
+                paused=prompt_idle,
+            ):
+                if handler_config_overrides or service_config_overrides:
+                    if own_server:
+                        await client.set_config_overrides(
+                            handler_config_overrides or {}, service_config_overrides
+                        )
+                    else:
+                        click.echo(
+                            "Warning: --config overrides are ignored in --shared-server mode. ",
+                            err=True,
+                        )
 
-            # Resolve project names (CLI option) to paths (canonical API identifier).
-            project_paths: list[str] | None = None
-            if projects_names is not None:
-                all_projects = await client.list_projects()
-                unknown = [
-                    n for n in projects_names
-                    if not any(p["name"] == n for p in all_projects)
-                ]
-                if unknown:
-                    raise RunFailed(f"Unknown project(s): {unknown}")
-                project_paths = [
-                    p["path"] for p in all_projects if p["name"] in projects_names
-                ]
+                # Resolve project names (CLI option) to paths (canonical API identifier).
+                project_paths: list[str] | None = None
+                if projects_names is not None:
+                    all_projects = await client.list_projects()
+                    unknown = [
+                        n
+                        for n in projects_names
+                        if not any(p["name"] == n for p in all_projects)
+                    ]
+                    if unknown:
+                        raise RunFailed(f"Unknown project(s): {unknown}")
+                    project_paths = [
+                        p["path"] for p in all_projects if p["name"] in projects_names
+                    ]
 
-            if deferred_runner_start:
+                # Resolve action names to sources.
                 try:
-                    await client.start_runners(projects=project_paths)
+                    listing = await client.list_actions(
+                        names=actions, projects=project_paths
+                    )
                 except ApiError as exc:
                     raise RunFailed(str(exc)) from exc
+                if listing.unresolved_projects:
+                    raise RunFailed(
+                        "Could not resolve project(s): "
+                        + "; ".join(
+                            f"{item.get('project')}: {item.get('error')}"
+                            for item in listing.unresolved_projects
+                        )
+                    )
+                all_actions = listing.actions
+                name_to_source: dict[str, str] = {
+                    a["name"]: a["source"] for a in all_actions
+                }
+                source_to_name: dict[str, str] = {
+                    a["source"]: a["name"] for a in all_actions
+                }
+                unknown_actions = [a for a in actions if a not in name_to_source]
+                if unknown_actions:
+                    raise RunFailed(f"Unknown action(s): {unknown_actions}")
+                action_sources = [name_to_source[a] for a in actions]
 
-            # Resolve action names to sources (ADR-0019).
-            all_actions = await client.list_actions()
-            name_to_source: dict[str, str] = {a["name"]: a["source"] for a in all_actions}
-            source_to_name: dict[str, str] = {a["source"]: a["name"] for a in all_actions}
-            unknown_actions = [a for a in actions if a not in name_to_source]
-            if unknown_actions:
-                raise RunFailed(f"Unknown action(s): {unknown_actions}")
-            action_sources = [name_to_source[a] for a in actions]
-
-            # Workspace-scoped actions run once on the root project and stream all
-            # their sub-project output tagged with that single root path.  Repeating
-            # the root header for every partial adds no information, so suppress it
-            # when every requested action is workspace-scoped.
-            scope_by_source = {a["source"]: a.get("scope") for a in all_actions}
-            show_project_header = not (
-                action_sources
-                and all(scope_by_source.get(src) == "workspace" for src in action_sources)
-            )
-
-            params_by_project: dict[str, dict[str, typing.Any]] = {}
-            if map_payload_fields:
-                params_by_project = _resolve_mapped_payload_fields(
-                    map_payload_fields=map_payload_fields,
+                schema_project = _choose_schema_project(
+                    project_paths, all_actions, action_sources, workdir_path
+                )
+                # The schema fetch and the run must select the same interpreter
+                # instances: one dict feeds both, so they cannot drift.
+                selection_options = {
+                    "devEnv": dev_env,
+                    "interpreterSelectors": interpreter_selectors or [],
+                }
+                action_payload = await _resolve_payload(
+                    client=client,
                     action_payload=action_payload,
-                )
-
-            result_formats = ["string", "json"] if save_results else ["string"]
-
-            # Always stream via partial-result notifications, even for single-project runs.
-            #
-            # The non-streaming path (progress_token only) assumed: one project → one direct
-            # result in result_by_format.  That holds for project-scope actions, but
-            # workspace-scope actions (e.g. inspect_code) fan out to sub-projects internally
-            # and deliver all output via partial_result_sender — the final RunActionResponse
-            # has result_by_format={} regardless of how many --project filters are given.
-            # Streaming works correctly for both cases, so there is no reason to branch.
-            batch_options = {
-                "concurrently": concurrently,
-                "resultFormats": result_formats,
-                "trigger": "user",
-                "devEnv": dev_env,
-                # Ask the WM to type-safely merge streamed partials per project/action
-                # and return the merged result, so the returned/saved data is complete
-                # even when one project streams many partials.
-                "mergeResults": True,
-                # PRD-0003 AC8: WM-only selectors restricting a matrixed
-                # action's fan-out to a subset of its declared interpreter axis.
-                # Never forwarded to an ER.
-                "envSelectors": env_selectors or [],
-                "interpreterSelectors": interpreter_selectors or [],
-            }
-
-            partial_result_token = str(uuid.uuid4())
-
-            async def _on_partial_result(params: dict) -> None:
-                value = params.get("value", {}) if params else {}
-                project_str = value.get("project", "")
-                results = value.get("results", {})
-                interpreter = value.get("interpreter")
-                block = _format_project_block(
-                    project_str, results, source_to_name, show_project_header, interpreter
-                )
-                # A partial with no rendered content (e.g. a project with nothing to
-                # report) would otherwise print just the project header with an empty
-                # body; skip it. The merged result still lands in the final response.
-                if block is None:
-                    return
-
-                # split blocks with newline
-                block = "\n" + block
-
-                click.echo(block, nl=False)
-
-            client.on_notification("actions/partialResult", _on_partial_result)
-
-            logger.info(f"Running {', '.join(actions)}...")
-            try:
-                batch_result = await client.run_batch(
+                    raw_action_payload=raw_action_payload,
                     action_sources=action_sources,
-                    projects=project_paths,
-                    params=action_payload,
-                    params_by_project=params_by_project or None,
-                    options=batch_options,
-                    partial_result_token=partial_result_token,
+                    schema_project=schema_project,
+                    base_dir=workdir_path,
+                    map_payload_fields=map_payload_fields,
+                    run_options=selection_options,
                 )
-            except ApiError as exc:
-                raise RunFailed(str(exc)) from exc
 
-            # Use the WM's type-safely merged per-project results (requested via
-            # mergeResults) for the saved/returned data.
-            return _build_streaming_result(
-                batch_result.get("results", {}), batch_result.get("returnCode", 0)
-            )
+                scope_by_source = {a["source"]: a.get("scope") for a in all_actions}
+                show_project_header = not (
+                    action_sources
+                    and all(
+                        scope_by_source.get(src) == "workspace"
+                        for src in action_sources
+                    )
+                )
+
+                params_by_project: dict[str, dict[str, typing.Any]] = {}
+                if map_payload_fields:
+                    params_by_project = _resolve_mapped_payload_fields(
+                        map_payload_fields=map_payload_fields,
+                        action_payload=action_payload,
+                    )
+
+                result_formats = ["string", "json"] if save_results else ["string"]
+
+                # Always stream via partial-result notifications, even for single-project runs.
+                #
+                # The non-streaming path (progress_token only) assumed: one project → one direct
+                # result in result_by_format.  That holds for project-scope actions, but
+                # workspace-scope actions (e.g. inspect_code) fan out to sub-projects internally
+                # and deliver all output via partial_result_sender — the final RunActionResponse
+                # has result_by_format={} regardless of how many --project filters are given.
+                # Streaming works correctly for both cases, so there is no reason to branch.
+                batch_options = {
+                    "concurrently": concurrently,
+                    "resultFormats": result_formats,
+                    "trigger": "user",
+                    **selection_options,
+                    # Ask the WM to type-safely merge streamed partials per project/action
+                    # and return the merged result, so the returned/saved data is complete
+                    # even when one project streams many partials.
+                    "mergeResults": True,
+                    # PRD-0003 AC8: WM-only selectors restricting a matrixed
+                    # action's fan-out to a subset of its declared interpreter axis.
+                    # Never forwarded to an ER.
+                }
+
+                partial_result_token = str(uuid.uuid4())
+                preview_queue: asyncio.Queue[dict[str, typing.Any]] = asyncio.Queue()
+                accepting_previews = True
+                stderr_is_tty = sys.stderr.isatty()
+                # The label and text of the last printed preview. Consecutive
+                # previews of one project, action and interpreter share a label,
+                # and a snapshot that extends the previous one prints only the
+                # new part (snapshots are cumulative until #927).
+                last_preview_label: str | None = None
+                last_preview_text: str = ""
+
+                def clear_progress_line() -> None:
+                    if stderr_is_tty:
+                        click.echo("\r\033[K", nl=False, err=True)
+
+                def _print_preview(params: dict[str, typing.Any]) -> None:
+                    nonlocal last_preview_label, last_preview_text
+                    value = typing.cast(
+                        dict[str, typing.Any], params.get("value", {}) if params else {}
+                    )
+                    project_str = value.get("project", "")
+                    results = typing.cast(
+                        dict[str, dict[str, typing.Any]], value.get("results", {})
+                    )
+                    interpreter = value.get("interpreter")
+                    for action_source, action_data in results.items():
+                        result_by_format = action_data.get("resultByFormat", {})
+                        if not (
+                            result_by_format.get("string")
+                            or result_by_format.get("styled_text_json")
+                        ):
+                            continue
+                        display_name = source_to_name.get(action_source, action_source)
+                        response = runner_client.RunActionResponse(
+                            result_by_format=result_by_format,
+                            return_code=action_data.get("returnCode", 0),
+                        )
+                        text = utils.run_result_to_str(response.text(), display_name)
+                        if not text:
+                            continue
+                        label = f"-- preview: {display_name}"
+                        if interpreter:
+                            label += f" [{interpreter}]"
+                        label += f" ({project_str}) --\n"
+                        if label == last_preview_label and text.startswith(
+                            last_preview_text
+                        ):
+                            block = text[len(last_preview_text) :]
+                            if not block:
+                                continue
+                        else:
+                            block = label + text
+                        last_preview_label = label
+                        last_preview_text = text
+                        if not block.endswith("\n"):
+                            block += "\n"
+                        clear_progress_line()
+                        _ = sys.stderr.write(block)
+                        _ = sys.stderr.flush()
+
+                async def _print_previews_in_order() -> None:
+                    while True:
+                        params = await preview_queue.get()
+                        try:
+                            await prompt_idle.wait()
+                            if accepting_previews:
+                                _print_preview(params)
+                        finally:
+                            preview_queue.task_done()
+
+                preview_task = asyncio.create_task(_print_previews_in_order())
+
+                async def _on_partial_result(params: dict[str, typing.Any]) -> None:
+                    # Previews are for a person watching a terminal. A shell
+                    # tool of an LLM agent captures stderr into the model's
+                    # context, so a piped stderr gets no previews; the final
+                    # result on stdout is unchanged.
+                    if accepting_previews and stderr_is_tty:
+                        preview_queue.put_nowait(params)
+
+                client.on_notification("actions/partialResult", _on_partial_result)
+
+                logger.info(f"Running {', '.join(actions)}...")
+                try:
+                    batch_result = await client.run_batch(
+                        action_sources=action_sources,
+                        projects=project_paths,
+                        params=action_payload,
+                        params_by_project=params_by_project or None,
+                        options=batch_options,
+                        partial_result_token=partial_result_token,
+                    )
+                except ApiError as exc:
+                    raise RunFailed(str(exc)) from exc
+                finally:
+                    accepting_previews = False
+                    _ = preview_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await preview_task
+                    clear_progress_line()
+
+                stdout_is_tty = sys.stdout.isatty()
+                color_output = (
+                    stdout_is_tty
+                    and "NO_COLOR" not in os.environ
+                    and os.environ.get("TERM") != "dumb"
+                )
+                for project_path_str, actions_results in batch_result.get(
+                    "results", {}
+                ).items():
+                    for action_source, action_data in actions_results.items():
+                        result_by_format = action_data.get("resultByFormat", {})
+                        if (
+                            "string" not in result_by_format
+                            and "styled_text_json" not in result_by_format
+                        ):
+                            continue
+                        block = _format_project_block(
+                            project_path_str,
+                            {action_source: action_data},
+                            source_to_name,
+                            show_project_header,
+                            use_color=color_output,
+                        )
+                        if block is not None:
+                            _ = sys.stdout.write(block)
+                            _ = sys.stdout.flush()
+
+                # Use the WM's type-safely merged per-project results (requested via
+                # mergeResults) for the saved/returned data.
+                return _build_streaming_result(
+                    batch_result.get("results", {}),
+                    batch_result.get("returnCode", 0),
+                    scope_by_action_source={
+                        source: scope_by_source.get(source) for source in action_sources
+                    },
+                    project_paths_requested=project_paths,
+                    resolved_payload=action_payload,
+                )
         finally:
             await client.close()
     finally:
@@ -290,6 +528,8 @@ def _format_project_block(
     source_to_name: dict[str, str] | None = None,
     show_project_header: bool = True,
     interpreter: str | None = None,
+    *,
+    use_color: bool = True,
 ) -> str | None:
     """Format one project's action results as a printable block.
 
@@ -316,7 +556,10 @@ def _format_project_block(
         display_name = (source_to_name or {}).get(action_source, action_source)
         action_output = ""
         if run_many_actions:
-            action_output += f"{click.style(display_name, bold=True)}:"
+            action_name = (
+                click.style(display_name, bold=True) if use_color else display_name
+            )
+            action_output += f"{action_name}:"
         action_output += utils.run_result_to_str(response.text(), display_name)
         project_output_parts.append(action_output)
 
@@ -325,10 +568,18 @@ def _format_project_block(
         return None
 
     if interpreter:
-        content = f"{click.style(interpreter, dim=True)}\n" + content
+        interpreter_name = (
+            click.style(interpreter, dim=True) if use_color else interpreter
+        )
+        content = f"{interpreter_name}\n" + content
 
     if show_project_header:
-        block = f"{click.style(project_path_str, bold=True, underline=True)}\n" + content
+        project_header = (
+            click.style(project_path_str, bold=True, underline=True)
+            if use_color
+            else project_path_str
+        )
+        block = f"{project_header}\n" + content
     else:
         block = content
 
@@ -341,14 +592,19 @@ def _format_project_block(
 def _build_streaming_result(
     streaming_results: dict[str, dict],
     overall_return_code: int,
+    scope_by_action_source: dict[str, str | None] | None = None,
+    project_paths_requested: list[str] | None = None,
+    resolved_payload: dict[str, typing.Any] | None = None,
 ) -> utils.RunActionsResult:
     """Build a RunActionsResult from collected partial-result notifications.
 
-    Output is empty because each project block was already printed to stdout as
-    the notification arrived.  ``result_by_project`` is populated for callers
-    that need the structured data (e.g. ``--save-results``).
+    ``output`` stays empty because the final blocks were printed directly after
+    the batch returned. ``result_by_project`` carries the structured data for
+    callers that need it (e.g. ``--save-results``).
     """
-    result_by_project: dict[pathlib.Path, dict[str, runner_client.RunActionResponse]] = {}
+    result_by_project: dict[
+        pathlib.Path, dict[str, runner_client.RunActionResponse]
+    ] = {}
     for project_path_str, actions_results in streaming_results.items():
         project_path = pathlib.Path(project_path_str)
         project_responses: dict[str, runner_client.RunActionResponse] = {}
@@ -363,7 +619,164 @@ def _build_streaming_result(
         output="",
         return_code=overall_return_code,
         result_by_project=result_by_project,
+        scope_by_action_source=scope_by_action_source,
+        project_paths_requested=project_paths_requested,
+        resolved_payload=resolved_payload,
     )
+
+
+def _choose_schema_project(
+    project_paths: list[str] | None,
+    all_actions: list[dict],
+    action_sources: list[str],
+    base_dir: pathlib.Path,
+) -> str:
+    """Pick the project whose WM holds the action's payload schema.
+
+    The schema lives in the project that exposes the action, not necessarily
+    the workspace root, so a run that did not name a project still has a real
+    project to ask. First match wins: an explicit project path, then a listed
+    action in *base_dir*, then the first listed action, and finally *base_dir*.
+    """
+    if project_paths:
+        return project_paths[0]
+
+    base_dir_str = str(base_dir)
+    for action in all_actions:
+        if action["project"] == base_dir_str and action["source"] in action_sources:
+            return base_dir_str
+    for action in all_actions:
+        if action["source"] in action_sources:
+            return action["project"]
+    return base_dir_str
+
+
+async def _resolve_payload(
+    client: ApiClient,
+    action_payload: dict[str, typing.Any],
+    raw_action_payload: dict[str, str],
+    action_sources: list[str],
+    schema_project: str,
+    base_dir: pathlib.Path,
+    map_payload_fields: set[str] | None,
+    run_options: dict[str, typing.Any] | None = None,
+) -> dict[str, typing.Any]:
+    """Build the final payload from the raw CLI strings and the payload schemas.
+
+    The raw ``--field=value`` strings are parsed *guided by* each field's
+    schema, so a numeric-looking string reaches a string field unchanged and a
+    scalar where a list was declared is refused before anything runs.  Fields
+    whose schema vouches for nothing, and fields routed through
+    ``--map-payload-fields``, keep the blind parse from
+    :func:`finecode.cli_app.cli.deserialize_action_payload`.
+
+    Which fields hold resources comes from the same schemas, so a plain path is
+    accepted wherever an action declares a ``ResourceUri`` and nowhere else.
+
+    A relative ``file://`` URI that no schema accounts for stops the run.  It
+    cannot be left alone — each ER would resolve it against its own directory,
+    silently reading a different file per project — and it cannot be rewritten
+    either, because without a schema there is nothing saying the field is a
+    resource at all.  Refusing is the only answer that never acts on a guess.
+    """
+    # Any project the action runs in resolves the same payload types; the
+    # schema project was chosen by the caller from a project that exposes the
+    # action, so a path value can be converted before dispatch.
+    try:
+        schemas = await client.get_payload_schemas(
+            schema_project, action_sources, start_runners=True, run_options=run_options
+        )
+    except ApiError as exc:
+        raise RunFailed(
+            f"Could not read the payload schema of {', '.join(action_sources)} "
+            f"from '{schema_project}': {exc}. The run was not started: without "
+            "the schema, path values cannot be converted to file:// URIs."
+        ) from exc
+
+    properties = payload_uris.merge_payload_properties(schemas)
+
+    # Unknown names are refused only when every requested action's schema was
+    # available: an unschemad action's fields are unknown, so the union of known
+    # names is not a complete set and refusing would regress runs that work
+    # today.
+    missing_schema_sources = [
+        source for source in action_sources if not schemas.get(source)
+    ]
+    if missing_schema_sources:
+        if raw_action_payload:
+            logger.warning(
+                "Skipping payload field name check: no schema for {}; "
+                "payload fields were sent without type validation or path conversion",
+                ", ".join(missing_schema_sources),
+            )
+        else:
+            logger.debug(
+                "Skipping payload field name check: no schema for {}",
+                ", ".join(missing_schema_sources),
+            )
+    else:
+        known = set(properties)
+        unknown = [name for name in raw_action_payload if name not in known]
+        if unknown:
+            suggestions = {
+                name: difflib.get_close_matches(name, known, n=1, cutoff=0.6)
+                for name in unknown
+            }
+            details = "\n".join(
+                f"  '{name}'"
+                + (
+                    f" — did you mean '{suggestions[name][0]}'?"
+                    if suggestions[name]
+                    else ""
+                )
+                for name in sorted(unknown)
+            )
+            raise RunFailed(
+                f"Unknown payload field(s): {', '.join(sorted(unknown))}.\n"
+                f"{details}\n"
+                f"Valid fields: {', '.join(sorted(known))}"
+            )
+
+    resolved: dict[str, JsonValue] = {}
+    for name, raw_value in raw_action_payload.items():
+        # The blind parse from `deserialize_action_payload` is what every branch
+        # below falls back to when the schema has nothing to say about the field.
+        blind_parse = action_payload[name]
+        if map_payload_fields and name in map_payload_fields:
+            # A mapped field carries a ``"<action>.<field>"`` placeholder that
+            # is resolved from a results file after this point, so its value is
+            # not the type the field declares and must not be type-checked.
+            resolved[name] = blind_parse
+            continue
+        field_schema = properties.get(name)
+        if field_schema is None:
+            resolved[name] = blind_parse
+            continue
+        try:
+            resolved[name] = payload_uris.coerce_raw_value(
+                raw_value, field_schema, blind_parse
+            )
+        except ValueError as exc:
+            raise RunFailed(f"Invalid value for payload field '{name}': {exc}") from exc
+
+    resolved = payload_uris.absolutize_payload(resolved, properties, base_dir)
+
+    unresolved = payload_uris.find_unresolved_relative_uris(resolved)
+    if unresolved:
+        unschemad = [source for source in action_sources if not schemas.get(source)]
+        detail = (
+            f" No payload schema was available for {', '.join(unschemad)}"
+            f" in '{schema_project}', so these fields could not be confirmed to"
+            " hold resources."
+            if unschemad
+            else ""
+        )
+        raise RunFailed(
+            "Relative file:// URIs cannot be sent to extension runners — each"
+            " runner would resolve them against its own project directory."
+            f" Use absolute paths for: {'; '.join(unresolved)}.{detail}"
+        )
+    return resolved
 
 
 def _resolve_mapped_payload_fields(
@@ -375,7 +788,9 @@ def _resolve_mapped_payload_fields(
     Returns a dict keyed by project path string, where each value is a dict
     of field overrides for that project.
     """
-    results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+    results_dir = (
+        pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+    )
     params_by_project: dict[str, dict[str, typing.Any]] = {}
 
     for field_name in map_payload_fields:

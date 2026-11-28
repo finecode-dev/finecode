@@ -13,11 +13,11 @@ import threading
 import typing
 from pathlib import Path
 
-import finecode_jsonrpc
 from finecode_jsonrpc.client import ResponseError
 
+import finecode_jsonrpc
 from finecode.wm_server import context, domain
-from finecode.wm_server.runner import runner_client, _internal_client_types
+from finecode.wm_server.runner import _internal_client_types, runner_client
 
 
 class FakeErClient:
@@ -32,6 +32,7 @@ class FakeErClient:
 
     def __init__(self, readable_id: str = "fake-er") -> None:
         self.readable_id = readable_id
+        self.pid: int | None = None
         self._response: typing.Any = None
         self._exception: BaseException | None = None
         self._configured = False
@@ -41,6 +42,12 @@ class FakeErClient:
         # exercising stop/exit flows must set it explicitly to simulate the
         # process terminating.
         self.server_process_stopped = threading.Event()
+        # Mirrors ``JsonRpcClient.channel_failed``: set when the fake channel is
+        # known dead, so recovery-path code can key the reap on it.
+        self.channel_failed = False
+        # Mirrors ``JsonRpcClient.force_kill()``: tests assert on this rather
+        # than a real process, since there is no OS process behind a fake.
+        self.force_kill_called = False
 
     def configure_response(self, response: typing.Any) -> None:
         self._response = response
@@ -57,6 +64,8 @@ class FakeErClient:
         method: str,
         params: typing.Any = None,
         timeout: float | None = None,
+        on_response: typing.Any | None = None,
+        await_reply_after_cancel: typing.Any | None = None,
     ) -> typing.Any:
         assert self._configured, (
             "FakeErClient.send_request called without configure_response()/"
@@ -64,12 +73,32 @@ class FakeErClient:
             " that calls send_request."
         )
         self.sent_requests.append((method, params))
+        _ = timeout
+        _ = await_reply_after_cancel
+        # Mirror the transport: run the per-request response capture before
+        # the request future resolves, without replacing the received runner
+        # response/error. This covers both success and received-error
+        # outcomes; capture faults are recorded on the completion. The fake
+        # has no send-failure path, for which the real client drops hooks.
+        if on_response is not None:
+            try:
+                on_response.capture()
+            except Exception as error:
+                on_response.error = error
         if self._exception is not None:
             raise self._exception
         return self._response
 
     def notify(self, method: str, params: typing.Any | None = None) -> None:
         self.sent_requests.append((method, params))
+
+    async def notify_and_drain(
+        self, method: str, params: typing.Any | None = None
+    ) -> None:
+        self.sent_requests.append((method, params))
+
+    def force_kill(self) -> None:
+        self.force_kill_called = True
 
 
 def make_cancelled_error(message: str = "cancelled") -> finecode_jsonrpc.ErrorOnRequest:
@@ -80,9 +109,13 @@ def make_cancelled_error(message: str = "cancelled") -> finecode_jsonrpc.ErrorOn
     )
 
 
-def make_error_on_request(code: int, message: str = "boom") -> finecode_jsonrpc.ErrorOnRequest:
+def make_error_on_request(
+    code: int, message: str = "boom"
+) -> finecode_jsonrpc.ErrorOnRequest:
     """Build a transport-level exception carrying an arbitrary (non-cancellation) code."""
-    return finecode_jsonrpc.ErrorOnRequest(error=ResponseError(code=code, message=message))
+    return finecode_jsonrpc.ErrorOnRequest(
+        error=ResponseError(code=code, message=message)
+    )
 
 
 def make_run_action_response(
@@ -125,6 +158,29 @@ def make_running_runner(
         client=client if client is not None else FakeErClient(),
     )
     runner.initialized_event.set()
+    return runner
+
+
+def make_initializing_runner(
+    *,
+    working_dir_path: Path,
+    env_name: str = "test_env",
+    client: typing.Any | None = None,
+) -> runner_client.ExtensionRunnerInfo:
+    """Build an ``ExtensionRunnerInfo`` still ``INITIALIZING``.
+
+    Mirrors :func:`make_running_runner`, but for tests exercising the window
+    where a start attempt is in flight (or has stalled): the runner is
+    registered and has a client attached — matching production, where
+    ``runner.client`` is set immediately after construction, before
+    ``client.start()`` is even called — but never reached ``RUNNING``.
+    """
+    runner = runner_client.ExtensionRunnerInfo(
+        working_dir_path=working_dir_path,
+        env_name=env_name,
+        status=domain.ExtensionRunnerStatus.INITIALIZING,
+        client=client if client is not None else FakeErClient(),
+    )
     return runner
 
 

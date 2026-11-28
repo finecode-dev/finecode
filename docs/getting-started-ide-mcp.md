@@ -60,6 +60,8 @@ At a minimum, your client should launch:
 
 Client configuration format depends on the MCP client.
 
+The MCP server declares question support only when its own environment has no non-empty `CI` (`CI=false` included): under CI every question is answered "unavailable" at once. It supports choice and text questions; a multi-select question is answered unavailable. A prefill and line breaks are not shown to the AI client. A question the WM withdraws or lets expire is cancelled in the AI client with `notifications/cancelled`.
+
 ### Example: Claude Code
 
 Create `.mcp.json` in the workspace root:
